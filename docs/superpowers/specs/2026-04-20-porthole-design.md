@@ -150,9 +150,9 @@ A surface handle can refer to a window or to a tab (with `parent_surface_id` set
 | `wait` | yes | no — ditto |
 | `replace` | yes | no — ditto |
 
-The rule for supported tab verbs: **activate the tab in its parent window, then perform the operation on the window.** Activation is a visible side effect — the user sees the tab come to front. Callers that need to target a tab without changing the window's visible tab cannot in v0.
+The rule for supported tab verbs: **activate the tab in its parent window, then perform the tab-appropriate operation.** For `focus` and `screenshot` that resolves to operating on the parent window post-activation. For `close` it means closing the tab itself (via the app's tab-close AX action or equivalent), which does not close the parent window if other tabs remain. Activation is a visible side effect — the user sees the tab come to front. Callers that need to target a tab without changing the window's visible tab cannot in v0.
 
-Content-area crop (screenshot of just the tab's content region, excluding window chrome) requires per-app knowledge and is deferred to v0.1+. v0 callers who need just the content area can crop client-side using the window and tab-bar geometry returned in the screenshot metadata.
+Content-area crop (screenshot of just the tab's content region, excluding window chrome) requires per-app knowledge and is deferred to v0.1+. v0 callers who need just the content area can crop client-side using the geometry fields promised by the screenshot response (see §7.2).
 
 Expanding the tab verb set (input, wait, replace) and adding content-area crop are explicit v0.1 candidates.
 
@@ -297,7 +297,7 @@ Two verbs with rich response metadata:
 - `screenshot` — PNG of the surface bounds
 - `recording` — short clip, bounded duration (v0.1 — v0 may ship screenshot only; see §9)
 
-Response metadata includes: surface handle, launch id, app bundle, window title at capture time, pixel dimensions, display scale, monotonic timestamp, session tag if present. Every artifact is self-describing — the report's "manual evidence bundle assembly" pain dissolves.
+Response metadata includes: surface handle, launch id, app bundle, window title at capture time, pixel dimensions, display scale, monotonic timestamp, session tag if present, and — sufficient for client-side cropping without per-app knowledge — `window_bounds: { x, y, w, h }` (logical points of the parent window), `content_bounds: { x, y, w, h }` (content area excluding title bar and tab bar where the adapter can determine them), and `scale` (points-to-pixels factor). Every artifact is self-describing — the report's "manual evidence bundle assembly" pain dissolves. When the adapter cannot determine `content_bounds` for a given app, the field is omitted and the caller falls back to `window_bounds`.
 
 ### 7.3 Sequencing — orthogonal `wait`
 
