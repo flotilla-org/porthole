@@ -27,7 +27,7 @@ The design takes the report's narrower workflow as the first real use case, and 
 ### 2.1 Use cases porthole must serve
 
 - **Evidence collection** — the report's workflow: launch an app, drive it, capture before/after screenshots, optionally record.
-- **Presentation** — flotilla showing a window to the user (bring to front, place on monitor, highlight).
+- **Presentation** — an agent (a flotilla yeoman or otherwise) showing an artifact to the user, *in the right place*. Covers what `superpowers:visual-companion` and tools like [glimpse](https://github.com/hazat/glimpse) try to do, but more principled about placement and attention. The yeoman decides at a higher level whether an artifact belongs in a mux pane (flotilla's problem) or as a dedicated window alongside (porthole's problem). When porthole is chosen, it owns placement, reuse-in-place, dismiss lifecycle, and attention-aware positioning. Porthole does *not* own artifact rendering or content-type policy — that stays with the caller or a higher-level tool layered on top.
 - **Cross-host delegation** — showing a window on a specific user's machine when multiple are involved. Not in v0, but the shape must not prevent it.
 - **Standalone use** — a human running porthole from a shell to automate desktop work not mediated by flotilla.
 
@@ -115,7 +115,8 @@ The API is REST-shaped. Top-level resources:
 |---|---|
 | `/launches` | A launch handle. The daemon tracks the link between "this launch" and "the surface(s) that appeared." |
 | `/surfaces` | Windows and tabs. Core noun. Both launched and attached surfaces live here. |
-| `/displays` | Monitors. Read-only in v0; verbs (place on display N) land in v0.1. |
+| `/displays` | Monitors. Read model (topology, primary/focused flags) in v0; placement happens via launch options, not verbs on this resource in v0. |
+| `/attention` | Read-only: focused surface, focused display, cursor position, recently-active surfaces. What a placement-aware caller consults before deciding where to show something. |
 | `/events` | SSE stream (GET) of surface lifecycle and launch events. |
 | `/info` | Read-only introspection: which adapters are loaded, what capabilities each claims, daemon version. |
 
@@ -130,6 +131,7 @@ Operations are verbs on surfaces:
 - `POST /surfaces/{id}/wait`
 - `POST /surfaces/{id}/focus`
 - `POST /surfaces/{id}/close`
+- `POST /surfaces/{id}/replace` — close this surface and launch a new one in its position; atomic from the caller's POV. Enables "reuse-in-place" for presentation without needing the spec's slot concept in v0.
 - `POST /surfaces/search` — find by query; used for attach mode
 - `POST /surfaces/{id}/track` — promote a search result to a watched handle
 
@@ -195,11 +197,38 @@ Chosen at launch via an explicit enum:
 
 The intent is that callers never reconstruct lifecycle through shell wrappers again.
 
+The lifecycle enum is command-centric and only applies to `process` launches. `artifact` launches have no command to exit, so they stay up until the user closes the window, the API closes it, or an `auto_dismiss_after_ms` fires (see §6.7).
+
 ### 6.4 Attach mode
 
 `POST /surfaces/search` returns candidates matching a query (app bundle, title regex, PID, AX path). Caller picks one, `POST /surfaces/{id}/track` promotes it to a watched handle. From then on the surface is indistinguishable from a launched one.
 
 Covers: "the user (or agent) opened a window manually, now porthole should manage it" and the standalone case.
+
+### 6.5 Launch kind — `process` or `artifact`
+
+Launch requests carry a `kind` discriminator:
+
+- **`process`** — run a command in an app. Body: app bundle / executable, args, env, working dir, lifecycle mode. The evidence-collection case.
+- **`artifact`** — show a file or URL to the user using the OS default handler. Body: a local path or URL, optional `opener` override, placement, auto-dismiss. Internally on macOS this is `open <path>` or `open <url>`, then correlation + tracking like any other launch. No rendering, no built-in webview — content-type dispatch is whatever the OS already knows.
+
+Both kinds produce a surface handle indistinguishable downstream. A caller that needs real rendering (markdown → HTML, templated views) builds on top and still uses `artifact` once it has a concrete file or URL.
+
+### 6.6 Placement
+
+Placement is a field on the launch body, applied once the surface is identified:
+
+| Field | Meaning |
+|---|---|
+| `on_display: <id> \| "focused" \| "primary"` | Which monitor to anchor to. `focused` uses `/attention`'s view. |
+| `geometry: { x, y, w, h }` | Explicit rectangle on the chosen display, in logical points. |
+| `anchor: "focused_display" \| "cursor"` | Shorthand for "wherever the user is" without an explicit display id. |
+
+Deferred to v0.1: `relative_to: <surface_id>`, `avoid: [<surface_id>, ...]`, size hints (`compact`, `medium`, `fill`). The primitives shipped in v0 cover the common presentation cases without committing to a richer placement vocabulary before evidence.
+
+### 6.7 Dismiss
+
+Separate from the lifecycle enum (which is command-centric). `auto_dismiss_after_ms: N` on the launch body closes the surface N milliseconds after it was opened, regardless of whether a command has exited. Makes presentation-style "show this for 10 seconds" a one-field decision rather than a polling loop. Explicit `POST /surfaces/{id}/close` dismisses on demand. Replacement via `POST /surfaces/{id}/replace` is the third path.
 
 ## 7. Operation Loop
 
@@ -250,8 +279,10 @@ Clear in agent transcripts and shell pipelines. The alternative `screenshot --af
 ### 8.1 macOS (v0)
 
 - **Identity + lifecycle + input**: Accessibility (AX) APIs via `accessibility-sys` / hand-rolled FFI.
-- **Launch**: `NSWorkspace` / `open` semantics, with tag injection.
+- **Launch**: `NSWorkspace` / `open` semantics for both `process` and `artifact` kinds, with tag injection for correlation.
 - **Capture**: CGWindowList for v0. ScreenCaptureKit as a later swap behind the adapter trait.
+- **Placement**: CoreGraphics display enumeration + AX window geometry. `on_display` and explicit `geometry` in v0; `anchor: focused_display` uses the same signals that feed `/attention`.
+- **Attention**: focused app/window via AX and NSWorkspace, focused display and cursor position via CoreGraphics. Read-only; cheap.
 - **Recording**: native path (AVFoundation or ScreenCaptureKit); ships v0.1.
 
 xcap (nashaofu/xcap) was evaluated and rejected as a dependency — the capture path is small enough to own directly, and owning it gives us a clean path to ScreenCaptureKit when CGWindowList's deprecation bites. We read xcap's macOS source as prior art for the CG bindings.
@@ -272,7 +303,7 @@ The noun for each is preserved in the v0 API shape (tabs exist as a surface type
 
 ## 9. v0 Scope in One Line
 
-macOS adapter, launch (with lifecycle) / attach / find / input / screenshot / wait / events, handles persisted by the daemon, sessions as opaque tags, HTTP over UDS, no recording yet, no overlay, no cross-host, no other platforms.
+macOS adapter, launch (process and artifact kinds, with lifecycle and placement) / attach / find / input / screenshot / wait / replace / events / attention, handles persisted by the daemon, sessions as opaque tags, HTTP over UDS, no recording yet, no overlay, no cross-host, no other platforms.
 
 Explicit v0.1 candidates:
 
@@ -310,6 +341,8 @@ Intentionally deferred:
 - **Cross-host routing.** HTTP over UDS makes TCP promotion trivial at the transport layer; the policy layer (who is allowed to display on whose host, how identity flows across) is an explicit later problem.
 - **Recording format and length bounds.** Defer to when we build it in v0.1.
 - **How the flotilla `PresentationManager` concept integrates.** Feeds into later flotilla work. The current read: flotilla's PresentationManager composes porthole calls and multiplexer calls, with env-var threading to carry identity. Concrete trait shape on flotilla's side is out of scope here.
+- **Slots** (the ChatGPT spec's named-place-where-surfaces-go concept). Considered and deferred: the v0 `replace` verb gives callers enough to reuse windows for successive artifacts without an additional abstraction. If presentation patterns emerge where the yeoman wants a persistent named reference across porthole restarts or across surfaces it didn't mint, slots come back on the table.
+- **Dedicated presentation subsystem with rendering.** Considered: a full `/presentations` resource with content-type dispatch, markdown rendering, a built-in webview. Rejected for v0 because porthole has no OS-level differences to paper over for rendering — a higher-level tool layered on top (or inside the flotilla yeoman) is the better home. Porthole ships primitives (attention, placement, artifact launch, replace) rich enough that such a tool can be thin.
 
 ## 14. Success Criterion
 
