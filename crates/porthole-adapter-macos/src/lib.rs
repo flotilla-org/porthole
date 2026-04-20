@@ -1,9 +1,17 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use async_trait::async_trait;
-use porthole_core::adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot};
+use porthole_core::adapter::{
+    Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot,
+};
 use porthole_core::surface::SurfaceInfo;
 use porthole_core::PortholeError;
+
+pub mod capture;
+pub mod correlation;
+pub mod enumerate;
+pub mod ffi;
+pub mod launch;
 
 pub struct MacOsAdapter;
 
@@ -25,17 +33,11 @@ impl Adapter for MacOsAdapter {
         "macos"
     }
 
-    async fn launch_process(&self, _spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
-        Err(PortholeError::new(
-            porthole_core::ErrorCode::CapabilityMissing,
-            "macOS launch_process not yet implemented",
-        ))
+    async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+        launch::launch_process(spec).await
     }
 
-    async fn screenshot(&self, _surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
-        Err(PortholeError::new(
-            porthole_core::ErrorCode::CapabilityMissing,
-            "macOS screenshot not yet implemented",
-        ))
+    async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
+        capture::screenshot(surface).await
     }
 }
