@@ -30,6 +30,8 @@ porthole-adapter-macos = { path = "../porthole-adapter-macos" }
 
 [dev-dependencies]
 tempfile = "3"
+porthole = { path = "../porthole" }
+porthole-protocol = { path = "../porthole-protocol" }
 
 [[bin]]
 name = "portholed"
