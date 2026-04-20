@@ -214,7 +214,9 @@ The lifecycle enum is command-centric and only applies to `process` launches. `a
 
 ### 6.4 Attach mode
 
-`POST /surfaces/search` returns candidates matching a query (app bundle, title regex, PID, AX path). Caller picks one, `POST /surfaces/{id}/track` promotes it to a watched handle. From then on the surface is indistinguishable from a launched one.
+`POST /surfaces/search` with a query (app bundle, title regex, PID, AX path) returns an array of candidates. Each candidate carries an opaque `ref` (not a surface id — candidates are not yet addressable as `/surfaces/{id}`). The caller picks one and calls `POST /surfaces/track` with `{ ref }` to mint a tracked handle. From then on the surface is indistinguishable from a launched one.
+
+Search is a *candidate enumeration* operation, not a lookup. Zero candidates is an empty array, not an error. Multiple candidates is the normal case — the whole point is for the caller to pick. There is no `ambiguous_search` error; ambiguity is the interface.
 
 Covers: "the user (or agent) opened a window manually, now porthole should manage it" and the standalone case.
 
@@ -239,6 +241,8 @@ Placement is a field on the launch body, applied once the surface is identified:
 
 Deferred to v0.1: `relative_to: <surface_id>`, `avoid: [<surface_id>, ...]`, size hints (`compact`, `medium`, `fill`). The primitives shipped in v0 cover the common presentation cases without committing to a richer placement vocabulary before evidence.
 
+**Placement and preexisting surfaces.** If a launch correlates to a surface that was already on the user's desktop (`surface_was_preexisting: true` — most common for `artifact` launches that reuse an open Preview window or browser tab), **placement is not applied**. Porthole does not reposition a user window the caller didn't previously own. The caller learns this via the preexisting flag and can, if it genuinely wants to move that window, take a second step: the surface is now tracked, so a future placement verb (`POST /surfaces/{id}/place`, v0.1) operates on it. A `force_place: true` launch-body option may be added in v0.1 for callers that want to override this default in one step; not in v0. This rule applies equally to plain artifact launches and to artifact replacements via §6.8.
+
 ### 6.7 Dismiss
 
 Separate from the lifecycle enum (which is command-centric). `auto_dismiss_after_ms: N` on the launch body closes the surface N milliseconds after it was opened, regardless of whether a command has exited. Makes presentation-style "show this for 10 seconds" a one-field decision rather than a polling loop. Explicit `POST /surfaces/{id}/close` dismisses on demand. Replacement via `POST /surfaces/{id}/replace` is the third path.
@@ -249,7 +253,7 @@ Separate from the lifecycle enum (which is command-centric). `auto_dismiss_after
 
 - **Handle-atomic**: the caller gets either `{ new_surface_id, ... }` on success or a typed error on failure. On error, the caller also learns that the old handle is already dead — there is no "rollback to the old window."
 - **Not visually atomic**: the OS will show a brief gap (or, depending on sequencing, a brief overlap). Target geometry is applied to the new surface after correlation, per §6.6.
-- **Reused surfaces**: if the replacement is an `artifact` launch that correlates to a pre-existing surface (not newly opened), `replace` still closes the old surface, but the "new" surface handle may refer to something that was already present on the user's desktop. In that case placement is best-effort — porthole will not reposition an unrelated user window without the caller having held a handle to it first.
+- **Reused surfaces**: if the replacement is an `artifact` launch that correlates to a pre-existing surface (not newly opened), `replace` still closes the old surface, but the "new" surface handle may refer to something that was already present on the user's desktop. Placement is not applied in that case, per §6.6 — porthole does not reposition a user window the caller didn't previously own.
 
 A future overlay subsystem (§13) could mask the visual gap by drawing a porthole-owned overlay during the swap — gone once the new surface is correlated and placed. That is a concrete second argument for overlays beyond the spec's original "highlight this region" use case and is recorded as deferred work.
 
@@ -337,8 +341,8 @@ Explicit v0.1 candidates:
 ## 10. Error Model
 
 - Typed, machine-readable error responses — every error has a code, a message, and (where relevant) structured fields.
-- Distinct codes for: `surface_not_found`, `surface_dead`, `permission_needed`, `launch_correlation_failed` (no candidates), `launch_correlation_ambiguous` (candidates present but none reach required confidence; candidate list included), `launch_timeout`, `candidate_ref_unknown` (search `ref` not recognised by `/surfaces/track`), `ambiguous_search`, `adapter_unsupported`, `capability_missing`.
-- Ambiguity in search returns `ambiguous_search` with the candidate list — never a silent best-effort pick.
+- Distinct codes for: `surface_not_found`, `surface_dead`, `permission_needed`, `launch_correlation_failed` (no candidates), `launch_correlation_ambiguous` (candidates present but none reach required confidence; candidate list included), `launch_timeout`, `candidate_ref_unknown` (search `ref` not recognised by `/surfaces/track`), `adapter_unsupported`, `capability_missing`.
+- Search itself is never ambiguous by contract — it enumerates candidates and the caller picks. The ambiguity-as-error path is only in the launch flow, where a single surface has to be identified.
 
 ## 11. Observability and Debuggability
 
