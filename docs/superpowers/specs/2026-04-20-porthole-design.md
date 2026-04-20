@@ -97,6 +97,12 @@ Chosen for:
 
 The UDS lives under the XDG runtime dir (same discovery priority as cleat: `$PORTHOLE_RUNTIME_DIR` → `$XDG_RUNTIME_DIR/porthole` → `$TMPDIR/porthole-<uid>` → `/tmp/porthole-<uid>`). Per-user, not per-session — porthole handles span tasks.
 
+#### 3.1.1 Transport details
+
+- **HTTP/1.1** is the v0 baseline. hyper/axum speak it natively over UDS; HTTP/2-over-UDS (h2c) adds machinery for near-zero benefit on a local socket and is not pursued in v0.
+- **SSE runs on its own connection.** Under HTTP/1.1 a single connection carries one in-flight request, so an open event stream occupies that connection exclusively. Synchronous calls use a separate (pooled) connection. Connection cost is trivial on UDS. Typical client shape: one task consumes `/events`; request calls go on another connection.
+- **Events are ephemeral.** If a client disconnects, events emitted while gone are lost. `Last-Event-ID` replay and an event log are deferred until a use case asks for them — the evidence-loop and presentation cases treat SSE as a live notification channel, not a durable log.
+
 ### 3.2 Embedding
 
 `porthole-core` is a library crate so that an embedder (a future flotilla path, test harnesses) can skip the socket and call in-process. The daemon is the shipping deployment for v0; embedding is a structural property kept alive for later, not a second delivery vehicle.
