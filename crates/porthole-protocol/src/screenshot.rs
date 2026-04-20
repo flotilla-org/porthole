@@ -16,6 +16,8 @@ pub struct ScreenshotResponse {
     pub content_bounds: Option<Rect>,
     pub scale: f64,
     pub captured_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

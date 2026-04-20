@@ -29,6 +29,7 @@ pub async fn post_launches(
 }
 
 fn request_to_spec(req: &LaunchRequest) -> Result<ProcessLaunchSpec, ApiError> {
+    // req.session is intentionally dropped here; propagation deferred to events/attention plan
     match &req.kind {
         LaunchKind::Process(p) => Ok(ProcessLaunchSpec {
             app: p.app.clone(),

@@ -13,6 +13,7 @@ pub async fn post_screenshot(
     Path(id): Path<String>,
     Json(_req): Json<ScreenshotRequest>,
 ) -> Result<Json<ScreenshotResponse>, ApiError> {
+    // session propagation deferred to events/attention plan
     let surface_id = SurfaceId::from(id.clone());
     let info = state.handles.require_alive(&surface_id).await?;
     let shot = state.adapter.screenshot(&info).await?;
@@ -24,6 +25,7 @@ pub async fn post_screenshot(
         content_bounds: shot.content_bounds_points.map(to_rect),
         scale: shot.scale,
         captured_at_unix_ms: shot.captured_at_unix_ms,
+        session: None,
     }))
 }
 

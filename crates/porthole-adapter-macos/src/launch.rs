@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use porthole_core::adapter::{Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec};
 use porthole_core::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
@@ -69,6 +69,7 @@ fn build_and_spawn(spec: &ProcessLaunchSpec, tag: &str) -> Result<tokio::process
     if let Some(cwd) = &spec.cwd {
         cmd.current_dir(cwd);
     }
+    cmd.kill_on_drop(true);
     cmd.spawn().map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("failed to spawn open: {e}")))
 }
 
@@ -90,11 +91,6 @@ async fn pid_has_env(pid: i32, key: &str, expected: &str) -> bool {
     let text = String::from_utf8_lossy(&out.stdout);
     let needle = format!("{key}={expected}");
     text.contains(&needle)
-}
-
-#[allow(dead_code)]
-fn now_unix_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(all(test, target_os = "macos"))]
