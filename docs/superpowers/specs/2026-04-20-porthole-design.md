@@ -137,6 +137,25 @@ Operations are verbs on surfaces:
 - `POST /surfaces/search` — query for candidate surfaces; does not mint handles. Used for attach mode.
 - `POST /surfaces/track` — promote a search-returned `ref` (opaque candidate descriptor, not a surface id) into a tracked surface handle.
 
+#### 4.1 Verbs on tab surfaces (v0 restriction)
+
+A surface handle can refer to a window or to a tab (with `parent_surface_id` set). In v0 the verb set is not uniform across the two:
+
+| Verb | Window target | Tab target (v0) |
+|---|---|---|
+| `focus` | yes | yes — activates the tab, brings window forward |
+| `close` | yes | yes — closes just the tab, not the window |
+| `screenshot` | yes | yes — activates the tab, then captures the whole parent window (including chrome) |
+| `key` / `text` / `click` / `scroll` | yes | no — returns `capability_missing` with `reason: "tab_verb_not_implemented"` |
+| `wait` | yes | no — ditto |
+| `replace` | yes | no — ditto |
+
+The rule for supported tab verbs: **activate the tab in its parent window, then perform the operation on the window.** Activation is a visible side effect — the user sees the tab come to front. Callers that need to target a tab without changing the window's visible tab cannot in v0.
+
+Content-area crop (screenshot of just the tab's content region, excluding window chrome) requires per-app knowledge and is deferred to v0.1+. v0 callers who need just the content area can crop client-side using the window and tab-bar geometry returned in the screenshot metadata.
+
+Expanding the tab verb set (input, wait, replace) and adding content-area crop are explicit v0.1 candidates.
+
 Sessions are an opaque tag field, not a resource. Every mutation accepts an optional `session` string; it propagates into SSE event payloads and into capture metadata. There is no `/sessions` resource, no durable index, no query endpoint — callers correlate on their side (by watching SSE or keeping their own records). The tag exists so a future scoping layer (agent tokens limited to a session set) and a future query endpoint can slot in without changing the caller contract — but neither is promised by v0.
 
 ## 5. Handles
@@ -307,7 +326,8 @@ Clear in agent transcripts and shell pipelines. The alternative `screenshot --af
 
 - **Identity + lifecycle + input**: Accessibility (AX) APIs via `accessibility-sys` / hand-rolled FFI.
 - **Launch**: `NSWorkspace` / `open` semantics for both `process` and `artifact` kinds. Process launches use tag injection for strong correlation. Artifact launches correlate via AX document-path / document-URL attributes on frontmost windows and tabs — stronger on apps that expose the document model richly (Preview, Safari, Chrome), weaker on apps that don't.
-- **Capture**: CGWindowList for v0. ScreenCaptureKit as a later swap behind the adapter trait.
+- **Capture**: CGWindowList for window targets. For tab targets per §4.1: activate the tab via AX (`AXTabs` selection on the parent window), then capture the parent window as a whole. ScreenCaptureKit as a later swap behind the adapter trait.
+- **Tab support**: tab enumeration and activation via AX for apps that expose `AXTabs` (Safari, Preview, Finder, iTerm2, Ghostty). Chrome's AX tab support is weaker; full Chrome tab coverage is deferred to the browser-CDP adapter in v0.1. Apps without `AXTabs` appear as windows only.
 - **Placement**: CoreGraphics display enumeration + AX window geometry. `on_display` and explicit `geometry` in v0; `anchor: focused_display` uses the same signals that feed `/attention`.
 - **Attention**: focused app/window via AX and NSWorkspace, focused display and cursor position via CoreGraphics. Read-only; cheap.
 - **Recording**: native path (AVFoundation or ScreenCaptureKit); ships v0.1.
@@ -330,13 +350,15 @@ The noun for each is preserved in the v0 API shape (tabs exist as a surface type
 
 ## 9. v0 Scope in One Line
 
-macOS adapter, launch (process and artifact kinds, with lifecycle and placement) / attach / find / input / screenshot / wait / replace / events / attention, handles persisted by the daemon, sessions as opaque tags, HTTP over UDS, no recording yet, no overlay, no cross-host, no other platforms.
+macOS adapter, launch (process and artifact kinds, with lifecycle and placement) / attach / find / input / screenshot / wait / replace / events / attention, handles persisted by the daemon, sessions as opaque tags, HTTP over UDS, no recording yet, no overlay, no cross-host, no other platforms. Tabs are first-class surfaces but with a restricted verb set in v0 (focus / close / screenshot only; see §4.1).
 
 Explicit v0.1 candidates:
 
 - Recording on macOS
-- Multi-display placement verbs
-- Browser tabs via CDP
+- Multi-display placement verbs (`POST /surfaces/{id}/place`)
+- Browser tabs via CDP (full Chrome/Edge tab coverage)
+- Expanded tab verb set (input, wait, replace) and content-area screenshot crop
+- `force_place: true` launch option for placement on preexisting surfaces
 
 ## 10. Error Model
 
