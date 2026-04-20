@@ -50,7 +50,9 @@ Applied:
 | Agent hooks, session lifecycles, repo state | flotilla |
 | Nested addressing (pane inside tab inside window) | flotilla, via env-var threading |
 
-Porthole does not model nesting. When flotilla needs to drive a specific pane inside a specific iTerm2 tab, it asks porthole to focus the window-and-tab, then uses its own multiplexer knowledge for the pane, then asks porthole to screenshot the window. Env vars set at launch thread the identity through.
+Porthole does not model *caller-side* nesting — multiplexer panes, agent-session hierarchies, work items. Those stay with the caller. When flotilla needs to drive a specific pane inside a specific iTerm2 tab, it asks porthole to focus the window-and-tab, then uses its own multiplexer knowledge for the pane, then asks porthole to screenshot the window. Env vars set at launch thread the identity through.
+
+Porthole *does* model nesting that comes from native app APIs — specifically tab-in-window relationships exposed by iTerm2/Ghostty/Safari/Chrome. Each tab surface carries a `parent_surface_id` referencing its window; each window exposes `child_surface_ids` for its tabs. This nesting is OS-adjacent (different apps expose tabs differently; we paper over that), so it belongs to porthole.
 
 ### 2.3 Primary client is an agent
 
@@ -131,11 +133,11 @@ Operations are verbs on surfaces:
 - `POST /surfaces/{id}/wait`
 - `POST /surfaces/{id}/focus`
 - `POST /surfaces/{id}/close`
-- `POST /surfaces/{id}/replace` — close this surface and launch a new one in its position; atomic from the caller's POV. Enables "reuse-in-place" for presentation without needing the spec's slot concept in v0.
-- `POST /surfaces/search` — find by query; used for attach mode
-- `POST /surfaces/{id}/track` — promote a search result to a watched handle
+- `POST /surfaces/{id}/replace` — close this surface and launch a new one in its position. *Handle-atomic*: the caller gets either a new surface handle or a typed error; the old handle transitions to dead regardless. Not *visually* atomic — see §6.8.
+- `POST /surfaces/search` — query for candidate surfaces; does not mint handles. Used for attach mode.
+- `POST /surfaces/track` — promote a search-returned `ref` (opaque candidate descriptor, not a surface id) into a tracked surface handle.
 
-Sessions are an opaque tag field, not a resource. Every mutation accepts an optional `session` string; the daemon indexes by it so callers can ask "what happened under this session" without porthole competing to be the system of record. This leaves room for future scoping (agent tokens limited to a session set) without locking storage semantics now.
+Sessions are an opaque tag field, not a resource. Every mutation accepts an optional `session` string; it propagates into SSE event payloads and into capture metadata. There is no `/sessions` resource, no durable index, no query endpoint — callers correlate on their side (by watching SSE or keeping their own records). The tag exists so a future scoping layer (agent tokens limited to a session set) and a future query endpoint can slot in without changing the caller contract — but neither is promised by v0.
 
 ## 5. Handles
 
@@ -153,11 +155,21 @@ The central technical problem: "I just launched Ghostty. Three other Ghostty win
 
 ### 6.1 Strategy
 
-Layered fallback with reported confidence:
+Layered fallback with reported confidence. The correlation stack differs by launch kind because the signals available differ; the confidence contract is the common interface.
 
-1. **Strong tag** where the adapter knows how — env var readable via `ps eww`, window title token the launched command sets, AX attribute, URL-scheme echo, etc. Adapter-specific per app class.
+**For `process` launches** — new-surface expected:
+
+1. **Strong tag** where the adapter knows how — env var readable via `ps eww`, window title token the launched command sets, AX attribute, URL-scheme echo. Adapter-specific per app class.
 2. **PID tree** — capture the launched PID, match windows whose owning process is in its descendant tree.
-3. **Temporal window** — the next new window of the expected app that appears within Δt.
+3. **Temporal window** — the next new window of the expected app appearing within Δt.
+
+**For `artifact` launches** — surface may be new *or reused*:
+
+1. **Document match (strong)** — the surface whose frontmost document's path/URL matches what we opened, discovered via AX document attributes or (future) app-specific tab APIs. Matches reused windows and tabs as well as new ones.
+2. **Frontmost-changed (plausible)** — the handler app's frontmost window changed within Δt of the `open` call. Weaker because it doesn't verify the document.
+3. **Temporal window (weak)** — first new window of the handler app, if one appears. Only fires for "new window" flows.
+
+An artifact launch may therefore return a handle to a surface that already existed and is now *promoted to tracked* (analogous to attach mode run implicitly). The response is shape-identical regardless.
 
 The launch response reports:
 
@@ -165,15 +177,16 @@ The launch response reports:
 {
   "launch_id": "...",
   "surface_id": "...",
+  "surface_was_preexisting": true | false,
   "confidence": "strong" | "plausible" | "weak",
-  "correlation": "tag" | "pid_tree" | "temporal",
+  "correlation": "tag" | "pid_tree" | "temporal" | "document_match" | "frontmost_changed",
   "evidence": { ... }
 }
 ```
 
 v0 assumes a single identified surface per launch. Launches that produce multiple surfaces (multi-window apps opening several at once) are deferred: the launch returns the first correlated surface, the rest are attachable via `/surfaces/search`. A future `surface_ids: [...]` field can layer on without breaking the v0 response shape.
 
-Callers pass `require_confidence: "strong"` to fail fast if the adapter cannot get a strong match. Default accepts `plausible`. Weak matches require opt-in.
+**Confidence default is `strong`.** A launch that cannot reach strong correlation returns a `launch_correlation_ambiguous` error with the candidate correlations attached; the caller must explicitly retry with `require_confidence: "plausible"` or `"weak"` to accept a weaker match. Silently accepting a plausible correlation on an agent-first API is how the wrong window gets typed into.
 
 ### 6.2 Contract
 
@@ -230,6 +243,16 @@ Deferred to v0.1: `relative_to: <surface_id>`, `avoid: [<surface_id>, ...]`, siz
 
 Separate from the lifecycle enum (which is command-centric). `auto_dismiss_after_ms: N` on the launch body closes the surface N milliseconds after it was opened, regardless of whether a command has exited. Makes presentation-style "show this for 10 seconds" a one-field decision rather than a polling loop. Explicit `POST /surfaces/{id}/close` dismisses on demand. Replacement via `POST /surfaces/{id}/replace` is the third path.
 
+### 6.8 Replace semantics
+
+`POST /surfaces/{id}/replace` takes a launch body and runs a two-step sequence: close the existing surface, then launch the new one. Behavior:
+
+- **Handle-atomic**: the caller gets either `{ new_surface_id, ... }` on success or a typed error on failure. On error, the caller also learns that the old handle is already dead — there is no "rollback to the old window."
+- **Not visually atomic**: the OS will show a brief gap (or, depending on sequencing, a brief overlap). Target geometry is applied to the new surface after correlation, per §6.6.
+- **Reused surfaces**: if the replacement is an `artifact` launch that correlates to a pre-existing surface (not newly opened), `replace` still closes the old surface, but the "new" surface handle may refer to something that was already present on the user's desktop. In that case placement is best-effort — porthole will not reposition an unrelated user window without the caller having held a handle to it first.
+
+A future overlay subsystem (§13) could mask the visual gap by drawing a porthole-owned overlay during the swap — gone once the new surface is correlated and placed. That is a concrete second argument for overlays beyond the spec's original "highlight this region" use case and is recorded as deferred work.
+
 ## 7. Operation Loop
 
 ### 7.1 Input
@@ -279,7 +302,7 @@ Clear in agent transcripts and shell pipelines. The alternative `screenshot --af
 ### 8.1 macOS (v0)
 
 - **Identity + lifecycle + input**: Accessibility (AX) APIs via `accessibility-sys` / hand-rolled FFI.
-- **Launch**: `NSWorkspace` / `open` semantics for both `process` and `artifact` kinds, with tag injection for correlation.
+- **Launch**: `NSWorkspace` / `open` semantics for both `process` and `artifact` kinds. Process launches use tag injection for strong correlation. Artifact launches correlate via AX document-path / document-URL attributes on frontmost windows and tabs — stronger on apps that expose the document model richly (Preview, Safari, Chrome), weaker on apps that don't.
 - **Capture**: CGWindowList for v0. ScreenCaptureKit as a later swap behind the adapter trait.
 - **Placement**: CoreGraphics display enumeration + AX window geometry. `on_display` and explicit `geometry` in v0; `anchor: focused_display` uses the same signals that feed `/attention`.
 - **Attention**: focused app/window via AX and NSWorkspace, focused display and cursor position via CoreGraphics. Read-only; cheap.
@@ -314,7 +337,7 @@ Explicit v0.1 candidates:
 ## 10. Error Model
 
 - Typed, machine-readable error responses — every error has a code, a message, and (where relevant) structured fields.
-- Distinct codes for: `surface_not_found`, `surface_dead`, `permission_needed`, `launch_correlation_failed`, `launch_timeout`, `ambiguous_search`, `adapter_unsupported`, `capability_missing`.
+- Distinct codes for: `surface_not_found`, `surface_dead`, `permission_needed`, `launch_correlation_failed` (no candidates), `launch_correlation_ambiguous` (candidates present but none reach required confidence; candidate list included), `launch_timeout`, `candidate_ref_unknown` (search `ref` not recognised by `/surfaces/track`), `ambiguous_search`, `adapter_unsupported`, `capability_missing`.
 - Ambiguity in search returns `ambiguous_search` with the candidate list — never a silent best-effort pick.
 
 ## 11. Observability and Debuggability
@@ -343,6 +366,7 @@ Intentionally deferred:
 - **How the flotilla `PresentationManager` concept integrates.** Feeds into later flotilla work. The current read: flotilla's PresentationManager composes porthole calls and multiplexer calls, with env-var threading to carry identity. Concrete trait shape on flotilla's side is out of scope here.
 - **Slots** (the ChatGPT spec's named-place-where-surfaces-go concept). Considered and deferred: the v0 `replace` verb gives callers enough to reuse windows for successive artifacts without an additional abstraction. If presentation patterns emerge where the yeoman wants a persistent named reference across porthole restarts or across surfaces it didn't mint, slots come back on the table.
 - **Dedicated presentation subsystem with rendering.** Considered: a full `/presentations` resource with content-type dispatch, markdown rendering, a built-in webview. Rejected for v0 because porthole has no OS-level differences to paper over for rendering — a higher-level tool layered on top (or inside the flotilla yeoman) is the better home. Porthole ships primitives (attention, placement, artifact launch, replace) rich enough that such a tool can be thin.
+- **Overlays — now with a second argument.** The ChatGPT spec proposed an overlay subsystem for annotation, highlight, and guided flows. Deferred from v0. The `replace` semantics in §6.8 surface a second use case: masking the visual gap between closing the old surface and placing the new one. That concrete need raises the priority of overlays for v0.1+ and gives the design a practical anchor beyond the original highlight framing.
 
 ## 14. Success Criterion
 
