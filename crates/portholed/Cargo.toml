@@ -1,0 +1,39 @@
+[package]
+name = "portholed"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "portholed"
+
+[dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+porthole-core = { path = "../porthole-core" }
+porthole-protocol = { path = "../porthole-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+base64 = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+porthole-adapter-macos = { path = "../porthole-adapter-macos" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "portholed"
+path = "src/main.rs"
+
+[lints]
+workspace = true
