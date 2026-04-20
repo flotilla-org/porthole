@@ -7,7 +7,7 @@ use crate::adapter::{
     Adapter, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot,
 };
 use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use crate::{ErrorCode, PortholeError};
+use crate::PortholeError;
 
 #[derive(Clone, Default)]
 pub struct InMemoryAdapter {
@@ -106,6 +106,7 @@ fn minimal_png() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ErrorCode;
 
     #[tokio::test]
     async fn launch_records_call_and_returns_default_outcome() {

@@ -5,17 +5,12 @@ use async_trait::async_trait;
 use crate::surface::SurfaceInfo;
 use crate::PortholeError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RequireConfidence {
+    #[default]
     Strong,
     Plausible,
     Weak,
-}
-
-impl Default for RequireConfidence {
-    fn default() -> Self {
-        Self::Strong
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,12 +22,12 @@ pub enum Confidence {
 
 impl Confidence {
     pub fn meets(self, required: RequireConfidence) -> bool {
-        match (self, required) {
-            (Confidence::Strong, _) => true,
-            (Confidence::Plausible, RequireConfidence::Plausible | RequireConfidence::Weak) => true,
-            (Confidence::Weak, RequireConfidence::Weak) => true,
-            _ => false,
-        }
+        matches!(
+            (self, required),
+            (Confidence::Strong, _)
+                | (Confidence::Plausible, RequireConfidence::Plausible | RequireConfidence::Weak)
+                | (Confidence::Weak, RequireConfidence::Weak)
+        )
     }
 }
 
