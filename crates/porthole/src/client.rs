@@ -71,4 +71,6 @@ pub enum ClientError {
     Json(#[from] serde_json::Error),
     #[error("api: {} ({})", .0.code, .0.message)]
     Api(WireError),
+    #[error("{0}")]
+    Local(String),
 }
