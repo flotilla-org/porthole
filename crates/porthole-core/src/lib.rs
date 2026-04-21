@@ -13,6 +13,7 @@ pub mod launch;
 pub mod permission;
 pub mod surface;
 pub mod wait;
+pub mod wait_pipeline;
 
 pub use attention::{AttentionInfo, CursorPos};
 pub use display::{DisplayId, DisplayInfo, Rect as DisplayRect};
