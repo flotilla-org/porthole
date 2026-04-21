@@ -24,6 +24,7 @@ pub async fn get_info(State(state): State<AppState>) -> Result<Json<InfoResponse
                 "wait".to_string(),
                 "close".to_string(),
                 "focus".to_string(),
+                "attention".to_string(),
                 "attention_cursor".to_string(),
                 "attention_focused_app".to_string(),
                 "attention_focused_display".to_string(),

@@ -58,7 +58,7 @@ GET  /attention                — focus / cursor / recent
 GET  /displays                 — monitors
 ```
 
-`LaunchRequest` is unchanged by this slice. `InfoResponse.adapters[].capabilities` grows these entries: `input_key`, `input_text`, `input_click`, `input_scroll`, `wait`, `close`, `focus`, `attention`, `displays`. Capability advertisement lets callers detect what an adapter actually supports without probe-and-fail.
+`LaunchRequest` is unchanged by this slice. `InfoResponse.adapters[].capabilities` grows these entries: `input_key`, `input_text`, `input_click`, `input_scroll`, `wait`, `close`, `focus`, `attention`, `attention_cursor`, `attention_focused_app`, `attention_focused_display`, `attention_focused_surface`, `displays`. `attention` is a superset entry — present whenever at least one attention sub-cap is implemented — so existing callers probing for `"attention"` continue to work. The four granular sub-caps let callers detect which sub-features are available without probe-and-fail. Capability advertisement lets callers detect what an adapter actually supports without probe-and-fail.
 
 Tab surface handling: tab surfaces are still deferred (not enumerated by the foundation; no tab enumeration added here either), so in practice this slice's verbs only ever operate on window surfaces. When tab surfaces do land in a later slice, the v0 spec's §4.1 matrix applies — `focus` activates the tab and brings its window forward, `screenshot` activates the tab and captures the whole window, and `close` closes just the tab (not the window); the input verbs and `wait` return `capability_missing` on tabs. This slice does not change that matrix.
 
@@ -279,7 +279,7 @@ Response:
 - `focused_surface_id` is null when the frontmost OS window isn't one porthole tracks.
 - `focused_app_bundle` is always filled when the frontmost app is known (via `NSWorkspace.frontmostApplication`).
 - `cursor.display_id` is computed from the cursor position against the current display bounds.
-- `recently_active_surface_ids` is ordered most-recent-first, tracks only porthole-managed surfaces. Updated whenever a tracked surface gains focus. Capped at 16; older entries drop.
+- `recently_active_surface_ids` — in slice A, this is always empty. Populating MRU tracking requires focus-change observation (either polling or native AX observers); both are deferred. The field is present in the response shape so callers can start coding against it, but they should expect empty values until the events slice lands. See Known Limitations.
 
 ### 8.2 GET /displays
 
@@ -418,6 +418,8 @@ Explicitly deferred to later slices (not this one):
 - **`last_observed` diagnostics on `wait_timeout` for `stable`/`dirty` carry placeholder zero values** — `exists`/`gone`/`title_matches` conditions carry real diagnostics in the `details` field; `stable`/`dirty` report zeros because precise frame-change tracking across timeout boundaries is deferred to a later slice.
 
 - **AX FFI lacks RAII newtype wrappers** — raw `AXUIElementRef` pointers with explicit `CFRelease` via the closure-based helpers. Acknowledged v0 debt.
+
+- **The capability list in `/info` is hardcoded rather than derived from each adapter's actual method surface.** Adapter methods that would return `AdapterUnsupported` or `CapabilityMissing` are not reflected in the advertised capabilities. Moving to a per-adapter `capabilities()` trait method is v0.1+ work.
 
 ## 13. Success criterion
 
