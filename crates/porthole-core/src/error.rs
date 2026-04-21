@@ -14,6 +14,9 @@ pub enum ErrorCode {
     CandidateRefUnknown,
     AdapterUnsupported,
     CapabilityMissing,
+    WaitTimeout,
+    UnknownKey,
+    InvalidCoordinate,
 }
 
 impl fmt::Display for ErrorCode {
@@ -28,6 +31,9 @@ impl fmt::Display for ErrorCode {
             Self::CandidateRefUnknown => "candidate_ref_unknown",
             Self::AdapterUnsupported => "adapter_unsupported",
             Self::CapabilityMissing => "capability_missing",
+            Self::WaitTimeout => "wait_timeout",
+            Self::UnknownKey => "unknown_key",
+            Self::InvalidCoordinate => "invalid_coordinate",
         };
         f.write_str(s)
     }
@@ -65,5 +71,12 @@ mod tests {
         let err = PortholeError::surface_not_found("abc");
         assert_eq!(err.code, ErrorCode::SurfaceNotFound);
         assert!(err.message.contains("abc"));
+    }
+
+    #[test]
+    fn new_error_codes_display_as_snake_case() {
+        assert_eq!(ErrorCode::WaitTimeout.to_string(), "wait_timeout");
+        assert_eq!(ErrorCode::UnknownKey.to_string(), "unknown_key");
+        assert_eq!(ErrorCode::InvalidCoordinate.to_string(), "invalid_coordinate");
     }
 }
