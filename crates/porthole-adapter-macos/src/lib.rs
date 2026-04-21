@@ -13,11 +13,18 @@ use porthole_core::wait::{LastObserved, WaitCondition, WaitOutcome};
 use porthole_core::PortholeError;
 
 pub mod capture;
+pub mod close_focus;
 pub mod correlation;
+pub mod display;
 pub mod enumerate;
 pub mod ffi;
+pub mod frame_diff;
+pub mod input;
 pub mod key_codes;
 pub mod launch;
+pub mod attention;
+pub mod permissions;
+pub mod wait;
 
 pub struct MacOsAdapter;
 
@@ -47,51 +54,55 @@ impl Adapter for MacOsAdapter {
         capture::screenshot(surface).await
     }
 
-    async fn key(&self, _surface: &SurfaceInfo, _events: &[KeyEvent]) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS key input")
+    async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
+        input::key(surface, events).await
     }
 
-    async fn text(&self, _surface: &SurfaceInfo, _text: &str) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS text input")
+    async fn text(&self, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
+        input::text(surface, text).await
     }
 
-    async fn click(&self, _surface: &SurfaceInfo, _spec: &ClickSpec) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS click input")
+    async fn click(&self, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+        input::click(surface, spec).await
     }
 
-    async fn scroll(&self, _surface: &SurfaceInfo, _spec: &ScrollSpec) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS scroll input")
+    async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+        input::scroll(surface, spec).await
     }
 
-    async fn close(&self, _surface: &SurfaceInfo) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS close")
+    async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        close_focus::close(surface).await
     }
 
-    async fn focus(&self, _surface: &SurfaceInfo) -> Result<(), PortholeError> {
-        todo!("Batch E: macOS focus")
+    async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        close_focus::focus(surface).await
     }
 
-    async fn wait(&self, _surface: &SurfaceInfo, _condition: &WaitCondition) -> Result<WaitOutcome, PortholeError> {
-        todo!("Batch E: macOS wait")
+    async fn wait(
+        &self,
+        surface: &SurfaceInfo,
+        condition: &WaitCondition,
+    ) -> Result<WaitOutcome, PortholeError> {
+        wait::wait(surface, condition).await
     }
 
     async fn wait_last_observed(
         &self,
-        _surface: &SurfaceInfo,
-        _condition: &WaitCondition,
+        surface: &SurfaceInfo,
+        condition: &WaitCondition,
     ) -> Result<LastObserved, PortholeError> {
-        todo!("Batch E: macOS wait_last_observed")
+        wait::wait_last_observed(surface, condition).await
     }
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError> {
-        todo!("Batch E: macOS attention")
+        attention::attention().await
     }
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {
-        todo!("Batch E: macOS displays")
+        display::displays().await
     }
 
     async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError> {
-        todo!("Batch E: macOS permissions")
+        permissions::permissions().await
     }
 }
