@@ -18,6 +18,7 @@ Scope is "Profile 2 of Slice A" as agreed in brainstorm, refined during spec rev
 This slice adds verbs and resources. It does **not** change any contract already shipped:
 
 - Existing error codes, `SurfaceId`, `LaunchRequest`/`LaunchResponse`, `ScreenshotResponse`, HTTP-over-UDS transport, handle lifecycle — unchanged.
+- One additive schema extension: `AdapterInfo` grows an optional `permissions: Vec<PermissionStatus>` field. See §8.3. Existing callers that don't read it are unaffected (serde default).
 - `Adapter` trait gains new methods, but existing methods keep their signatures. The in-memory adapter grows new scripting hooks alongside the existing ones.
 - The v0 design spec's "out of scope" list contracts; items it pulls in are explicitly named below.
 
@@ -147,8 +148,8 @@ All four input verbs **focus the target surface before injecting**. Focus = AX r
 
 ```json
 {
-  "condition": { "type": "stable", "window_ms": 500 }
-             | { "type": "dirty" }
+  "condition": { "type": "stable", "window_ms": 1500, "threshold_pct": 1.0 }
+             | { "type": "dirty", "threshold_pct": 1.0 }
              | { "type": "exists" }
              | { "type": "gone" }
              | { "type": "title_matches", "pattern": "regex" },
@@ -163,24 +164,40 @@ Response on success:
 { "surface_id": "...", "condition": "stable", "elapsed_ms": 823 }
 ```
 
-Response on timeout: `wait_timeout` error with `last_observed` diagnostics (for `stable`/`dirty`, the time since the last detected hash change; for `exists`/`gone`, whether the surface was present at timeout; for `title_matches`, the last observed title).
+Response on timeout: `wait_timeout` error with `last_observed` diagnostics (for `stable`/`dirty`, the time since the last significant frame change and the observed change fraction; for `exists`/`gone`, whether the surface was present at timeout; for `title_matches`, the last observed title).
 
 ### 5.1 Condition semantics
 
 - **`exists`** — returns as soon as the tracked surface is in `Alive` state. Cheap; polls the handle store at short intervals.
 - **`gone`** — returns as soon as the tracked surface transitions to `Dead`. Polls the same store. Useful for "wait for this dialog to close."
 - **`title_matches`** — polls AX window title, tests regex. Regex is Rust `regex` crate syntax. Compiled once per call.
-- **`stable: { window_ms }`** — repeatedly screenshot and hash pixel bytes; return when the hash has not changed for `window_ms` consecutive milliseconds.
-- **`dirty`** — screenshot-hash; return on first change from the initial sample.
+- **`stable: { window_ms, threshold_pct }`** — repeatedly screenshot and compare frames. Returns when no frame in the last `window_ms` differed from its predecessor by more than `threshold_pct` of pixels.
+- **`dirty: { threshold_pct }`** — repeatedly screenshot. Returns on the first frame whose difference from the initial sample exceeds `threshold_pct`.
 
-Sampling interval for screenshot-hash waits: 100 ms fixed. This is expensive (each sample is a full window capture) and is the known-slow implementation. When SSE events land in a later slice, `stable` and `dirty` swap to AX-observer-backed implementation without any wire-contract change. `GET /info` advertises `"wait"` as a present capability and `"wait_events_native"` as absent, so callers that care can detect this.
+### 5.2 Why `threshold_pct`
 
-### 5.2 Timeouts and defaults
+Terminals, video players, progress indicators, and anything else with a blinking cursor or animated glyph continuously change a tiny fraction of pixels. A naive "any hash change counts" policy would see those as perpetually dirty and never stable, livelocking the canonical evidence loop the moment it targets a terminal.
+
+`threshold_pct` is the fraction of pixels (0–100) that must change between consecutive samples to count as a real change. Defaults:
+
+- `stable.window_ms`: 1500 ms
+- `stable.threshold_pct`: 1.0
+- `dirty.threshold_pct`: 1.0
+
+A cursor cell is well under 1% of a typical terminal window; a typical command output burst is well over 1%. The defaults work for the canonical loop without ceremony. Callers that need finer sensitivity (e.g., a game or a busy dashboard) tune explicitly.
+
+Implementation: each sample produces a downsampled grayscale fingerprint of the window; consecutive-sample diff is counted at that resolution, then converted to a percentage. Sampling interval is 100 ms fixed.
+
+### 5.3 Future implementation notes
+
+`stable` and `dirty` are pixel-based by nature. AX observers do not fire a "window contents changed" notification, so a future events slice will **not** swap the implementation of these two conditions — they stay pixel-based. Events land for `exists`, `gone`, and `title_matches`, where AX has natural notifications. `GET /info` advertises `"wait"` as a present capability; a future `"wait_events_native"` flag, when added, covers only the conditions events actually can cover.
+
+### 5.4 Timeouts and defaults
 
 - `timeout_ms` is required in the design intent but has a default of 10 000 ms in the wire type (`#[serde(default)]`) so callers don't have to pass it every call.
 - A wait that exits via timeout returns `wait_timeout`, not success. Callers that genuinely want "wait up to N ms then proceed regardless" must handle the error explicitly.
 
-### 5.3 Input ordering
+### 5.5 Input ordering
 
 Verbs are independent HTTP calls; there's no implicit ordering. Agents that want "send Enter, wait for repaint, screenshot" compose three calls:
 
@@ -194,29 +211,32 @@ This is the canonical evidence loop. Three HTTP calls per repaint captured. Clea
 
 ## 6. Running commands in a terminal
 
-This slice does **not** add a "run this command at launch" facility to the launch path. The intended model is:
+This slice does **not** add a "run this command at launch" facility to the launch path. `LaunchRequest` already has no lifecycle field (the v0 foundation shipped without one), and this slice keeps it that way. The intended model:
 
-1. `POST /launches` opens the terminal with its default state — an interactive shell.
+1. `POST /launches` opens the terminal with its default state — typically an interactive shell, determined entirely by how the user has configured that terminal app.
 2. The agent uses `POST /surfaces/{id}/text` (and `POST /surfaces/{id}/key` for modifiers / Enter) to type commands into that shell.
-3. Standard shell semantics then handle keep-alive: the shell stays interactive as long as it's open, the window stays until closed.
+3. The window's lifetime is controlled by the agent: `POST /surfaces/{id}/close` when done, or let the user close it, or leave it open.
 
-What the v0 spec's lifecycle modes tried to express becomes a composition of primitives shipped by this slice:
+### 6.1 Why this is different from a lifecycle enum
 
-| v0 spec lifecycle intent | Realized as |
-|---|---|
-| `exit_on_command_end` | Type command, observe it exit, shell stays; close window via `/close` when done. |
-| `keep_alive_duration: N` | Type command, `wait { stable }` to see it finish, optionally `wait` further, then `/close`. |
-| `keep_alive_interactive` | Default — the shell is already interactive. |
-| `keep_alive_until_closed` | Default — the window stays until `/close`. |
+This is **not** a "realization" of the v0 spec's `keep_alive_*` modes. Those modes were specifically about launching with an embedded command that would otherwise exit-and-close the window. This slice takes a different shape: launch never embeds a command, so there's no command-exit event to wrap around.
 
-### 6.1 Rationale
+The practical consequence for agent workflows:
 
-- **Less special-casing.** No terminal-app bundle allowlist, no per-terminal `-e`/`--command`/AppleScript adapters. The same input path works for every terminal that displays an interactive shell.
-- **Fewer permissions.** Input injection via AX requires Accessibility only. Per-terminal launch-with-command typically requires macOS Automation permission on top (AppleScript-driven Terminal.app and iTerm2, in particular). We don't want to ask for more than we need.
+- **Short repro followed by screenshot:** type the repro command, `wait { stable }` until output stops, `screenshot`, then `close` (or `key` another step).
+- **Interactive multi-step:** type a command, read results, decide what to type next. No pre-planning needed.
+- **Fire-and-forget command with a linger:** type the command, `wait { stable }` to confirm it ran, then `wait` a fixed window or just `close`.
+
+None of these require the launch call to know anything about a command. The shell handles its own lifetime; the agent handles the window's.
+
+### 6.2 Rationale
+
+- **Less special-casing.** No terminal-app bundle allowlist, no per-terminal `-e`/`--command`/AppleScript adapter.
+- **Fewer permissions.** Input injection via AX requires Accessibility only. Per-terminal launch-with-command typically requires macOS Automation permission on top (AppleScript-driven Terminal.app and iTerm2, in particular). We don't ask for more than we need.
 - **Closer to what a human does.** A human opens a terminal and types — porthole does the same. The mental model is direct.
-- **More flexible.** The agent composes commands from running results. Lifecycle modes baked the whole interaction into one launch call.
+- **Composable.** The agent can react to intermediate results and decide what to type next; this isn't possible with a lifecycle-baked-into-launch model.
 
-The cost is one or two extra round trips per agent workflow (type + wait, rather than launch-with-cmd). Acceptable in every use case we've identified so far.
+The cost is one or two extra round trips per agent workflow (type + wait, rather than launch-with-cmd). Acceptable in every use case we've identified so far. If a compelling use case for command-at-launch emerges, it comes back as a separate launch variant — likely a terminal-specific path that explicitly declares the Automation-permission requirement.
 
 ## 7. close and focus
 
@@ -290,9 +310,38 @@ Response:
 - `primary` matches `CGMainDisplayID`.
 - `focused` is derived from `/attention`: the display containing the focused window (or, if no tracked focus, the one containing the cursor).
 
-### 8.3 No caching
+### 8.3 /info — permission reporting (additive schema change)
 
-Both endpoints recompute from the OS on every call. CoreGraphics + NSWorkspace reads are sub-millisecond; caching would introduce staleness without meaningful savings.
+The macOS adapter needs Accessibility permission for input and some wait conditions, and Screen Recording permission for capture. This slice extends `AdapterInfo` additively so callers can detect the current grant state without probing. The new field:
+
+```rust
+pub struct AdapterInfo {
+    pub name: String,
+    pub loaded: bool,
+    pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<PermissionStatus>,
+}
+
+pub struct PermissionStatus {
+    pub name: String,       // e.g., "accessibility", "screen_recording"
+    pub granted: bool,
+    pub purpose: String,    // short string explaining why this adapter needs it
+}
+```
+
+Back-compat: existing callers that don't know about `permissions` are unaffected (`#[serde(default)]` on deserialize, omitted when empty on serialize).
+
+macOS adapter reports:
+
+- `{ name: "accessibility", granted: ?, purpose: "input injection and some wait conditions" }`
+- `{ name: "screen_recording", granted: ?, purpose: "window screenshot capture" }`
+
+Permission state is recomputed per `/info` call (calls into `AXIsProcessTrusted` / `CGPreflightScreenCaptureAccess`, both sub-millisecond). No caching.
+
+### 8.4 No caching (attention / displays)
+
+`/attention` and `/displays` recompute from the OS on every call. CoreGraphics + NSWorkspace reads are sub-millisecond; caching would introduce staleness without meaningful savings.
 
 ## 9. Error model additions
 
@@ -358,7 +407,7 @@ Explicitly deferred to later slices (not this one):
 ## 12. Open questions
 
 - Whether `unknown_key` should be a soft error (log + skip) or hard. Going hard here because silent skipping is the exact failure mode agent-first design should avoid.
-- How `wait stable`/`dirty` handles mostly-unchanged frames (e.g., a blinking cursor). Pixel-hash will count that as dirty; callers that want to ignore cursor-blink will need longer `window_ms`. When event-backed wait lands, this goes away because AX doesn't fire for cursor blink.
+- Whether the `threshold_pct` defaults (1.0%) work in practice across the apps we care about. Cursor-blink is a single cell (well under 1%); typical terminal output bursts are well over 1%. A progress bar that flickers only its last character may be near the boundary — a real workflow will tell us whether the defaults need revisiting or whether we should expose finer-grained controls.
 - Whether to eventually add a `command` field to launches for the very specific case of a user wanting a one-shot non-terminal command pipeline. Currently no — input injection covers it.
 
 ## 13. Success criterion
