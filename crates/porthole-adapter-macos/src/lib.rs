@@ -110,4 +110,24 @@ impl Adapter for MacOsAdapter {
     async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError> {
         permissions::permissions().await
     }
+
+    fn capabilities(&self) -> Vec<&'static str> {
+        vec![
+            "launch_process",
+            "screenshot",
+            "input_key",
+            "input_text",
+            "input_click",
+            "input_scroll",
+            "wait",
+            "close",
+            "focus",
+            "attention",
+            "attention_cursor",
+            "attention_focused_app",
+            "attention_focused_display",
+            "attention_focused_surface",
+            "displays",
+        ]
+    }
 }

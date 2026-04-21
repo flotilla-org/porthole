@@ -282,6 +282,28 @@ impl Adapter for InMemoryAdapter {
         s.permissions_calls += 1;
         s.next_permissions.take().unwrap_or(Ok(vec![]))
     }
+
+    fn capabilities(&self) -> Vec<&'static str> {
+        // The in-memory adapter scripts outcomes for most verbs and returns
+        // defaults otherwise. It does NOT resolve OS-level focus, so
+        // `attention_focused_surface` is excluded.
+        vec![
+            "launch_process",
+            "screenshot",
+            "input_key",
+            "input_text",
+            "input_click",
+            "input_scroll",
+            "wait",
+            "close",
+            "focus",
+            "attention",
+            "attention_cursor",
+            "attention_focused_app",
+            "attention_focused_display",
+            "displays",
+        ]
+    }
 }
 
 fn wait_condition_tag(c: &WaitCondition) -> &'static str {
@@ -372,5 +394,17 @@ mod tests {
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
         let result = adapter.wait(&outcome.surface, &WaitCondition::Exists).await.unwrap();
         assert_eq!(result.condition, "exists");
+    }
+
+    #[test]
+    fn capabilities_non_empty_and_excludes_attention_focused_surface() {
+        let adapter = InMemoryAdapter::new();
+        let caps = adapter.capabilities();
+        assert!(!caps.is_empty(), "in-memory adapter must advertise at least one capability");
+        assert!(
+            !caps.contains(&"attention_focused_surface"),
+            "in-memory adapter must not advertise attention_focused_surface \
+             because frontmost_window_id() always returns None"
+        );
     }
 }

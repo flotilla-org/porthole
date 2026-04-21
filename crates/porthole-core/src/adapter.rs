@@ -128,6 +128,12 @@ pub trait Adapter: Send + Sync {
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
     async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;
+
+    /// The canonical string names of capabilities this adapter supports.
+    /// Each entry corresponds to a verb/resource that the adapter can resolve
+    /// non-trivially. Callers treat absence as "adapter cannot do this";
+    /// presence means "calling this will have real effect on this platform."
+    fn capabilities(&self) -> Vec<&'static str>;
 }
 
 #[cfg(test)]
