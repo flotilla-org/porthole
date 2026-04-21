@@ -1,3 +1,12 @@
+pub mod attention;
+pub mod click;
+pub mod close;
+pub mod displays;
+pub mod focus;
 pub mod info;
+pub mod key;
 pub mod launch;
 pub mod screenshot;
+pub mod scroll;
+pub mod text;
+pub mod wait;
