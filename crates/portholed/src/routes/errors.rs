@@ -43,6 +43,7 @@ impl IntoResponse for ApiError {
             ErrorCode::WaitTimeout => StatusCode::GATEWAY_TIMEOUT,
             ErrorCode::UnknownKey => StatusCode::BAD_REQUEST,
             ErrorCode::InvalidCoordinate => StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
         };
         (status, Json(self.0)).into_response()
     }

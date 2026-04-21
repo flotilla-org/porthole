@@ -34,7 +34,7 @@ pub async fn wait(surface: &SurfaceInfo, condition: &WaitCondition) -> Result<Wa
         }
         WaitCondition::TitleMatches { pattern } => {
             let re = Regex::new(pattern)
-                .map_err(|e| PortholeError::new(ErrorCode::InvalidCoordinate, format!("bad regex: {e}")))?;
+                .map_err(|e| PortholeError::new(ErrorCode::InvalidArgument, format!("bad regex: {e}")))?;
             loop {
                 if let Some(title) = current_title(surface)? {
                     if re.is_match(&title) {

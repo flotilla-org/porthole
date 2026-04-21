@@ -65,7 +65,7 @@ fn validate_condition(condition: &WaitCondition) -> Result<(), WaitPipelineError
         WaitCondition::Stable { threshold_pct, .. } | WaitCondition::Dirty { threshold_pct } => {
             if !threshold_pct.is_finite() || *threshold_pct < 0.0 || *threshold_pct > 100.0 {
                 return Err(WaitPipelineError::Porthole(PortholeError::new(
-                    ErrorCode::InvalidCoordinate,
+                    ErrorCode::InvalidArgument,
                     format!("threshold_pct must be in [0, 100]; got {threshold_pct}"),
                 )));
             }
@@ -74,7 +74,7 @@ fn validate_condition(condition: &WaitCondition) -> Result<(), WaitPipelineError
         WaitCondition::TitleMatches { pattern } => {
             Regex::new(pattern).map_err(|e| {
                 WaitPipelineError::Porthole(PortholeError::new(
-                    ErrorCode::InvalidCoordinate,
+                    ErrorCode::InvalidArgument,
                     format!("invalid regex '{pattern}': {e}"),
                 ))
             })?;
@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_regex_errors_as_invalid_coordinate() {
+    async fn invalid_regex_errors_as_invalid_argument() {
         let (adapter, handles, id) = setup().await;
         let pipeline = WaitPipeline::new(adapter, handles);
         let err = pipeline
@@ -119,8 +119,8 @@ mod tests {
             )
             .await;
         match err {
-            Err(WaitPipelineError::Porthole(e)) => assert_eq!(e.code, ErrorCode::InvalidCoordinate),
-            _ => panic!("expected invalid coordinate error"),
+            Err(WaitPipelineError::Porthole(e)) => assert_eq!(e.code, ErrorCode::InvalidArgument),
+            _ => panic!("expected invalid_argument error"),
         }
     }
 
@@ -153,8 +153,8 @@ mod tests {
             )
             .await;
         match err {
-            Err(WaitPipelineError::Porthole(e)) => assert_eq!(e.code, ErrorCode::InvalidCoordinate),
-            _ => panic!("expected invalid coordinate error"),
+            Err(WaitPipelineError::Porthole(e)) => assert_eq!(e.code, ErrorCode::InvalidArgument),
+            _ => panic!("expected invalid_argument error"),
         }
     }
 }

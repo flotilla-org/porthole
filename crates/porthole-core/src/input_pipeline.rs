@@ -38,7 +38,7 @@ impl InputPipeline {
     pub async fn click(&self, surface: &SurfaceId, spec: &ClickSpec) -> Result<(), PortholeError> {
         if spec.count == 0 || spec.count > 3 {
             return Err(PortholeError::new(
-                ErrorCode::InvalidCoordinate,
+                ErrorCode::InvalidArgument,
                 format!("click count must be 1, 2, or 3 (got {})", spec.count),
             ));
         }
@@ -103,7 +103,7 @@ mod tests {
             .click(&id, &ClickSpec { x: 0.0, y: 0.0, button: crate::input::ClickButton::Left, count: 0, modifiers: vec![] })
             .await
             .unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidCoordinate);
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
     }
 
     #[tokio::test]

@@ -158,7 +158,7 @@ impl InMemoryAdapter {
             focused_surface_id: None,
             focused_app_bundle: None,
             focused_display_id: None,
-            cursor: CursorPos { x: 0.0, y: 0.0, display_id_index: None },
+            cursor: CursorPos { x: 0.0, y: 0.0, display_id: None },
             recently_active_surface_ids: vec![],
         }
     }

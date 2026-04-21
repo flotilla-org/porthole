@@ -129,9 +129,24 @@ pub async fn scroll(surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), Port
 }
 
 /// Converts window-local logical points to screen-global logical points using
-/// the current window bounds from AX. This is the same conversion the
-/// screenshot path would use, factored out.
+/// the current window bounds from AX, and validates that the point lies within
+/// the window bounds (with a 1-point tolerance for rounding on edges).
 async fn window_to_screen(surface: &SurfaceInfo, x: f64, y: f64) -> Result<(f64, f64), PortholeError> {
     let bounds = crate::close_focus::window_bounds(surface).await?;
+    const TOLERANCE: f64 = 1.0;
+    if x < -TOLERANCE
+        || x > bounds.w + TOLERANCE
+        || y < -TOLERANCE
+        || y > bounds.h + TOLERANCE
+    {
+        return Err(PortholeError::new(
+            ErrorCode::InvalidCoordinate,
+            format!(
+                "coordinate ({x}, {y}) is outside window bounds (w={w}, h={h})",
+                w = bounds.w,
+                h = bounds.h,
+            ),
+        ));
+    }
     Ok((bounds.x + x, bounds.y + y))
 }

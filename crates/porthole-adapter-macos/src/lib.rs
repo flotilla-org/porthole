@@ -12,9 +12,11 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::wait::{LastObserved, WaitCondition, WaitOutcome};
 use porthole_core::PortholeError;
 
+pub mod attention;
 pub mod capture;
 pub mod close_focus;
 pub mod correlation;
+pub mod cursor;
 pub mod display;
 pub mod enumerate;
 pub mod ffi;
@@ -22,7 +24,6 @@ pub mod frame_diff;
 pub mod input;
 pub mod key_codes;
 pub mod launch;
-pub mod attention;
 pub mod permissions;
 pub mod wait;
 
