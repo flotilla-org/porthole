@@ -31,6 +31,7 @@ pub async fn launch_process(spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, P
                     app_bundle: window.app_bundle,
                     pid: Some(window.owner_pid as u32),
                     parent_surface_id: None,
+                    cg_window_id: Some(window.cg_window_id),
                 };
                 return Ok(LaunchOutcome {
                     surface,

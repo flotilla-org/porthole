@@ -100,7 +100,11 @@ fn surface_is_alive(surface: &SurfaceInfo) -> Result<bool, PortholeError> {
         return Ok(false);
     }
     let windows = list_windows()?;
-    Ok(windows.iter().any(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title)))
+    if let Some(cg_id) = surface.cg_window_id {
+        Ok(windows.iter().any(|w| w.cg_window_id == cg_id))
+    } else {
+        Ok(windows.iter().any(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title)))
+    }
 }
 
 fn current_title(surface: &SurfaceInfo) -> Result<Option<String>, PortholeError> {
@@ -109,7 +113,11 @@ fn current_title(surface: &SurfaceInfo) -> Result<Option<String>, PortholeError>
         return Ok(None);
     }
     let windows = list_windows()?;
-    Ok(windows.iter().find(|w| w.owner_pid == pid).and_then(|w| w.title.clone()))
+    if let Some(cg_id) = surface.cg_window_id {
+        Ok(windows.iter().find(|w| w.cg_window_id == cg_id).and_then(|w| w.title.clone()))
+    } else {
+        Ok(windows.iter().find(|w| w.owner_pid == pid).and_then(|w| w.title.clone()))
+    }
 }
 
 async fn sample_fingerprint(surface: &SurfaceInfo) -> Result<Fingerprint, PortholeError> {

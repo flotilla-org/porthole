@@ -64,6 +64,13 @@ pub struct SurfaceInfo {
     pub app_bundle: Option<String>,
     pub pid: Option<u32>,
     pub parent_surface_id: Option<SurfaceId>,
+    /// The CGWindowID of the tracked window, captured at launch time.
+    /// Used by the macOS adapter to identify the exact window across all
+    /// downstream AX + CG operations, avoiding non-determinism in multi-window
+    /// apps. Absent for surfaces created before slice-A (serde-defaulted to
+    /// `None` so existing serialized data remains valid).
+    #[serde(default)]
+    pub cg_window_id: Option<u32>,
 }
 
 impl SurfaceInfo {
@@ -76,6 +83,7 @@ impl SurfaceInfo {
             app_bundle: None,
             pid: Some(pid),
             parent_surface_id: None,
+            cg_window_id: None,
         }
     }
 }
@@ -99,6 +107,7 @@ mod tests {
         assert_eq!(info.state, SurfaceState::Alive);
         assert_eq!(info.pid, Some(1234));
         assert!(info.parent_surface_id.is_none());
+        assert!(info.cg_window_id.is_none());
     }
 
     #[test]

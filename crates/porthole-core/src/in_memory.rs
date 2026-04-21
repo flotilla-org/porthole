@@ -144,6 +144,7 @@ impl InMemoryAdapter {
             app_bundle: Some("com.example.test".to_string()),
             pid: Some(pid),
             parent_surface_id: None,
+            cg_window_id: None,
         };
         LaunchOutcome {
             surface,
@@ -264,6 +265,10 @@ impl Adapter for InMemoryAdapter {
         let mut s = self.script.lock().await;
         s.attention_calls += 1;
         s.next_attention.take().unwrap_or_else(|| Ok(Self::default_attention()))
+    }
+
+    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
+        Ok(None)
     }
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {

@@ -23,7 +23,13 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
             PortholeError::new(ErrorCode::CapabilityMissing, "surface has no pid; cannot locate CGWindowID")
         })? as i32;
 
-        let cg_window_id = locate_cg_window_id(pid, surface.title.as_deref())?;
+        // Prefer the stored CGWindowID for precise targeting; fall back to
+        // PID+title heuristic for surfaces created before slice-A.
+        let cg_window_id = if let Some(id) = surface.cg_window_id {
+            id
+        } else {
+            locate_cg_window_id(pid, surface.title.as_deref())?
+        };
 
         // An empty rect tells CG to use the window's own bounds when combined with
         // kCGWindowListOptionIncludingWindow.
