@@ -60,7 +60,7 @@ GET  /displays                 — monitors
 
 `LaunchRequest` is unchanged by this slice. `InfoResponse.adapters[].capabilities` grows these entries: `input_key`, `input_text`, `input_click`, `input_scroll`, `wait`, `close`, `focus`, `attention`, `displays`. Capability advertisement lets callers detect what an adapter actually supports without probe-and-fail.
 
-Verbs on tab surfaces continue to return `capability_missing` (unchanged from v0 spec §4.1).
+Tab surface handling: tab surfaces are still deferred (not enumerated by the foundation; no tab enumeration added here either), so in practice this slice's verbs only ever operate on window surfaces. When tab surfaces do land in a later slice, the v0 spec's §4.1 matrix applies — `focus`, `close`, and `screenshot` work on tab targets (activate-the-tab then operate on window); the input verbs and `wait` return `capability_missing` on tabs. This slice does not change that matrix.
 
 ## 4. Input model
 
@@ -244,12 +244,13 @@ The cost is one or two extra round trips per agent workflow (type + wait, rather
 
 `POST /surfaces/{id}/close` takes an empty body and returns `{ "surface_id": "...", "closed": true }`.
 
-Implementation on macOS: find the AX close button (`AXCloseButton` subrole) and perform `AXPress`. If not available, fall back to focusing the window and sending `Cmd+W` via the input path. If the window hosts a terminal in a keep-alive mode, the shell's parked loop is killed with the window.
+Implementation on macOS: find the AX close button (`AXCloseButton` subrole) and perform `AXPress`. If not available, fall back to focusing the window and sending `Cmd+W` via the input path. Closing a terminal window terminates the hosted shell the same way the user dismissing the window would — no porthole-specific logic needed.
 
 Error codes:
 - `surface_dead` if already closed
 - `permission_needed` if AX can't act on the element
-- `capability_missing` on tab targets
+
+Per the v0 spec §4.1 matrix, `close` works on tab targets (activate the tab, then close just the tab) — but tab surfaces are deferred to a later slice, so in this slice `close` only ever runs on window targets.
 
 ### 7.2 focus
 
@@ -394,8 +395,8 @@ Explicitly deferred to later slices (not this one):
 
 - **`focus: "preserve"` no-focus-steal input** — requires adapter-specific paths that vary by app and doesn't have a concrete use case yet.
 - **AX-element-reference targeting** for click/scroll — coordinates cover the near-term needs; element refs can be added as an optional alternative field later.
-- **Tab-surface verbs** — still return `capability_missing` per v0 spec §4.1. Promoting tab verbs from metadata-only to first-class is a larger piece of work.
-- **Native event-backed `wait`** — polling is honest v0.x; SSE-events slice (later) swaps the implementation. The wire contract does not change.
+- **Tab surface enumeration and the tab-verb matrix** — the v0 spec §4.1 permits `focus`/`close`/`screenshot` on tabs and returns `capability_missing` for input verbs/`wait`/`replace`. Landing tab surfaces as first-class (enumeration via AX `AXTabs`, activate-the-tab semantics for the supported verbs) is a separate slice. Until then, no tab surfaces exist for any verb to act on.
+- **Native event-backed `wait`** for `exists` / `gone` / `title_matches` — polling is honest v0.x. When the SSE-events slice lands, these three conditions can switch to AX-observer-driven notifications without changing the wire contract. `stable` and `dirty` stay pixel-based permanently (AX has no window-contents-changed signal, per §5.3).
 - **`/events` SSE stream** — separate slice.
 - **Attach mode** — separate slice.
 - **Artifact launches, placement, replace, auto-dismiss** — presentation slice.
