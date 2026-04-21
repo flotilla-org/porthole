@@ -2,7 +2,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::attention::AttentionInfo;
+use crate::display::DisplayInfo;
+use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
+use crate::permission::PermissionStatus;
 use crate::surface::SurfaceInfo;
+use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
 use crate::PortholeError;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +87,42 @@ pub trait Adapter: Send + Sync {
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError>;
 
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError>;
+
+    async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError>;
+
+    async fn text(&self, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError>;
+
+    async fn click(&self, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError>;
+
+    async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError>;
+
+    async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
+
+    async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
+
+    /// Wait for the condition to be satisfied. The pipeline layer wraps this
+    /// in `tokio::time::timeout`; adapters may also respect the deadline
+    /// internally for efficiency.
+    async fn wait(
+        &self,
+        surface: &SurfaceInfo,
+        condition: &WaitCondition,
+    ) -> Result<WaitOutcome, PortholeError>;
+
+    /// Returns diagnostics appropriate for `wait_timeout` error payloads,
+    /// given the last observed state of the condition. Called by the
+    /// pipeline on timeout so the adapter can describe what it saw.
+    async fn wait_last_observed(
+        &self,
+        surface: &SurfaceInfo,
+        condition: &WaitCondition,
+    ) -> Result<LastObserved, PortholeError>;
+
+    async fn attention(&self) -> Result<AttentionInfo, PortholeError>;
+
+    async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
+
+    async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;
 }
 
 #[cfg(test)]
