@@ -411,6 +411,18 @@ Explicitly deferred to later slices (not this one):
 - Whether the `threshold_pct` defaults (1.0%) work in practice across the apps we care about. Cursor-blink is a single cell (well under 1%); typical terminal output bursts are well over 1%. A progress bar that flickers only its last character may be near the boundary — a real workflow will tell us whether the defaults need revisiting or whether we should expose finer-grained controls.
 - Whether to eventually add a `command` field to launches for the very specific case of a user wanting a one-shot non-terminal command pipeline. Currently no — input injection covers it.
 
+## Known Limitations (slice A)
+
+- **`AttentionInfo.focused_surface_id` is always `None`** — tracked-focus matching between the frontmost OS window and a porthole-managed surface is deferred to a later slice.
+
+- **`AttentionInfo.recently_active_surface_ids` is always empty** — coupled to the same deferred tracked-focus matching; no mechanism yet observes focus changes between porthole-managed surfaces.
+
+- **`close`'s Cmd+W fallback is fire-and-forget** — when the AX close button is unavailable, we send a Cmd+W keystroke and return success without verifying the window actually closed. A window that presents an unsaved-changes dialog will remain open while porthole marks the handle dead; subsequent verbs on the (now orphaned) handle will 410. A future hardening can poll briefly after the fallback and return `close_failed` if the window is still present.
+
+- **`last_observed` diagnostics on `wait_timeout` for `stable`/`dirty` are coarse** — the current implementation returns placeholder zeros; a future slice can carry through real tracking.
+
+- **AX FFI lacks RAII newtype wrappers** — raw `AXUIElementRef` pointers with explicit `CFRelease` via the `with_first_window_for_pid` closure pattern. Acknowledged v0 debt.
+
 ## 13. Success criterion
 
 The Ghostty kitty-graphics evidence-collection workflow from the original experience report can be expressed as a straight-line script of porthole calls, with no shell wrappers, no `sleep` commands, no global desktop enumeration, and deterministic before/after screenshots correlated by session tag.
