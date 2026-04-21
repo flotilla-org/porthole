@@ -12,10 +12,12 @@ First-class tested use case: a script finding its own containing terminal window
 
 ## 2. Relationship to existing design
 
-Purely additive. No shipped contract changes.
+Mostly additive, with one deliberate rename during the pre-release development phase.
 
 - `Adapter` trait gains two methods (`search`, `window_alive`). Existing methods unchanged.
+- `HandleStore` gains one method (`track_or_get`). Existing methods unchanged.
 - `WireError` / `ErrorCode` unchanged; the existing `CandidateRefUnknown` error code, reserved by the v0 foundation, is now actually emitted.
+- **Rename:** the v0 foundation's `SurfaceInfo.app_bundle` and slice-A's `AttentionInfo.focused_app_bundle` both become `app_name` / `focused_app_name` (they always held `kCGWindowOwnerName`, a human display name, not a true bundle identifier — the old names were a misnomer). Callers of `/attention` from slice-A see the field rename. Acceptable because porthole has not shipped a stable release and both fields just landed; the `no backwards compatibility` phase this workspace is in explicitly permits renames like this. A future additive `app_bundle_id` field via `NSRunningApplication` is not in this slice.
 - New wire types for search and track.
 - New route endpoints under `/surfaces`.
 - `/info` capability list grows `"search"` and `"track"` entries (each adapter declares its own).
@@ -35,7 +37,7 @@ Items from the v0 design still deferred after this slice:
 - Recording
 - AX-element-reference targeting, focus-preserve
 - Cross-host routing
-- Advanced search filters: `frontmost`, `on_display`, `bounds_in`, AX-path predicate
+- Advanced search filters: `on_display`, `bounds_in`, AX-path predicate (`frontmost` is in this slice — see §4.1)
 
 ## 3. New resources and endpoints
 
@@ -179,9 +181,11 @@ Two flag styles on `porthole search` and `porthole attach`:
 Example from a shell script:
 
 ```sh
-surface=$(porthole attach --containing-pid $$ --json | jq -r .surface_id)
+surface=$(porthole attach --containing-pid $$ --frontmost --json | jq -r .surface_id)
 porthole screenshot "$surface" --out my-window.png
 ```
+
+The `--frontmost` flag is canonical for the "my terminal window" case because a single terminal-app PID typically owns multiple windows — see §11 for the full rationale and non-frontmost fallback patterns.
 
 ### 6.3 Library helper
 
@@ -288,8 +292,8 @@ Oneshot axum router tests: search returns candidates, empty search returns empty
 
 - Unit-testable: ref encoding, query filter application on a scripted window list.
 - `#[ignore]`-gated integration tests:
-  - `search_and_track_textedit`: launch TextEdit, search for its app bundle, track the candidate, assert the tracked handle is driveable (screenshot + close).
-  - `self_find_via_ancestry`: spawn a subprocess that calls `porthole attach --containing-pid $$` against the test daemon and asserts it gets a handle — verifies the ancestry walk works end-to-end.
+  - `search_and_track_textedit`: launch TextEdit, search by `app_name: "TextEdit"`, track the candidate, assert the tracked handle is driveable (screenshot + close).
+  - `self_find_via_ancestry`: spawn a subprocess that calls `porthole attach --containing-pid $$ --frontmost` against the test daemon and asserts it gets a handle — verifies the ancestry walk + frontmost disambiguation work end-to-end.
 
 ### 9.5 CLI
 
