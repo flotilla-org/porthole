@@ -60,7 +60,7 @@ GET  /displays                 — monitors
 
 `LaunchRequest` is unchanged by this slice. `InfoResponse.adapters[].capabilities` grows these entries: `input_key`, `input_text`, `input_click`, `input_scroll`, `wait`, `close`, `focus`, `attention`, `displays`. Capability advertisement lets callers detect what an adapter actually supports without probe-and-fail.
 
-Tab surface handling: tab surfaces are still deferred (not enumerated by the foundation; no tab enumeration added here either), so in practice this slice's verbs only ever operate on window surfaces. When tab surfaces do land in a later slice, the v0 spec's §4.1 matrix applies — `focus`, `close`, and `screenshot` work on tab targets (activate-the-tab then operate on window); the input verbs and `wait` return `capability_missing` on tabs. This slice does not change that matrix.
+Tab surface handling: tab surfaces are still deferred (not enumerated by the foundation; no tab enumeration added here either), so in practice this slice's verbs only ever operate on window surfaces. When tab surfaces do land in a later slice, the v0 spec's §4.1 matrix applies — `focus` activates the tab and brings its window forward, `screenshot` activates the tab and captures the whole window, and `close` closes just the tab (not the window); the input verbs and `wait` return `capability_missing` on tabs. This slice does not change that matrix.
 
 ## 4. Input model
 
