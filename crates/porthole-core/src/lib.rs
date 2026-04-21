@@ -7,6 +7,7 @@ pub mod error;
 pub mod handle;
 pub mod in_memory;
 pub mod input;
+pub mod input_pipeline;
 pub mod key_names;
 pub mod launch;
 pub mod permission;
