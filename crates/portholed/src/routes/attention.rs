@@ -7,7 +7,14 @@ use crate::routes::errors::ApiError;
 use crate::state::AppState;
 
 pub async fn get_attention(State(state): State<AppState>) -> Result<Json<AttentionInfo>, ApiError> {
-    let info = state.adapter.attention().await?;
+    let mut info = state.adapter.attention().await?;
+
+    // Resolve focused_surface_id: ask the adapter for the frontmost CGWindowID,
+    // then look it up in the handle store.
+    if let Ok(Some(cg_id)) = state.adapter.frontmost_window_id().await {
+        info.focused_surface_id = state.handles.find_by_cg_window_id(cg_id).await;
+    }
+
     Ok(Json(info))
 }
 

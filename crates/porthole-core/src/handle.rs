@@ -44,6 +44,15 @@ impl HandleStore {
         }
         Ok(info)
     }
+
+    /// Find the first alive surface whose `cg_window_id` matches `cg`.
+    pub async fn find_by_cg_window_id(&self, cg: u32) -> Option<SurfaceId> {
+        let guard = self.inner.read().await;
+        guard
+            .values()
+            .find(|info| info.cg_window_id == Some(cg) && info.state == SurfaceState::Alive)
+            .map(|info| info.id.clone())
+    }
 }
 
 #[cfg(test)]
@@ -76,5 +85,35 @@ mod tests {
         store.mark_dead(&id).await.unwrap();
         let err = store.require_alive(&id).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::SurfaceDead);
+    }
+
+    #[tokio::test]
+    async fn find_by_cg_window_id_returns_alive_surface() {
+        let store = HandleStore::new();
+        let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
+        info.cg_window_id = Some(9999);
+        let id = info.id.clone();
+        store.insert(info).await;
+        let found = store.find_by_cg_window_id(9999).await;
+        assert_eq!(found, Some(id));
+    }
+
+    #[tokio::test]
+    async fn find_by_cg_window_id_ignores_dead_surface() {
+        let store = HandleStore::new();
+        let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
+        info.cg_window_id = Some(8888);
+        let id = info.id.clone();
+        store.insert(info).await;
+        store.mark_dead(&id).await.unwrap();
+        let found = store.find_by_cg_window_id(8888).await;
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_by_cg_window_id_returns_none_for_missing() {
+        let store = HandleStore::new();
+        let found = store.find_by_cg_window_id(1234).await;
+        assert!(found.is_none());
     }
 }

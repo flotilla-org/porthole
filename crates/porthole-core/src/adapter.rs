@@ -120,6 +120,11 @@ pub trait Adapter: Send + Sync {
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError>;
 
+    /// Returns the CGWindowID of the currently frontmost on-screen window, or
+    /// `None` if it cannot be determined. Used by the attention route to resolve
+    /// `focused_surface_id` against the handle store.
+    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError>;
+
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
     async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;

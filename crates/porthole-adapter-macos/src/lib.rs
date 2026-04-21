@@ -99,6 +99,10 @@ impl Adapter for MacOsAdapter {
         attention::attention().await
     }
 
+    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
+        Ok(attention::frontmost_cg_window_id())
+    }
+
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {
         display::displays().await
     }
