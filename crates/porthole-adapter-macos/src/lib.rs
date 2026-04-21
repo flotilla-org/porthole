@@ -16,6 +16,7 @@ pub mod capture;
 pub mod correlation;
 pub mod enumerate;
 pub mod ffi;
+pub mod key_codes;
 pub mod launch;
 
 pub struct MacOsAdapter;

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 porthole-core = { path = "../porthole-core" }
+regex = "1"
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
