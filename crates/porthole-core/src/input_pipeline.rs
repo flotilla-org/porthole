@@ -53,9 +53,18 @@ impl InputPipeline {
 
     pub async fn close(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
         let info = self.handles.require_alive(surface).await?;
-        self.adapter.close(&info).await?;
-        self.handles.mark_dead(surface).await?;
-        Ok(())
+        match self.adapter.close(&info).await {
+            Ok(()) => {
+                self.handles.mark_dead(surface).await?;
+                Ok(())
+            }
+            Err(e) if e.code == ErrorCode::CloseFailed => {
+                // The window is still alive (e.g. a save dialog vetoed the close).
+                // Do NOT mark the handle dead — the caller can retry or investigate.
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn focus(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
@@ -113,5 +122,18 @@ mod tests {
         pipeline.close(&id).await.unwrap();
         let err = handles.require_alive(&id).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::SurfaceDead);
+    }
+
+    #[tokio::test]
+    async fn close_failed_keeps_handle_alive() {
+        let (adapter, handles, id) = setup().await;
+        adapter
+            .set_next_close_result(Err(PortholeError::new(ErrorCode::CloseFailed, "save dialog vetoed")))
+            .await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles.clone());
+        let err = pipeline.close(&id).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::CloseFailed);
+        // Handle must still be alive — the window was not closed.
+        handles.require_alive(&id).await.expect("handle should remain alive after close_failed");
     }
 }

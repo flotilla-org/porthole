@@ -413,15 +413,11 @@ Explicitly deferred to later slices (not this one):
 
 ## Known Limitations (slice A)
 
-- **`AttentionInfo.focused_surface_id` is always `None`** — tracked-focus matching between the frontmost OS window and a porthole-managed surface is deferred to a later slice.
+- **`AttentionInfo.recently_active_surface_ids` is always empty** — no mechanism yet observes focus transitions between porthole-managed surfaces; deferred to a later slice.
 
-- **`AttentionInfo.recently_active_surface_ids` is always empty** — coupled to the same deferred tracked-focus matching; no mechanism yet observes focus changes between porthole-managed surfaces.
+- **`last_observed` diagnostics on `wait_timeout` for `stable`/`dirty` carry placeholder zero values** — `exists`/`gone`/`title_matches` conditions carry real diagnostics in the `details` field; `stable`/`dirty` report zeros because precise frame-change tracking across timeout boundaries is deferred to a later slice.
 
-- **`close`'s Cmd+W fallback is fire-and-forget** — when the AX close button is unavailable, we send a Cmd+W keystroke and return success without verifying the window actually closed. A window that presents an unsaved-changes dialog will remain open while porthole marks the handle dead; subsequent verbs on the (now orphaned) handle will 410. A future hardening can poll briefly after the fallback and return `close_failed` if the window is still present.
-
-- **`last_observed` diagnostics on `wait_timeout` for `stable`/`dirty` are coarse** — the current implementation returns placeholder zeros; a future slice can carry through real tracking.
-
-- **AX FFI lacks RAII newtype wrappers** — raw `AXUIElementRef` pointers with explicit `CFRelease` via the `with_first_window_for_pid` closure pattern. Acknowledged v0 debt.
+- **AX FFI lacks RAII newtype wrappers** — raw `AXUIElementRef` pointers with explicit `CFRelease` via the closure-based helpers. Acknowledged v0 debt.
 
 ## 13. Success criterion
 

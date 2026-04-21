@@ -18,6 +18,7 @@ pub enum ErrorCode {
     UnknownKey,
     InvalidCoordinate,
     InvalidArgument,
+    CloseFailed,
 }
 
 impl fmt::Display for ErrorCode {
@@ -36,6 +37,7 @@ impl fmt::Display for ErrorCode {
             Self::UnknownKey => "unknown_key",
             Self::InvalidCoordinate => "invalid_coordinate",
             Self::InvalidArgument => "invalid_argument",
+            Self::CloseFailed => "close_failed",
         };
         f.write_str(s)
     }
@@ -81,5 +83,6 @@ mod tests {
         assert_eq!(ErrorCode::UnknownKey.to_string(), "unknown_key");
         assert_eq!(ErrorCode::InvalidCoordinate.to_string(), "invalid_coordinate");
         assert_eq!(ErrorCode::InvalidArgument.to_string(), "invalid_argument");
+        assert_eq!(ErrorCode::CloseFailed.to_string(), "close_failed");
     }
 }
