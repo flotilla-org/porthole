@@ -57,22 +57,24 @@ POST /surfaces/track   — promote a candidate ref to a tracked surface handle
 
 ```json
 {
-  "app_bundle": "com.mitchellh.ghostty",
+  "app_name": "Ghostty",
   "title_pattern": "^demo-",
   "pids": [12345, 9876, 1234],
   "cg_window_ids": [42, 58],
+  "frontmost": true,
   "session": "optional-tag"
 }
 ```
 
 Every field is optional. Matching is **AND across fields**, **OR within a list**.
 
-- `app_bundle` — exact match against `kCGWindowOwnerName` from the CG window dict.
+- `app_name` — exact match against the OS-reported display name of the owning app (`kCGWindowOwnerName` on macOS, e.g. `"Ghostty"`, `"Safari"`, not a bundle identifier). Note §11 on the deliberate naming and deferred `app_bundle_id` field.
 - `title_pattern` — Rust `regex` crate syntax, anchored only if the pattern includes `^`/`$`. Compiled once per call.
 - `pids` — list of PIDs; a window matches if its owner_pid is in the list.
 - `cg_window_ids` — list of CGWindowID u32s; a window matches if its CGWindowID is in the list.
+- `frontmost` — when `true`, narrows the results to the single highest-Z-order window among matches (the one the user is most likely looking at). Common disambiguator for the "my terminal window" case where a single terminal-app PID owns many windows.
 
-Empty-lists mean "no filter for that field." An entirely empty query returns all on-screen windows.
+Empty-lists mean "no filter for that field." An entirely empty query returns all currently-visible (on-screen) windows. For off-screen / hidden / other-Space windows, see §5.2 on track — a tracked handle remains valid through hide/minimize cycles even though search won't surface hidden candidates. A future `include_hidden` flag can expose offscreen search in a later slice if needed.
 
 ### 4.2 Response
 
@@ -81,7 +83,7 @@ Empty-lists mean "no filter for that field." An entirely empty query returns all
   "candidates": [
     {
       "ref": "ref_eyJwaWQiOjk4NzYsImNnX3dpbmRvd19pZCI6NDJ9",
-      "app_bundle": "com.mitchellh.ghostty",
+      "app_name": "Ghostty",
       "title": "demo-terminal",
       "pid": 9876,
       "cg_window_id": 42
@@ -125,7 +127,7 @@ Response:
   "surface_id": "surf_abc",
   "cg_window_id": 42,
   "pid": 9876,
-  "app_bundle": "com.mitchellh.ghostty",
+  "app_name": "Ghostty",
   "title": "demo-terminal",
   "reused_existing_handle": false
 }
@@ -134,9 +136,11 @@ Response:
 ### 5.2 Semantics
 
 1. **Decode the ref.** Malformed or unknown-version refs return `candidate_ref_unknown` (existing error code).
-2. **Verify the window is alive.** Adapter's `window_alive(pid, cg_window_id)` returns an `Option<SurfaceInfo>` from live OS state. If `None`, return `surface_dead`.
-3. **Check for existing tracking.** If the HandleStore already has a tracked surface with this `cg_window_id` in the `Alive` state, **return the existing handle** with `reused_existing_handle: true`. Idempotent — re-running a script or retrying a failed call is safe.
-4. **Mint a new handle.** Otherwise, insert the fresh `SurfaceInfo` into the HandleStore and return the new surface id with `reused_existing_handle: false`.
+2. **Verify the window is alive.** Adapter's `window_alive(pid, cg_window_id)` returns `Some(SurfaceInfo)` if the window still exists, `None` if it's genuinely gone. **Critically, "alive" is broader than "currently on-screen."** The adapter enumerates all windows (via `CGWindowListCopyWindowInfo` *without* `kCGWindowListOptionOnScreenOnly`), so a hidden, minimized, or other-Space window still returns `Some`. Only a closed-and-reaped window returns `None`. This keeps tracked handles valid through normal OS hide/minimize/Space-switch cycles — a handle doesn't silently die when the user `Cmd+H`s the app.
+3. **Atomic get-or-insert, keyed by `cg_window_id`.** A single `HandleStore::track_or_get(cg_window_id, SurfaceInfo)` call, holding the store's write lock for the duration, checks for an alive tracked surface with the matching `cg_window_id`:
+   - If one exists → return it with `reused_existing_handle: true`.
+   - Otherwise → insert the new `SurfaceInfo` and return it with `reused_existing_handle: false`.
+   Holding the lock across both steps is load-bearing — two concurrent `POST /surfaces/track` calls for the same window must not both mint fresh handles. The existing `find_by_cg_window_id` + `insert` composition is **not** safe under concurrent requests and is not used here.
 
 ### 5.3 Tracked vs launched
 
@@ -181,18 +185,11 @@ porthole screenshot "$surface" --out my-window.png
 
 ### 6.3 Library helper
 
-`porthole::ancestry::containing_ancestors(pid: u32) -> Result<Vec<u32>, AncestryError>` lives in the `porthole` CLI crate as a public function. Non-CLI Rust callers (agents, test harnesses) import it directly.
+`porthole::ancestry::containing_ancestors(pid: u32) -> Vec<u32>` lives in the `porthole` CLI crate as a public function. Non-CLI Rust callers (agents, test harnesses) import it directly.
 
-Implementation on macOS / Linux: iteratively shell out to `/bin/ps -o ppid= -p <pid>`, accumulate ancestors, stop at PID 1 or a bounded depth. Bounded depth is 128 hops.
+The signature is best-effort infallible — returns a `Vec<u32>` containing as many ancestors as could be walked. Starts with the given pid and appends each ancestor found. Stops at PID 1, at a bounded depth of 128 hops, or at the first `ps` failure. Failures during the walk are logged via `tracing::warn!` but do not abort — a short partial chain is almost always more useful to the caller than an error.
 
-```rust
-pub enum AncestryError {
-    PsFailed(String),
-    InvalidOutput(String),
-}
-```
-
-The walk returns whatever it could gather — if `ps` fails mid-walk, earlier ancestors are still in the result. That's intentional; the caller almost certainly wants to try a partial list rather than abort.
+Implementation on macOS / Linux: iteratively shell out to `/bin/ps -o ppid= -p <pid>`, accumulate ancestors. Future optimisation to `libc::proc_pidinfo` on macOS and `/proc/<pid>/stat` on Linux deferred.
 
 ### 6.4 Muxes and reparenting
 
@@ -221,15 +218,16 @@ New core types (`porthole-core`):
 
 ```rust
 pub struct SearchQuery {
-    pub app_bundle: Option<String>,
+    pub app_name: Option<String>,
     pub title_pattern: Option<String>,     // regex source; pipeline compiles
     pub pids: Vec<u32>,
     pub cg_window_ids: Vec<u32>,
+    pub frontmost: Option<bool>,
 }
 
 pub struct Candidate {
     pub r#ref: String,          // self-encoded
-    pub app_bundle: Option<String>,
+    pub app_name: Option<String>,
     pub title: Option<String>,
     pub pid: u32,
     pub cg_window_id: u32,
@@ -240,9 +238,25 @@ New pipeline (`porthole-core`): `AttachPipeline`. Owns:
 - Query validation (regex compile, reasonable-size bounds on input lists)
 - Candidate ref encoding/decoding
 - `window_alive` dispatch
-- Idempotent-track logic via `HandleStore::find_by_cg_window_id`
+- Atomic idempotent-track via a new `HandleStore::track_or_get` method (see §5.2 step 3). The caller-facing API is a single call that returns `(SurfaceInfo, reused: bool)`.
 
-The macOS adapter's `search` is built on existing `list_windows()` with in-memory filtering; no new OS calls. `window_alive` is a targeted `list_windows()` lookup by (pid, cg_window_id).
+HandleStore extension (`porthole-core`):
+
+```rust
+impl HandleStore {
+    /// Atomic get-or-insert keyed by cg_window_id. Holds the write lock
+    /// for the whole operation. If a handle with this cg_window_id already
+    /// exists in the Alive state, returns it with `reused=true`. Otherwise
+    /// inserts `candidate` and returns it with `reused=false`.
+    pub async fn track_or_get(&self, candidate: SurfaceInfo) -> (SurfaceInfo, bool);
+}
+```
+
+The macOS adapter's `search` is built on `list_windows()` (on-screen enumeration) with in-memory filtering; no new OS calls. `window_alive` uses a broader enumeration — `CGWindowListCopyWindowInfo` *without* `kCGWindowListOptionOnScreenOnly` — so hidden, minimized, and other-Space windows still resolve as alive (per §5.2 step 2). Slice A's `wait_for_surface_gone` continues to use the on-screen enumeration it already uses (its semantic is "visible presence changed," which is what callers want for wait `gone`); `window_alive` is a distinct liveness check used only by `/surfaces/track`.
+
+Rename on existing types: the v0 foundation's `SurfaceInfo.app_bundle: Option<String>` is renamed to `app_name` to reflect that it holds `kCGWindowOwnerName` (a human display name), not a bundle identifier. The matching field on `AttentionInfo.focused_app_bundle` is likewise renamed to `focused_app_name`. A true bundle-id field (`app_bundle_id`, populated via `NSRunningApplication.bundleIdentifier`) is a future addition; not in this slice.
+
+This is a wire-compatibility break for anything consuming `AttentionInfo.focused_app_bundle`. Acceptable because slice A's `/attention` has only just shipped and is still explicitly called out as v0.1-ish in the slice-A spec §4.
 
 ## 8. Error model additions
 
@@ -260,7 +274,7 @@ Empty search results are **not** an error. An empty `candidates` list is a valid
 
 - `InMemoryAdapter` gains scripting hooks: `set_next_search_result`, `set_next_window_alive_result`, recorders for both.
 - `AttachPipeline` unit-tested against the in-memory adapter: ref encode/decode round-trip, malformed-ref error, surface-dead on disappeared window, idempotent track (same window tracked twice → same surface_id with `reused_existing_handle: true`), regex validation.
-- HandleStore's `find_by_cg_window_id` already has a test from slice A.
+- HandleStore's `track_or_get`: unit test the single-call happy path, alive-match reuse path, and a concurrent-race test that spawns N tokio tasks all calling `track_or_get` with the same `cg_window_id` and asserts exactly one ends up with `reused=false` and all others with `reused=true`, all returning the same `surface_id`.
 
 ### 9.2 Protocol
 
@@ -284,20 +298,24 @@ Oneshot axum router tests: search returns candidates, empty search returns empty
 
 ## 10. Out of scope
 
-- **`frontmost` / `on_display` / `bounds_in` filters** — deferred. The v0 query dimensions cover the important cases; richer filters can layer on without breaking wire compatibility.
+- **`on_display` / `bounds_in` filters** — deferred. The shipped query dimensions cover the important cases; richer filters can layer on without breaking wire compatibility.
+- **`include_hidden` search flag** — deferred. Search returns on-screen candidates only; tracked handles remain valid for hidden windows (per §5.2 step 2), but finding a hidden window via search is a future addition.
+- **True bundle-id field (`app_bundle_id`)** — deferred. Current slice ships `app_name` (human display name from `kCGWindowOwnerName`). Adding `NSRunningApplication.bundleIdentifier` is a future additive field.
 - **AX-path predicate** — deferred; no concrete use case yet.
 - **Tab candidates** — search returns only windows. Tab surface enumeration is a separate later slice.
 - **Cache-backed refs** — rejected in favor of self-encoded; could swap later if the ref becomes a security boundary.
 - **Cross-search correlation** — e.g. "find all surfaces of this app and track them all as a set." Callers do their own batch tracking.
 - **Watching for new matches** — e.g. "notify me when a new window matches this query." Belongs to the events slice.
+- **Dead-handle garbage collection** — dead handles accumulate in the HandleStore until a later slice adds sweep logic. Memory footprint is minor (one `SurfaceInfo` per dead handle) but noted.
 
 ## 11. Known limitations
 
+- **`app_name` is a display name, not a bundle identifier.** `kCGWindowOwnerName` gives "Ghostty", "Safari", "Terminal" — human strings chosen by the app. They're stable in practice but not guaranteed, and they're localized. A future `app_bundle_id` field populated from `NSRunningApplication.bundleIdentifier` will give true stable IDs; for this slice, callers match on display names.
+- **Multi-window terminal apps need `frontmost: true` for the "my window" case.** A single terminal app PID commonly owns several windows. `porthole attach --containing-pid $$` without `--frontmost` will often return multiple candidates. The canonical invocation is `porthole attach --containing-pid $$ --frontmost`; the success criterion uses that form. For non-interactive contexts where no window is "frontmost" (e.g., a script running over SSH into a background session), disambiguation is caller-side — usually via title matching or an out-of-band hint the caller planted at launch.
 - **Search enumerates every on-screen window** — O(windows) per call. Cheap on typical desktops but could become noticeable on heavily-populated systems. Unlikely to matter.
 - **Ref decode reveals (pid, cg_window_id)** — trivially decodable by anyone who can base64-decode. No secrets; see §4.3. If cross-user or cross-process trust boundaries appear later, refs become cache-backed opaque IDs.
 - **Mux reparenting breaks ancestry walks** — see §6.4. Caller's problem; documented as a caller-side concern.
 - **`reused_existing_handle: true` can be surprising** — the caller asked to track a fresh candidate and got back something that was already tracked. Idempotency is almost always what the caller wants, but the flag is explicit in the response so callers can detect the reuse.
-- **Dead-handle garbage collection** — dead handles accumulate in the HandleStore until a later slice adds sweep logic. Memory footprint is minor (one `SurfaceInfo` per dead handle) but noted.
 
 ## 12. Success criterion
 
@@ -305,7 +323,9 @@ From the script-finding-its-own-window use case, which this slice makes into a f
 
 ```sh
 # My script wants to screenshot its own terminal window.
-surface=$(porthole attach --containing-pid $$ --json | jq -r .surface_id)
+# --frontmost narrows to the single topmost window when the terminal
+# app owns several (the common case on macOS).
+surface=$(porthole attach --containing-pid $$ --frontmost --json | jq -r .surface_id)
 porthole screenshot "$surface" --out repro-state.png
 porthole close "$surface"   # optional — script's terminal goes away with it
 ```
