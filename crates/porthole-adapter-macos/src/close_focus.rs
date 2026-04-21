@@ -34,8 +34,9 @@ pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
     // Activate the owning app via NSRunningApplication.
     activate_app(pid)?;
 
-    // Raise the specific window (best effort). If we can't locate it, continue —
-    // activating the app is usually enough.
+    // Raise the specific window. If cg_window_id is present we must resolve it
+    // exactly — a miss means the window is gone (SurfaceDead). Without an id we
+    // fall back to AXWindows[0] (pre-slice-A behavior).
     let raise = |win: AXUIElementRef| -> Result<(), PortholeError> {
         unsafe {
             let action = CFString::new("AXRaise");
@@ -43,11 +44,12 @@ pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
         }
         Ok(())
     };
-    let _ = if let Some(cg_id) = surface.cg_window_id {
-        with_ax_window_by_cg_id(pid, cg_id, raise)
+    if let Some(cg_id) = surface.cg_window_id {
+        with_ax_window_by_cg_id(pid, cg_id, raise)?;
     } else {
-        with_first_window_for_pid(pid, raise)
-    };
+        // Best-effort: failing to raise AXWindows[0] is non-fatal.
+        let _ = with_first_window_for_pid(pid, raise);
+    }
     Ok(())
 }
 
@@ -83,12 +85,13 @@ pub async fn close(surface: &SurfaceInfo) -> Result<(), PortholeError> {
     };
 
     let via_close_button = if let Some(cg_id) = surface.cg_window_id {
-        with_ax_window_by_cg_id(pid, cg_id, press_close_button)
+        // Fail closed: if the window is already gone this returns SurfaceDead.
+        with_ax_window_by_cg_id(pid, cg_id, press_close_button)?
     } else {
-        with_first_window_for_pid(pid, press_close_button)
+        with_first_window_for_pid(pid, press_close_button).unwrap_or(false)
     };
 
-    if !matches!(via_close_button, Ok(true)) {
+    if !via_close_button {
         // Fallback: focus + Cmd+W via input path.
         focus(surface).await?;
         let src = core_graphics::event_source::CGEventSource::new(
@@ -248,9 +251,10 @@ where
 
 /// Run `op` against the AX window whose CGWindowID matches `target`. Uses the
 /// `_AXUIElementGetWindow` private API (widely used in macOS automation tooling;
-/// stable across macOS versions since 10.9). Falls back to `AXWindows[0]` with a
-/// warning trace if the lookup fails — surfaces created before slice-A may not
-/// have `cg_window_id` populated.
+/// stable across macOS versions since 10.9). Returns `SurfaceDead` if no AX
+/// window matches — the window was closed externally or the id is stale.
+/// **Does not fall back** to AXWindows[0]; call sites that have no CGWindowID
+/// should use `with_first_window_for_pid` directly.
 fn with_ax_window_by_cg_id<F, R>(pid: i32, target: u32, op: F) -> Result<R, PortholeError>
 where
     F: FnOnce(AXUIElementRef) -> Result<R, PortholeError>,
@@ -291,15 +295,17 @@ where
             }
         }
 
-        let idx = matched_idx.unwrap_or_else(|| {
-            tracing::warn!(
-                target: "porthole_adapter_macos",
-                pid,
-                cg_window_id = target,
-                "with_ax_window_by_cg_id: no AX window matched CGWindowID; falling back to AXWindows[0]"
-            );
-            0
-        });
+        let idx = match matched_idx {
+            Some(i) => i,
+            None => {
+                CFRelease(windows_ptr);
+                CFRelease(app);
+                return Err(PortholeError::new(
+                    ErrorCode::SurfaceDead,
+                    format!("window with cg_window_id {target} no longer exists for pid {pid}"),
+                ));
+            }
+        };
 
         let win = core_foundation::array::CFArrayGetValueAtIndex(arr, idx) as AXUIElementRef;
         let result = op(win);
