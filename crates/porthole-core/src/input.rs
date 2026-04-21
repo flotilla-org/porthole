@@ -16,18 +16,13 @@ pub struct KeyEvent {
     pub modifiers: Vec<Modifier>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClickButton {
+    #[default]
     Left,
     Right,
     Middle,
-}
-
-impl Default for ClickButton {
-    fn default() -> Self {
-        Self::Left
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

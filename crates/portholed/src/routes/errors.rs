@@ -4,22 +4,12 @@ use axum::Json;
 use porthole_core::wait_pipeline::WaitPipelineError;
 use porthole_core::{ErrorCode, PortholeError};
 use porthole_protocol::error::WireError;
-use porthole_protocol::wait::WaitTimeoutBody;
-use serde::Serialize;
-
 pub struct ApiError(pub WireError);
 
 impl From<PortholeError> for ApiError {
     fn from(err: PortholeError) -> Self {
         Self(err.into())
     }
-}
-
-#[derive(Serialize)]
-struct TimeoutError<'a> {
-    code: ErrorCode,
-    message: &'a str,
-    timeout: WaitTimeoutBody,
 }
 
 impl From<WaitPipelineError> for ApiError {

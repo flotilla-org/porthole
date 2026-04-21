@@ -202,7 +202,7 @@ fn activate_app(pid: i32) -> Result<(), PortholeError> {
         match app {
             Some(a) => {
                 let opts = NSApplicationActivationOptions::empty();
-                NSRunningApplication::activateWithOptions(&*a, opts);
+                NSRunningApplication::activateWithOptions(&a, opts);
                 Ok(())
             }
             None => Err(PortholeError::new(ErrorCode::SurfaceDead, "no running app for pid")),
