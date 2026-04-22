@@ -17,7 +17,9 @@ This slice's concern is the *infrastructure* for presentation, not the rendered 
 Mostly additive. The scope on `LaunchRequest` grows, but existing `process` launches keep their contract.
 
 - `LaunchRequest.kind` gains an `artifact` variant alongside the existing `process`.
-- `LaunchRequest` gains optional `placement` and `auto_dismiss_after_ms` fields. Both default to absent → no-op. Existing `process` launches with no placement keep current behaviour.
+- `LaunchRequest` gains optional `placement` and `auto_dismiss_after_ms` fields.
+  - On `POST /launches`, absent → no-op (OS default). `process` launches with no placement keep the v0/slice-A/B behaviour.
+  - On `POST /surfaces/{id}/replace`, an **absent `placement` key** is the signal that inherits the old surface's geometry + display (§6.2 step 3). A supplied `placement` value — including the empty object `{}` — is used verbatim, matching launch semantics. This is the one wire-level asymmetry between the two endpoints.
 - `LaunchResponse` gains `surface_was_preexisting: bool` (already present per the v0 spec; this slice actually emits non-false values on artifact launches that reuse a window).
 - `Adapter` trait grows `launch_artifact`, `place_surface`, `snapshot_geometry` methods.
 - New route: `POST /surfaces/{id}/replace` with a full `LaunchRequest` body.
@@ -181,10 +183,10 @@ The `placement` field is a tagged enum with four variants:
 
 | Variant | Meaning |
 |---|---|
-| `{ "type": "not_requested" }` | Caller did not supply `placement` on the launch body. OS default geometry used. |
-| `{ "type": "applied" }` | Placement resolved and AX writes succeeded. |
-| `{ "type": "skipped_preexisting" }` | Placement was requested but the launch correlated to a preexisting surface (§5.5). |
-| `{ "type": "failed", "reason": "..." }` | Placement was requested and AX writes failed (e.g., non-resizable window). Free-form reason string. |
+| `{ "type": "not_requested" }` | No effective placement was requested. Covers both (a) `placement` key absent from the body, and (b) `placement: {}` / all-fields-null — the adapter had nothing to act on, so the OS default geometry was used. |
+| `{ "type": "applied" }` | Placement had at least one effective field (`on_display`, `geometry`, or `anchor`) and AX writes succeeded. |
+| `{ "type": "skipped_preexisting" }` | Placement was requested with effective fields but the launch correlated to a preexisting surface (§5.5) and was therefore not applied. |
+| `{ "type": "failed", "reason": "..." }` | Placement was requested with effective fields and AX writes failed (e.g., non-resizable window). Free-form reason string. |
 
 The handle is valid in all four cases. Callers that *require* placement to have applied should check `placement.type == "applied"` before treating the launch as successful for their purposes. This is strictly richer than an error return because the caller gets the surface_id regardless.
 
