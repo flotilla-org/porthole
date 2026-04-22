@@ -6,6 +6,7 @@ use porthole_core::attach_pipeline::AttachPipeline;
 use porthole_core::handle::HandleStore;
 use porthole_core::input_pipeline::InputPipeline;
 use porthole_core::launch::LaunchPipeline;
+use porthole_core::replace_pipeline::ReplacePipeline;
 use porthole_core::wait_pipeline::WaitPipeline;
 
 #[derive(Clone)]
@@ -13,6 +14,7 @@ pub struct AppState {
     pub adapter: Arc<dyn Adapter>,
     pub handles: HandleStore,
     pub pipeline: Arc<LaunchPipeline>,
+    pub replace: Arc<ReplacePipeline>,
     pub input: Arc<InputPipeline>,
     pub wait: Arc<WaitPipeline>,
     pub attach: Arc<AttachPipeline>,
@@ -24,6 +26,7 @@ impl AppState {
     pub fn new(adapter: Arc<dyn Adapter>) -> Self {
         let handles = HandleStore::new();
         let pipeline = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
+        let replace = Arc::new(ReplacePipeline::new(adapter.clone(), handles.clone(), pipeline.clone()));
         let input = Arc::new(InputPipeline::new(adapter.clone(), handles.clone()));
         let wait = Arc::new(WaitPipeline::new(adapter.clone(), handles.clone()));
         let attach = Arc::new(AttachPipeline::new(adapter.clone(), handles.clone()));
@@ -31,6 +34,7 @@ impl AppState {
             adapter,
             handles,
             pipeline,
+            replace,
             input,
             wait,
             attach,

@@ -1,10 +1,13 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use porthole_core::launch::{ExistingSurfaceInfo, LaunchPipelineError};
+use porthole_core::replace_pipeline::ReplacePipelineError;
 use porthole_core::wait_pipeline::WaitPipelineError;
 use porthole_core::{ErrorCode, PortholeError};
-use porthole_protocol::error::WireError;
+use porthole_protocol::error::{CloseFailedBody, LaunchReturnedExistingBody, WireError};
 use porthole_protocol::wait::WaitTimeoutBody;
+
 pub struct ApiError(pub WireError);
 
 impl From<PortholeError> for ApiError {
@@ -27,6 +30,49 @@ impl From<WaitPipelineError> for ApiError {
                 .ok(),
             }),
         }
+    }
+}
+
+impl From<LaunchPipelineError> for ApiError {
+    fn from(err: LaunchPipelineError) -> Self {
+        match err {
+            LaunchPipelineError::Porthole(e) => Self(e.into()),
+            LaunchPipelineError::ReturnedExisting(info) => Self(existing_to_wire(info)),
+        }
+    }
+}
+
+impl From<ReplacePipelineError> for ApiError {
+    fn from(err: ReplacePipelineError) -> Self {
+        match err {
+            ReplacePipelineError::Porthole(e) => Self(e.into()),
+            ReplacePipelineError::ReturnedExisting { info, old_handle_alive: _ } => {
+                Self(existing_to_wire(info))
+            }
+            ReplacePipelineError::CloseFailed { old_handle_alive, reason } => {
+                let body = CloseFailedBody { old_handle_alive };
+                Self(WireError {
+                    code: ErrorCode::CloseFailed,
+                    message: reason,
+                    details: serde_json::to_value(body).ok(),
+                })
+            }
+        }
+    }
+}
+
+fn existing_to_wire(info: ExistingSurfaceInfo) -> WireError {
+    let body = LaunchReturnedExistingBody {
+        ref_: info.ref_,
+        app_name: info.app_name,
+        title: info.title,
+        pid: info.pid,
+        cg_window_id: info.cg_window_id,
+    };
+    WireError {
+        code: ErrorCode::LaunchReturnedExisting,
+        message: "launch correlated to a preexisting surface (require_fresh_surface: true)".into(),
+        details: serde_json::to_value(body).ok(),
     }
 }
 

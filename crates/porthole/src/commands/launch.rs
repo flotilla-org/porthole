@@ -24,6 +24,9 @@ pub async fn run(client: &DaemonClient, args: LaunchArgs) -> Result<(), ClientEr
         session: args.session,
         require_confidence: args.require_confidence,
         timeout_ms: args.timeout_ms,
+        placement: None,
+        auto_dismiss_after_ms: None,
+        require_fresh_surface: false,
     };
     let res: LaunchResponse = client.post_json("/launches", &req).await?;
     println!("launch_id: {}", res.launch_id);
