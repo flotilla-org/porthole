@@ -47,6 +47,7 @@ impl IntoResponse for ApiError {
             ErrorCode::InvalidCoordinate => StatusCode::BAD_REQUEST,
             ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
             ErrorCode::CloseFailed => StatusCode::CONFLICT,
+            ErrorCode::LaunchReturnedExisting => StatusCode::CONFLICT,
         };
         (status, Json(self.0)).into_response()
     }

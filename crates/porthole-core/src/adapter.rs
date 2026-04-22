@@ -4,8 +4,10 @@ use async_trait::async_trait;
 
 use crate::attention::AttentionInfo;
 use crate::display::DisplayInfo;
+pub use crate::display::Rect;
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
 use crate::permission::PermissionStatus;
+use crate::placement::GeometrySnapshot;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::SurfaceInfo;
 use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
@@ -104,13 +106,6 @@ pub struct Screenshot {
     pub captured_at_unix_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
 
 #[async_trait]
 pub trait Adapter: Send + Sync {
@@ -170,6 +165,21 @@ pub trait Adapter: Send + Sync {
         pid: u32,
         cg_window_id: u32,
     ) -> Result<Option<SurfaceInfo>, PortholeError>;
+
+    /// Launch a file artifact via OS default handler (macOS: `open <path>`).
+    /// Correlates via DocumentMatch (strong) / FrontmostChanged (plausible) /
+    /// Temporal (weak) as described in the spec §4.3.
+    async fn launch_artifact(&self, spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError>;
+
+    /// Apply a resolved placement rectangle in **global screen coordinates**
+    /// to a tracked surface. The pipeline resolves on_display/anchor/geometry
+    /// to a global rect and passes it here; adapter writes AXPosition + AXSize.
+    async fn place_surface(&self, surface: &SurfaceInfo, rect: Rect) -> Result<(), PortholeError>;
+
+    /// Read current geometry of a tracked surface, along with which display it's on.
+    /// Returns display-local coords — caller (ReplacePipeline) uses both fields to
+    /// inject inheritance into the replacement launch's placement.
+    async fn snapshot_geometry(&self, surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError>;
 
     /// The canonical string names of capabilities this adapter supports.
     /// Each entry corresponds to a verb/resource that the adapter can resolve

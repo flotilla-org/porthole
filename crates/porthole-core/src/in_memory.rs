@@ -4,13 +4,15 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 use crate::adapter::{
-    Adapter, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot,
+    Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect,
+    Screenshot,
 };
-use crate::search::{Candidate, SearchQuery};
 use crate::attention::{AttentionInfo, CursorPos};
 use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
 use crate::permission::PermissionStatus;
+use crate::placement::GeometrySnapshot;
+use crate::search::{Candidate, SearchQuery};
 use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
 use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use crate::PortholeError;
@@ -36,6 +38,12 @@ struct Script {
     next_permissions: Option<Result<Vec<PermissionStatus>, PortholeError>>,
     next_search_result: Option<Result<Vec<Candidate>, PortholeError>>,
     next_window_alive_result: Option<Result<Option<SurfaceInfo>, PortholeError>>,
+    next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
+    next_place_surface_result: Option<Result<(), PortholeError>>,
+    next_snapshot_geometry: Option<Result<GeometrySnapshot, PortholeError>>,
+    launch_artifact_calls: Vec<ArtifactLaunchSpec>,
+    place_surface_calls: Vec<(SurfaceId, Rect)>,
+    snapshot_geometry_calls: Vec<SurfaceId>,
     search_calls: Vec<SearchQuery>,
     window_alive_calls: Vec<(u32, u32)>,
 
@@ -103,6 +111,15 @@ impl InMemoryAdapter {
     pub async fn set_next_window_alive_result(&self, v: Result<Option<SurfaceInfo>, PortholeError>) {
         self.script.lock().await.next_window_alive_result = Some(v);
     }
+    pub async fn set_next_launch_artifact_outcome(&self, v: Result<LaunchOutcome, PortholeError>) {
+        self.script.lock().await.next_launch_artifact_outcome = Some(v);
+    }
+    pub async fn set_next_place_surface_result(&self, v: Result<(), PortholeError>) {
+        self.script.lock().await.next_place_surface_result = Some(v);
+    }
+    pub async fn set_next_snapshot_geometry(&self, v: Result<GeometrySnapshot, PortholeError>) {
+        self.script.lock().await.next_snapshot_geometry = Some(v);
+    }
 
     // Recorders:
     pub async fn launch_calls(&self) -> Vec<ProcessLaunchSpec> {
@@ -146,6 +163,15 @@ impl InMemoryAdapter {
     }
     pub async fn window_alive_calls(&self) -> Vec<(u32, u32)> {
         self.script.lock().await.window_alive_calls.clone()
+    }
+    pub async fn launch_artifact_calls(&self) -> Vec<ArtifactLaunchSpec> {
+        self.script.lock().await.launch_artifact_calls.clone()
+    }
+    pub async fn place_surface_calls(&self) -> Vec<(SurfaceId, Rect)> {
+        self.script.lock().await.place_surface_calls.clone()
+    }
+    pub async fn snapshot_geometry_calls(&self) -> Vec<SurfaceId> {
+        self.script.lock().await.snapshot_geometry_calls.clone()
     }
 
     pub fn make_default_launch_outcome(pid: u32) -> LaunchOutcome {
@@ -304,6 +330,31 @@ impl Adapter for InMemoryAdapter {
         s.next_window_alive_result.take().unwrap_or(Ok(None))
     }
 
+    async fn launch_artifact(&self, spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+        let mut s = self.script.lock().await;
+        s.launch_artifact_calls.push(spec.clone());
+        s.next_launch_artifact_outcome
+            .take()
+            .unwrap_or_else(|| Ok(Self::make_default_launch_outcome(7777)))
+    }
+
+    async fn place_surface(&self, surface: &SurfaceInfo, rect: Rect) -> Result<(), PortholeError> {
+        let mut s = self.script.lock().await;
+        s.place_surface_calls.push((surface.id.clone(), rect));
+        s.next_place_surface_result.take().unwrap_or(Ok(()))
+    }
+
+    async fn snapshot_geometry(&self, surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError> {
+        let mut s = self.script.lock().await;
+        s.snapshot_geometry_calls.push(surface.id.clone());
+        s.next_snapshot_geometry.take().unwrap_or_else(|| {
+            Ok(GeometrySnapshot {
+                display_id: DisplayId::new("in-mem-display-0"),
+                display_local: Rect { x: 0.0, y: 0.0, w: 800.0, h: 600.0 },
+            })
+        })
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         // The in-memory adapter scripts outcomes for most verbs and returns
         // defaults otherwise. It does NOT resolve OS-level focus, so
@@ -453,6 +504,40 @@ mod tests {
         let calls = adapter.search_calls().await;
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].app_name, Some("TestApp".into()));
+    }
+
+    #[tokio::test]
+    async fn launch_artifact_records_call_and_returns_default() {
+        let adapter = InMemoryAdapter::new();
+        let spec = ArtifactLaunchSpec {
+            path: "/tmp/test.pdf".into(),
+            require_confidence: crate::adapter::RequireConfidence::Strong,
+            require_fresh_surface: false,
+            timeout: std::time::Duration::from_secs(5),
+        };
+        let outcome = adapter.launch_artifact(&spec).await.unwrap();
+        assert_eq!(outcome.confidence, Confidence::Strong);
+        let calls = adapter.launch_artifact_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].path.to_str(), Some("/tmp/test.pdf"));
+    }
+
+    #[tokio::test]
+    async fn place_surface_records_call() {
+        let adapter = InMemoryAdapter::new();
+        let info = SurfaceInfo::window(SurfaceId::new(), 1);
+        let rect = crate::display::Rect { x: 10.0, y: 20.0, w: 300.0, h: 400.0 };
+        adapter.place_surface(&info, rect).await.unwrap();
+        let calls: Vec<(SurfaceId, Rect)> = adapter.place_surface_calls().await;
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_geometry_returns_default() {
+        let adapter = InMemoryAdapter::new();
+        let info = SurfaceInfo::window(SurfaceId::new(), 1);
+        let snap = adapter.snapshot_geometry(&info).await.unwrap();
+        assert_eq!(snap.display_local.w, 800.0);
     }
 
     #[tokio::test]

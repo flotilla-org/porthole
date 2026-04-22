@@ -122,6 +122,28 @@ impl Adapter for MacOsAdapter {
         window_alive::window_alive(pid, cg_window_id).await
     }
 
+    async fn launch_artifact(
+        &self,
+        _spec: &porthole_core::adapter::ArtifactLaunchSpec,
+    ) -> Result<porthole_core::adapter::LaunchOutcome, porthole_core::PortholeError> {
+        todo!("implemented in slice-C Task 18")
+    }
+
+    async fn place_surface(
+        &self,
+        _surface: &porthole_core::surface::SurfaceInfo,
+        _rect: porthole_core::display::Rect,
+    ) -> Result<(), porthole_core::PortholeError> {
+        todo!("implemented in slice-C Task 16")
+    }
+
+    async fn snapshot_geometry(
+        &self,
+        _surface: &porthole_core::surface::SurfaceInfo,
+    ) -> Result<porthole_core::placement::GeometrySnapshot, porthole_core::PortholeError> {
+        todo!("implemented in slice-C Task 17")
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         vec![
             "launch_process",
