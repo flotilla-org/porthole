@@ -13,6 +13,7 @@ pub mod key_names;
 pub mod launch;
 pub mod permission;
 pub mod placement;
+pub mod replace_pipeline;
 pub mod search;
 pub mod surface;
 pub mod wait;

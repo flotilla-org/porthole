@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::adapter::{Adapter, ArtifactLaunchSpec, LaunchOutcome, LaunchSpec, ProcessLaunchSpec, Rect};
+use crate::adapter::{Adapter, LaunchOutcome, LaunchSpec, ProcessLaunchSpec, Rect};
+#[cfg(test)]
+use crate::adapter::ArtifactLaunchSpec;
 use crate::handle::HandleStore;
 use crate::placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec};
 use crate::surface::{SurfaceId, SurfaceInfo};
