@@ -211,7 +211,7 @@ POST /surfaces/{id}/replace
 }
 ```
 
-Response is a `LaunchResponse` carrying the new surface id:
+Response is a `LaunchResponse` — same shape as `POST /launches`, including the `placement` outcome field:
 
 ```json
 {
@@ -219,7 +219,8 @@ Response is a `LaunchResponse` carrying the new surface id:
   "surface_id": "surf_new",
   "surface_was_preexisting": false,
   "confidence": "strong",
-  "correlation": "document_match"
+  "correlation": "document_match",
+  "placement": { "type": "applied" }
 }
 ```
 
@@ -227,9 +228,9 @@ Response is a `LaunchResponse` carrying the new surface id:
 
 1. **Snapshot the old geometry.** Read AX position + size from the old window *plus* the display it's currently on, returning a `GeometrySnapshot { display_id, display_local: Rect }`. The adapter computes the display-local rect by subtracting the containing display's origin from the global AX position. If the adapter can't read the geometry (permission, window already gone), the snapshot is `None` and step 3 does not inject anything.
 2. **Close the old surface.** Uses the existing close path (AXPress on close button, Cmd+W fallback, verified via `list_windows`). Returns `close_failed` (the slice-A error code; no new code introduced) if the window refuses to close — replace aborts, old handle stays alive.
-3. **Inherit geometry.** If the caller's replacement body has no `placement.geometry`, inject the snapshotted `display_local` rect *and* the snapshot's `display_id` as `on_display`. Both fields must travel together — a raw rect without the display id would mis-place across multi-monitor setups. Caller-supplied placement fields always win; if the caller provided `on_display` or `geometry`, that wins field-by-field.
+3. **Inherit geometry — all-or-nothing.** If the caller's replacement body has **no `placement` block at all** (or an empty `{}`), inject the snapshotted `display_id` and `display_local` rect as `on_display` and `geometry`. If the caller provided *any* `placement` fields, their placement is used verbatim and no inheritance occurs. This keeps replace's placement contract identical to `POST /launches` whenever the caller supplies placement — no field-by-field surprises. Callers who want to partially inherit (e.g., same display, different size) should read the old geometry via a future `GET /surfaces/{id}/geometry` (deferred) or compose from `/displays` plus their own state.
 4. **Launch the replacement.** Standard launch path — artifact or process.
-5. **Return the new launch response.** The new surface is owned by the replace caller; the old handle is dead.
+5. **Return the new launch response.** Same shape as `POST /launches` (includes `placement: PlacementOutcome` per §5.7). The new surface is owned by the replace caller; the old handle is dead.
 
 ### 6.3 Atomicity
 
@@ -348,7 +349,7 @@ New pipeline: `ReplacePipeline` (in `crates/porthole-core/src/replace_pipeline.r
 
 One new error code:
 
-- `launch_returned_existing` — launch correlated to a preexisting surface and the caller set `require_fresh_surface: true`. Returned from both `POST /launches` and `POST /surfaces/{id}/replace`. Includes the candidate's surface info in the error details so the caller can choose to attach to the existing surface instead.
+- `launch_returned_existing` — launch correlated to a preexisting surface and the caller set `require_fresh_surface: true`. Returned from both `POST /launches` and `POST /surfaces/{id}/replace`. The error body carries a slice-B-style opaque `ref` string (produced by the same `encode_ref(pid, cg_window_id)` helper) so the caller can directly `POST /surfaces/track` on it to attach the existing surface as a fallback — no extra `/surfaces/search` round-trip required. Body also includes human-readable `app_name`, `title`, `pid`, `cg_window_id` for logging/display.
 
 Extended use of existing codes:
 
@@ -422,10 +423,10 @@ Extend `slice_b_e2e.rs` pattern — new `slice_c_e2e.rs`: artifact launch + plac
 
 - **Edit-oriented dispatch.** `open <file>` launches the user's default editor, not a review-oriented viewer. Callers who need review UX must wait for the QuickLook opener / porthole-viewer / browser-CDP slices.
 - **`AXDocument` coverage varies.** Apps that don't publish document URLs via AX degrade to FrontmostChanged or Temporal correlation. Documented per-app behaviour would require real-world cataloging; not in scope here.
-- **Preexisting replacement produces a displaced window.** If `replace` correlates to an already-open window elsewhere on screen, the old slot's geometry is not applied. Callers using `replace` should use artifact types that reliably get new windows (PDFs into Preview with the right Preview preference, distinct PNG files) or require strong confidence.
+- **Preexisting replacement produces a displaced window.** If `replace` correlates to an already-open window elsewhere on screen, the old slot's geometry is not applied. Callers doing replace should pass `require_fresh_surface: true` on the replacement launch body so that preexisting-correlated replacements return `launch_returned_existing` explicitly instead of silently landing in the wrong place. See §6.4.
 - **Auto-dismiss doesn't survive daemon restart.** Timer state is in-memory. A future slice can persist scheduled dismissals.
 - **Coordinate space is display-local.** Global-coordinate callers (rare; most callers don't need it) have to read `/displays` and convert.
-- **`close_failed` during replace is recoverable but surprising.** Old surface stays alive; new one never launched. Caller sees `replace_close_failed`. Retry or investigate the blocking dialog.
+- **`close_failed` during replace is recoverable but surprising.** Old surface stays alive; new one never launched. Caller sees `close_failed` with `old_handle_alive: true` in the body. Retry or investigate the blocking dialog. See §6.3.
 - **No batch replace.** Each replace is one surface. For "swap in a new set of presentations," callers script it.
 
 ## 13. Success criterion
