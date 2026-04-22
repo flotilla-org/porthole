@@ -228,7 +228,11 @@ Response is a `LaunchResponse` — same shape as `POST /launches`, including the
 
 1. **Snapshot the old geometry.** Read AX position + size from the old window *plus* the display it's currently on, returning a `GeometrySnapshot { display_id, display_local: Rect }`. The adapter computes the display-local rect by subtracting the containing display's origin from the global AX position. If the adapter can't read the geometry (permission, window already gone), the snapshot is `None` and step 3 does not inject anything.
 2. **Close the old surface.** Uses the existing close path (AXPress on close button, Cmd+W fallback, verified via `list_windows`). Returns `close_failed` (the slice-A error code; no new code introduced) if the window refuses to close — replace aborts, old handle stays alive.
-3. **Inherit geometry — all-or-nothing.** If the caller's replacement body has **no `placement` block at all** (or an empty `{}`), inject the snapshotted `display_id` and `display_local` rect as `on_display` and `geometry`. If the caller provided *any* `placement` fields, their placement is used verbatim and no inheritance occurs. This keeps replace's placement contract identical to `POST /launches` whenever the caller supplies placement — no field-by-field surprises. Callers who want to partially inherit (e.g., same display, different size) should read the old geometry via a future `GET /surfaces/{id}/geometry` (deferred) or compose from `/displays` plus their own state.
+3. **Inherit geometry — triggered only by absent `placement` key.** If the caller's replacement body **omits the `placement` key entirely** (the JSON key is not present), inject the snapshotted `display_id` and `display_local` rect as `on_display` and `geometry`. If the caller supplies any `placement` value — including an empty object `placement: {}` — the value is used verbatim and no inheritance occurs. This is a deliberate distinction: `placement: {}` on replace behaves identically to `placement: {}` on `POST /launches` (no positioning, OS default), so a caller sending the same body to either endpoint gets the same result. Callers who want inheritance omit the key entirely; callers who want OS default on replace pass `placement: {}`.
+
+   Serde-side: the `placement` field is `Option<PlacementSpec>`. `None` means inherit; `Some(PlacementSpec::default())` means "empty spec, no inheritance."
+
+   Callers who want to partially inherit (e.g., same display, different size) should read the old geometry via a future `GET /surfaces/{id}/geometry` (deferred) or compose from `/displays` plus their own state.
 4. **Launch the replacement.** Standard launch path — artifact or process.
 5. **Return the new launch response.** Same shape as `POST /launches` (includes `placement: PlacementOutcome` per §5.7). The new surface is owned by the replace caller; the old handle is dead.
 
@@ -369,26 +373,41 @@ Existing codes continue to apply: `surface_not_found`, `surface_dead`, `permissi
   - `artifact` launch success happy path
   - Placement resolution across `on_display: "focused" | "primary" | <id>`
   - `anchor` semantics when no explicit geometry
-  - Placement skipped when `surface_was_preexisting: true`
+  - Placement skipped when `surface_was_preexisting: true` — response carries `placement: { "type": "skipped_preexisting" }` and the surface_id is still returned
+  - Placement failure surfaces as `placement: { "type": "failed", "reason": "..." }` with surface_id still present — not as an HTTP error
   - `auto_dismiss_after_ms` validation (zero rejected, positive accepted)
   - URL path rejected with `invalid_argument`
+  - `require_fresh_surface: true` + preexisting correlation → `launch_returned_existing` error; body carries an opaque `ref` string; feeding that ref to `/surfaces/track` mints a tracked handle for the preexisting surface
 - `ReplacePipeline` tests:
-  - Happy path: snapshot → close → launch → inherit geometry
-  - Caller-supplied geometry overrides snapshot
-  - Close failure aborts replace with old handle alive
-  - Preexisting replacement correlation doesn't apply snapshotted geometry
+  - Happy path: omitted `placement` → snapshot injected (inheritance fires) → close → launch → new surface lands in old slot
+  - `placement: {}` on replace → no inheritance; new surface placed OS-default; proves symmetry with `POST /launches` for the same body
+  - Caller-supplied `placement.geometry` → used verbatim, no snapshot injection (confirms all-or-nothing rule)
+  - Caller-supplied `placement.on_display` only → used verbatim, no geometry injection (same rule)
+  - Close failure aborts replace → `close_failed` with `old_handle_alive: true` in the body; old handle remains valid; no new surface created
+  - Replacement launch returns `launch_returned_existing` → old handle is **dead** (step 4 ran after step 2); error body carries the preexisting surface's `ref`; caller can attach it as fallback
+  - Preexisting replacement correlation without `require_fresh_surface` → surface_was_preexisting: true, placement skipped, user sees displaced window (documented behaviour)
 
 ### 10.2 Protocol
 
-Serde roundtrip tests for the extended `LaunchRequest` (both kinds, with/without placement, with/without auto_dismiss), the new `PlacementSpec`, and `ReplaceRequest` (which is just `LaunchRequest`).
+Serde roundtrip tests for:
+
+- Extended `LaunchRequest` with both kinds (`process`, `artifact`), with/without `placement`, with/without `auto_dismiss_after_ms`, with/without `require_fresh_surface`.
+- `PlacementSpec` serialisation: empty `{}` vs fully-populated.
+- `LaunchResponse.placement: PlacementOutcome` — all four variants (`not_requested`, `applied`, `skipped_preexisting`, `failed { reason }`) round-trip via serde tag.
+- `LaunchRequest.placement` as `Option<PlacementSpec>`: deserialising `{}` at the key's place gives `Some(PlacementSpec::default())`, while omitting the key gives `None`. This is the contract that replace's inheritance rule depends on — covered in a protocol-level unit test so the rule can't regress silently.
+- `launch_returned_existing` error body shape: contains `ref: String`, `app_name: Option<String>`, `title: Option<String>`, `pid: u32`, `cg_window_id: u32`.
+- `close_failed` error body shape when returned from replace: contains `old_handle_alive: true`.
 
 ### 10.3 Daemon routes
 
 Oneshot axum tests for:
 - `POST /launches` with `kind: "artifact"` (via in-memory adapter)
-- `POST /launches` with full placement spec
-- `POST /surfaces/{id}/replace`
-- Auto-dismiss timer: launch with small `auto_dismiss_after_ms`, wait just past it, assert the surface transitions to dead (or is `surface_dead` on subsequent operation).
+- `POST /launches` with full placement spec — asserts `LaunchResponse.placement == "applied"`
+- `POST /launches` with `require_fresh_surface: true` and a scripted preexisting candidate — asserts 4xx status with error code `launch_returned_existing` and the error body contains a `ref` string
+- `POST /surfaces/track` with the `ref` from the previous test's error body — asserts the preexisting surface gets tracked (the full recovery path)
+- `POST /surfaces/{id}/replace` with omitted `placement` → inheritance fires; response includes `placement: "applied"` and the new surface id
+- `POST /surfaces/{id}/replace` with `placement: {}` in the body → no inheritance; response includes `placement: "not_requested"`. Cross-check: identical body sent to `POST /launches` yields the same `placement` outcome
+- Auto-dismiss timer: launch with small `auto_dismiss_after_ms`, wait just past it, assert the surface transitions to dead (or is `surface_dead` on subsequent operation)
 
 ### 10.4 macOS adapter
 
