@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adapter;
+pub mod attach_pipeline;
 pub mod attention;
 pub mod display;
 pub mod error;
