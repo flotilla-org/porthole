@@ -33,7 +33,20 @@ unsafe extern "C" {
         the_type: i32,
         value_ptr: *mut std::ffi::c_void,
     ) -> u8;
+    fn AXUIElementSetAttributeValue(
+        element: AxElementRef,
+        attribute: CFStringRef,
+        value: *const std::ffi::c_void,
+    ) -> AxError;
+    fn AXValueCreate(the_type: i32, value_ptr: *const std::ffi::c_void) -> *const std::ffi::c_void;
 }
+
+/// AXValue type tag for CGPoint (matches macOS ApplicationServices/AXValue.h).
+pub const AX_VALUE_CG_POINT: i32 = 1;
+/// AXValue type tag for CGSize.
+pub const AX_VALUE_CG_SIZE: i32 = 2;
+/// AXValue type tag for CGRect.
+pub const AX_VALUE_CG_RECT: i32 = 3;
 
 /// Owned AX element pointer. Drops via `CFRelease`.
 ///
@@ -103,6 +116,100 @@ impl AxElement {
         let mut id: u32 = 0;
         let err = unsafe { _AXUIElementGetWindow(self.ptr, &mut id) };
         if err == AX_ERROR_SUCCESS { Some(id) } else { None }
+    }
+
+    /// Write an AXValue-wrapped `CGPoint` to the `AXPosition` attribute.
+    /// Returns the AX error code (0 = success).
+    pub fn set_position(&self, x: f64, y: f64) -> AxError {
+        use core_graphics::geometry::CGPoint;
+        let pt = CGPoint::new(x, y);
+        unsafe {
+            let value =
+                AXValueCreate(AX_VALUE_CG_POINT, &pt as *const _ as *const std::ffi::c_void);
+            if value.is_null() {
+                return -1;
+            }
+            let attr = CFString::new("AXPosition");
+            let err = AXUIElementSetAttributeValue(
+                self.ptr,
+                attr.as_concrete_TypeRef() as CFStringRef,
+                value,
+            );
+            CFRelease(value);
+            err
+        }
+    }
+
+    /// Write an AXValue-wrapped `CGSize` to the `AXSize` attribute.
+    /// Returns the AX error code (0 = success).
+    pub fn set_size(&self, w: f64, h: f64) -> AxError {
+        use core_graphics::geometry::CGSize;
+        let sz = CGSize::new(w, h);
+        unsafe {
+            let value =
+                AXValueCreate(AX_VALUE_CG_SIZE, &sz as *const _ as *const std::ffi::c_void);
+            if value.is_null() {
+                return -1;
+            }
+            let attr = CFString::new("AXSize");
+            let err = AXUIElementSetAttributeValue(
+                self.ptr,
+                attr.as_concrete_TypeRef() as CFStringRef,
+                value,
+            );
+            CFRelease(value);
+            err
+        }
+    }
+
+    /// Read the `AXPosition` attribute as a `(x, y)` pair.
+    /// Returns `None` if the attribute is absent or conversion fails.
+    pub fn get_position(&self) -> Option<(f64, f64)> {
+        use core_graphics::geometry::CGPoint;
+        let raw = self.copy_attribute_raw("AXPosition")?;
+        let mut pt = CGPoint::new(0.0, 0.0);
+        let ok = unsafe {
+            AXValueGetValue(
+                raw,
+                AX_VALUE_CG_POINT,
+                &mut pt as *mut _ as *mut std::ffi::c_void,
+            )
+        };
+        unsafe { cf_release(raw) };
+        if ok != 0 { Some((pt.x, pt.y)) } else { None }
+    }
+
+    /// Read the `AXSize` attribute as a `(width, height)` pair.
+    /// Returns `None` if the attribute is absent or conversion fails.
+    pub fn get_size(&self) -> Option<(f64, f64)> {
+        use core_graphics::geometry::CGSize;
+        let raw = self.copy_attribute_raw("AXSize")?;
+        let mut sz = CGSize::new(0.0, 0.0);
+        let ok = unsafe {
+            AXValueGetValue(
+                raw,
+                AX_VALUE_CG_SIZE,
+                &mut sz as *mut _ as *mut std::ffi::c_void,
+            )
+        };
+        unsafe { cf_release(raw) };
+        if ok != 0 { Some((sz.width, sz.height)) } else { None }
+    }
+
+    /// Run `op` against a borrowed AX pointer without taking ownership.
+    /// The element is NOT released at the end of the closure.
+    /// Prefer this over raw pointer manipulation to avoid double-release.
+    ///
+    /// # Safety
+    /// `ptr` must be a valid, live `AXUIElementRef` that outlives the closure.
+    pub unsafe fn with_borrowed<F, R>(ptr: AxElementRef, op: F) -> R
+    where
+        F: FnOnce(&Self) -> R,
+    {
+        let tmp = Self { ptr };
+        let r = op(&tmp);
+        std::mem::forget(tmp);
+        r
     }
 }
 
