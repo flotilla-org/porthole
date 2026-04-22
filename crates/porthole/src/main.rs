@@ -5,9 +5,15 @@ use porthole::client::DaemonClient;
 use porthole::commands::launch::LaunchArgs;
 use porthole::commands::screenshot::ScreenshotArgs;
 use porthole::runtime::socket_path;
+use porthole_core::display::Rect;
 use porthole_core::input::{ClickButton, Modifier};
+use porthole_core::placement::{Anchor, DisplayTarget, PlacementSpec};
 use porthole_core::wait::WaitCondition;
-use porthole::commands::{attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, key as key_cmd, scroll as scroll_cmd, text as text_cmd, wait as wait_cmd};
+use porthole::commands::{
+    attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd,
+    key as key_cmd, launch as launch_cmd, replace as replace_cmd, scroll as scroll_cmd,
+    text as text_cmd, wait as wait_cmd,
+};
 use porthole_protocol::launches::WireConfidence;
 
 #[derive(Parser)]
@@ -21,18 +27,21 @@ struct Cli {
 enum Command {
     /// Print daemon info and loaded adapters.
     Info,
-    /// Launch a process.
+    /// Launch a process or an artifact.
     Launch {
-        /// App bundle path or executable.
+        /// "process" or "artifact". Default "process".
+        #[arg(long, value_enum, default_value_t = LaunchKindArg::Process)]
+        kind: LaunchKindArg,
+        /// Process: app bundle path or executable. Artifact: file path.
         #[arg(long)]
-        app: String,
-        /// Extra arguments passed to the app.
+        app_or_path: String,
+        /// Process: extra args (repeatable).
         #[arg(long = "arg", value_name = "ARG")]
         args: Vec<String>,
-        /// `KEY=VALUE` env vars.
+        /// Process: KEY=VALUE env vars.
         #[arg(long = "env", value_name = "KEY=VALUE")]
         env: Vec<String>,
-        /// Working directory.
+        /// Process: working directory.
         #[arg(long)]
         cwd: Option<String>,
         /// Session tag.
@@ -44,6 +53,92 @@ enum Command {
         /// Minimum required correlation confidence.
         #[arg(long, value_enum, default_value_t = ConfidenceArg::Strong)]
         require_confidence: ConfidenceArg,
+        /// Fail if a preexisting surface is returned instead of a fresh one.
+        #[arg(long)]
+        require_fresh_surface: bool,
+        /// Placement: which display ("focused", "primary", or a display ID).
+        #[arg(long, value_parser = parse_display_target)]
+        on_display: Option<DisplayTarget>,
+        /// Placement: x position (display-local logical points).
+        #[arg(long, requires_all = ["geom_y", "geom_w", "geom_h"])]
+        geom_x: Option<f64>,
+        /// Placement: y position.
+        #[arg(long)]
+        geom_y: Option<f64>,
+        /// Placement: width.
+        #[arg(long)]
+        geom_w: Option<f64>,
+        /// Placement: height.
+        #[arg(long)]
+        geom_h: Option<f64>,
+        /// Placement: anchor strategy when no explicit geometry.
+        #[arg(long, value_enum)]
+        anchor: Option<AnchorArg>,
+        /// Auto-dismiss delay in milliseconds.
+        #[arg(long)]
+        auto_dismiss_ms: Option<u64>,
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Replace a tracked surface — close the old, launch the new in its slot.
+    Replace {
+        /// Surface to replace.
+        surface_id: String,
+        /// "process" or "artifact". Default "process".
+        #[arg(long, value_enum, default_value_t = LaunchKindArg::Process)]
+        kind: LaunchKindArg,
+        /// Process: app bundle path or executable. Artifact: file path.
+        #[arg(long)]
+        app_or_path: String,
+        /// Process: extra args (repeatable).
+        #[arg(long = "arg", value_name = "ARG")]
+        args: Vec<String>,
+        /// Process: KEY=VALUE env vars.
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Process: working directory.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Session tag.
+        #[arg(long)]
+        session: Option<String>,
+        /// Launch timeout in milliseconds.
+        #[arg(long, default_value_t = 10_000)]
+        timeout_ms: u64,
+        /// Minimum required correlation confidence.
+        #[arg(long, value_enum, default_value_t = ConfidenceArg::Strong)]
+        require_confidence: ConfidenceArg,
+        /// Fail if a preexisting surface is returned instead of a fresh one.
+        #[arg(long)]
+        require_fresh_surface: bool,
+        /// Placement: which display ("focused", "primary", or a display ID).
+        #[arg(long, value_parser = parse_display_target, conflicts_with = "inherit_placement")]
+        on_display: Option<DisplayTarget>,
+        /// Placement: x position (display-local logical points).
+        #[arg(long)]
+        geom_x: Option<f64>,
+        /// Placement: y position.
+        #[arg(long)]
+        geom_y: Option<f64>,
+        /// Placement: width.
+        #[arg(long)]
+        geom_w: Option<f64>,
+        /// Placement: height.
+        #[arg(long)]
+        geom_h: Option<f64>,
+        /// Placement: anchor strategy when no explicit geometry.
+        #[arg(long, value_enum, conflicts_with = "inherit_placement")]
+        anchor: Option<AnchorArg>,
+        /// Auto-dismiss delay in milliseconds.
+        #[arg(long)]
+        auto_dismiss_ms: Option<u64>,
+        /// Omit placement block entirely — inherit geometry from the old surface.
+        #[arg(long, conflicts_with_all = ["on_display", "geom_x", "anchor"])]
+        inherit_placement: bool,
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Screenshot a surface.
     Screenshot {
@@ -200,7 +295,41 @@ impl From<ConfidenceArg> for WireConfidence {
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-enum ModifierArg { Cmd, Ctrl, Alt, Shift }
+enum LaunchKindArg {
+    Process,
+    Artifact,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum AnchorArg {
+    FocusedDisplay,
+    Cursor,
+}
+
+impl From<AnchorArg> for Anchor {
+    fn from(a: AnchorArg) -> Self {
+        match a {
+            AnchorArg::FocusedDisplay => Anchor::FocusedDisplay,
+            AnchorArg::Cursor => Anchor::Cursor,
+        }
+    }
+}
+
+fn parse_display_target(s: &str) -> Result<DisplayTarget, String> {
+    Ok(match s {
+        "focused" => DisplayTarget::Focused,
+        "primary" => DisplayTarget::Primary,
+        _ => DisplayTarget::Id(porthole_core::display::DisplayId::new(s)),
+    })
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum ModifierArg {
+    Cmd,
+    Ctrl,
+    Alt,
+    Shift,
+}
 
 impl From<ModifierArg> for Modifier {
     fn from(m: ModifierArg) -> Self {
@@ -214,7 +343,11 @@ impl From<ModifierArg> for Modifier {
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-enum ButtonArg { Left, Right, Middle }
+enum ButtonArg {
+    Left,
+    Right,
+    Middle,
+}
 
 impl From<ButtonArg> for ClickButton {
     fn from(b: ButtonArg) -> Self {
@@ -227,7 +360,13 @@ impl From<ButtonArg> for ClickButton {
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-enum ConditionArg { Stable, Dirty, Exists, Gone, TitleMatches }
+enum ConditionArg {
+    Stable,
+    Dirty,
+    Exists,
+    Gone,
+    TitleMatches,
+}
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -235,27 +374,145 @@ async fn main() -> std::process::ExitCode {
     let client = DaemonClient::new(socket_path());
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
-        Command::Launch { app, args, env, cwd, session, timeout_ms, require_confidence } => {
-            let parsed_env: Vec<(String, String)> = env
-                .into_iter()
-                .filter_map(|s| s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-                .collect();
-            porthole::commands::launch::run(
+        Command::Launch {
+            kind,
+            app_or_path,
+            args,
+            env,
+            cwd,
+            session,
+            timeout_ms,
+            require_confidence,
+            require_fresh_surface,
+            on_display,
+            geom_x,
+            geom_y,
+            geom_w,
+            geom_h,
+            anchor,
+            auto_dismiss_ms,
+            json,
+        } => {
+            let kind_arg = match kind {
+                LaunchKindArg::Process => {
+                    let parsed_env: Vec<(String, String)> = env
+                        .into_iter()
+                        .filter_map(|s| {
+                            s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
+                        })
+                        .collect();
+                    launch_cmd::LaunchKindArg::Process {
+                        app: app_or_path,
+                        args,
+                        env: parsed_env,
+                        cwd,
+                    }
+                }
+                LaunchKindArg::Artifact => launch_cmd::LaunchKindArg::Artifact {
+                    path: std::path::PathBuf::from(app_or_path),
+                },
+            };
+
+            let geometry = match (geom_x, geom_y, geom_w, geom_h) {
+                (Some(x), Some(y), Some(w), Some(h)) => Some(Rect { x, y, w, h }),
+                _ => None,
+            };
+            let placement = if on_display.is_some() || geometry.is_some() || anchor.is_some() {
+                Some(PlacementSpec { on_display, geometry, anchor: anchor.map(Anchor::from) })
+            } else {
+                None
+            };
+
+            launch_cmd::run(
                 &client,
                 LaunchArgs {
-                    app,
-                    args,
-                    env: parsed_env,
-                    cwd,
+                    kind: kind_arg,
                     session,
                     timeout_ms,
                     require_confidence: require_confidence.into(),
+                    require_fresh_surface,
+                    placement,
+                    auto_dismiss_after_ms: auto_dismiss_ms,
+                    json,
                 },
             )
             .await
         }
+        Command::Replace {
+            surface_id,
+            kind,
+            app_or_path,
+            args,
+            env,
+            cwd,
+            session,
+            timeout_ms,
+            require_confidence,
+            require_fresh_surface,
+            on_display,
+            geom_x,
+            geom_y,
+            geom_w,
+            geom_h,
+            anchor,
+            auto_dismiss_ms,
+            inherit_placement,
+            json,
+        } => {
+            let wire_kind = match kind {
+                LaunchKindArg::Process => {
+                    let parsed_env: std::collections::BTreeMap<String, String> = env
+                        .into_iter()
+                        .filter_map(|s| {
+                            s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
+                        })
+                        .collect();
+                    porthole_protocol::launches::LaunchKind::Process(
+                        porthole_protocol::launches::ProcessLaunch {
+                            app: app_or_path,
+                            args,
+                            cwd,
+                            env: parsed_env,
+                        },
+                    )
+                }
+                LaunchKindArg::Artifact => porthole_protocol::launches::LaunchKind::Artifact(
+                    porthole_protocol::launches::ArtifactLaunch { path: app_or_path },
+                ),
+            };
+
+            let geometry = match (geom_x, geom_y, geom_w, geom_h) {
+                (Some(x), Some(y), Some(w), Some(h)) => Some(Rect { x, y, w, h }),
+                _ => None,
+            };
+            let placement = if inherit_placement {
+                // Explicit inheritance: send placement: null so the daemon
+                // inherits geometry from the old surface.
+                None
+            } else if on_display.is_some() || geometry.is_some() || anchor.is_some() {
+                Some(PlacementSpec { on_display, geometry, anchor: anchor.map(Anchor::from) })
+            } else {
+                // No flags and no --inherit-placement: OS default (empty placement block).
+                Some(PlacementSpec::default())
+            };
+
+            let req = porthole_protocol::launches::LaunchRequest {
+                kind: wire_kind,
+                session,
+                require_confidence: require_confidence.into(),
+                timeout_ms,
+                placement,
+                auto_dismiss_after_ms: auto_dismiss_ms,
+                require_fresh_surface,
+            };
+            replace_cmd::run(&client, surface_id, req, json).await
+        }
         Command::Screenshot { surface_id, out, session } => {
-            porthole::commands::screenshot::run(&client, ScreenshotArgs { surface_id, output: out, session }).await
+            porthole::commands::screenshot::run(
+                &client,
+                ScreenshotArgs { surface_id, output: out, session },
+            )
+            .await
         }
         Command::Key { surface_id, key, modifiers, session } => {
             let args = key_cmd::KeyArgs {
@@ -270,16 +527,26 @@ async fn main() -> std::process::ExitCode {
             text_cmd::run(&client, text_cmd::TextArgs { surface_id, text, session }).await
         }
         Command::Click { surface_id, x, y, button, count, modifiers, session } => {
-            click_cmd::run(&client, click_cmd::ClickArgs {
-                surface_id, x, y,
-                button: button.into(),
-                count,
-                modifiers: modifiers.into_iter().map(Modifier::from).collect(),
-                session,
-            }).await
+            click_cmd::run(
+                &client,
+                click_cmd::ClickArgs {
+                    surface_id,
+                    x,
+                    y,
+                    button: button.into(),
+                    count,
+                    modifiers: modifiers.into_iter().map(Modifier::from).collect(),
+                    session,
+                },
+            )
+            .await
         }
         Command::Scroll { surface_id, x, y, delta_x, delta_y, session } => {
-            scroll_cmd::run(&client, scroll_cmd::ScrollArgs { surface_id, x, y, delta_x, delta_y, session }).await
+            scroll_cmd::run(
+                &client,
+                scroll_cmd::ScrollArgs { surface_id, x, y, delta_x, delta_y, session },
+            )
+            .await
         }
         Command::Wait { surface_id, condition, pattern, window_ms, threshold_pct, timeout_ms, session } => {
             let cond = match condition {
@@ -287,14 +554,19 @@ async fn main() -> std::process::ExitCode {
                 ConditionArg::Dirty => WaitCondition::Dirty { threshold_pct },
                 ConditionArg::Exists => WaitCondition::Exists,
                 ConditionArg::Gone => WaitCondition::Gone,
-                ConditionArg::TitleMatches => WaitCondition::TitleMatches {
-                    pattern: pattern.unwrap_or_default(),
-                },
+                ConditionArg::TitleMatches => {
+                    WaitCondition::TitleMatches { pattern: pattern.unwrap_or_default() }
+                }
             };
-            wait_cmd::run(&client, wait_cmd::WaitArgs { surface_id, condition: cond, timeout_ms, session }).await
+            wait_cmd::run(&client, wait_cmd::WaitArgs { surface_id, condition: cond, timeout_ms, session })
+                .await
         }
-        Command::Close { surface_id, session } => close_cmd::run(&client, surface_id, session).await,
-        Command::Focus { surface_id, session } => focus_cmd::run(&client, surface_id, session).await,
+        Command::Close { surface_id, session } => {
+            close_cmd::run(&client, surface_id, session).await
+        }
+        Command::Focus { surface_id, session } => {
+            focus_cmd::run(&client, surface_id, session).await
+        }
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
         Command::Search { app_name, title_pattern, pids, cg_window_ids, frontmost, session, json } => {
@@ -317,7 +589,16 @@ async fn main() -> std::process::ExitCode {
             use porthole::commands::track as track_cmd;
             track_cmd::run(&client, track_cmd::TrackArgs { ref_, session, json }).await
         }
-        Command::Attach { app_name, title_pattern, pids, containing_pids, cg_window_ids, frontmost, session, json } => {
+        Command::Attach {
+            app_name,
+            title_pattern,
+            pids,
+            containing_pids,
+            cg_window_ids,
+            frontmost,
+            session,
+            json,
+        } => {
             use porthole::commands::attach as attach_cmd;
             attach_cmd::run(
                 &client,
