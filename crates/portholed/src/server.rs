@@ -14,6 +14,7 @@ use crate::routes::{
     info as info_route,
     input as input_route,
     launches as launches_route,
+    replace as replace_route,
     screenshot as screenshot_route,
     wait as wait_route,
 };
@@ -33,6 +34,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/click", post(input_route::post_click))
         .route("/surfaces/{id}/scroll", post(input_route::post_scroll))
         .route("/surfaces/{id}/wait", post(wait_route::post_wait))
+        .route("/surfaces/{id}/replace", post(replace_route::post_replace))
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
         .with_state(state)
@@ -270,5 +272,111 @@ mod tests {
         let router = build_router(AppState::new(adapter));
         let res = post(router, "/surfaces/track", serde_json::json!({ "ref": "junk" })).await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn post_replace_inherits_snapshot_when_no_placement() {
+        use porthole_core::display::DisplayId;
+        use porthole_core::display::Rect;
+        use porthole_core::placement::GeometrySnapshot;
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        // Seed an alive handle with cg_window_id.
+        let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
+        old.cg_window_id = Some(50);
+        let old_id = old.id.clone();
+        let state = AppState::new(adapter.clone());
+        state.handles.insert(old).await;
+
+        adapter
+            .set_next_snapshot_geometry(Ok(GeometrySnapshot {
+                display_id: DisplayId::new("in-mem-display-0"),
+                display_local: Rect { x: 10.0, y: 20.0, w: 500.0, h: 400.0 },
+            }))
+            .await;
+
+        let router = build_router(state);
+        let res = post(
+            router,
+            &format!("/surfaces/{old_id}/replace"),
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" }
+            }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::launches::LaunchResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.placement, porthole_core::placement::PlacementOutcome::Applied);
+    }
+
+    #[tokio::test]
+    async fn post_replace_with_empty_placement_does_not_inherit() {
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
+        old.cg_window_id = Some(51);
+        let old_id = old.id.clone();
+        let state = AppState::new(adapter.clone());
+        state.handles.insert(old).await;
+
+        let router = build_router(state);
+        let res = post(
+            router,
+            &format!("/surfaces/{old_id}/replace"),
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "placement": {}
+            }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::launches::LaunchResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.placement, porthole_core::placement::PlacementOutcome::NotRequested);
+    }
+
+    #[tokio::test]
+    async fn post_launches_rejects_url_artifact() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let router = build_router(AppState::new(adapter));
+        let res = post(
+            router,
+            "/launches",
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "https://example.com" }
+            }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn post_launches_require_fresh_returns_409_with_ref_in_body() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
+        outcome.surface_was_preexisting = true;
+        outcome.surface.cg_window_id = Some(321);
+        adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
+
+        let router = build_router(AppState::new(adapter));
+        let res = post(
+            router,
+            "/launches",
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "require_fresh_surface": true
+            }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::LaunchReturnedExisting);
+        let details = err.details.expect("details populated");
+        assert!(details.get("ref").is_some());
+        assert_eq!(details.get("cg_window_id").and_then(|v| v.as_u64()), Some(321));
     }
 }
