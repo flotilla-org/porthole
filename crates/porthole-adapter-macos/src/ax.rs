@@ -27,6 +27,12 @@ unsafe extern "C" {
     fn AXUIElementPerformAction(element: AxElementRef, action: CFStringRef) -> AxError;
     fn _AXUIElementGetWindow(element: AxElementRef, out: *mut u32) -> AxError;
     fn CFRelease(ptr: *const std::ffi::c_void);
+    /// Private AXValue helper — extracts a CGPoint or CGSize from an AXValueRef.
+    pub(crate) fn AXValueGetValue(
+        value: *const std::ffi::c_void,
+        the_type: i32,
+        value_ptr: *mut std::ffi::c_void,
+    ) -> u8;
 }
 
 /// Owned AX element pointer. Drops via `CFRelease`.
@@ -127,6 +133,39 @@ pub(crate) unsafe fn ax_get_window_id_borrowed(ptr: AxElementRef) -> Option<u32>
     let mut id: u32 = 0;
     let err = unsafe { _AXUIElementGetWindow(ptr, &mut id) };
     if err == AX_ERROR_SUCCESS { Some(id) } else { None }
+}
+
+/// Copy an attribute from a *borrowed* (unowned) `AxElementRef`. The returned
+/// pointer (if `Some`) is retained and must be released by the caller via
+/// `cf_release`.
+///
+/// # Safety
+/// `ptr` must be a valid, live AXUIElementRef. It is not consumed or released.
+pub(crate) unsafe fn copy_attribute_borrowed(
+    ptr: AxElementRef,
+    attribute: &str,
+) -> Option<*const std::ffi::c_void> {
+    let attr_str = CFString::new(attribute);
+    let mut out: *const std::ffi::c_void = std::ptr::null();
+    let err = unsafe {
+        AXUIElementCopyAttributeValue(
+            ptr,
+            attr_str.as_concrete_TypeRef() as CFStringRef,
+            &mut out,
+        )
+    };
+    if err == AX_ERROR_SUCCESS && !out.is_null() { Some(out) } else { None }
+}
+
+/// Perform an AX action on a *borrowed* (unowned) `AxElementRef`.
+///
+/// # Safety
+/// `ptr` must be a valid, live AXUIElementRef. It is not consumed or released.
+pub(crate) unsafe fn perform_action_borrowed(ptr: AxElementRef, action: &str) {
+    let action_str = CFString::new(action);
+    unsafe {
+        let _ = AXUIElementPerformAction(ptr, action_str.as_concrete_TypeRef() as CFStringRef);
+    }
 }
 
 #[cfg(test)]
