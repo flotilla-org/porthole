@@ -2,6 +2,7 @@
 // FFI shim (getuid) to derive per-user socket paths.  All other crates that
 // have no unsafe requirements keep #![forbid(unsafe_code)].
 
+pub mod ancestry;
 pub mod client;
 pub mod commands;
 pub mod runtime;
