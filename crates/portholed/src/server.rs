@@ -368,6 +368,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_replace_close_failure_returns_409_with_old_handle_alive_body() {
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        // Seed an alive handle.
+        let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
+        old.cg_window_id = Some(50);
+        let old_id = old.id.clone();
+        let state = AppState::new(adapter.clone());
+        state.handles.insert(old).await;
+
+        // Script close to fail.
+        adapter
+            .set_next_close_result(Err(porthole_core::PortholeError::new(
+                porthole_core::ErrorCode::CloseFailed,
+                "save dialog blocking",
+            )))
+            .await;
+
+        let router = build_router(state);
+        let res = post(
+            router,
+            &format!("/surfaces/{old_id}/replace"),
+            serde_json::json!({ "kind": { "type": "artifact", "path": "/tmp/x.pdf" } }),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::CloseFailed);
+        let details = err.details.expect("details populated");
+        assert_eq!(details.get("old_handle_alive").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    #[tokio::test]
+    async fn post_replace_launch_failure_after_close_returns_old_handle_alive_false() {
+        use porthole_core::in_memory::InMemoryAdapter;
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        // Alive handle to replace.
+        let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
+        old.cg_window_id = Some(50);
+        let old_id = old.id.clone();
+        let state = AppState::new(adapter.clone());
+        state.handles.insert(old).await;
+
+        // Close will succeed (default). Make the artifact launch return weak
+        // confidence, which will fail the Strong requirement.
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(999);
+        outcome.confidence = porthole_core::adapter::Confidence::Weak;
+        adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
+
+        let router = build_router(state);
+        let res = post(
+            router,
+            &format!("/surfaces/{old_id}/replace"),
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "require_confidence": "strong"
+            }),
+        )
+        .await;
+        // Expect non-success: LaunchCorrelationAmbiguous → 409 CONFLICT
+        assert!(!res.status().is_success());
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
+        // Regardless of exact code, details should include old_handle_alive: false
+        let details = err.details.expect("details populated after post-close failure");
+        assert_eq!(
+            details.get("old_handle_alive").and_then(|v| v.as_bool()),
+            Some(false),
+            "post-close failure must report old_handle_alive: false"
+        );
+    }
+
+    #[tokio::test]
     async fn post_launches_require_fresh_returns_409_with_ref_in_body() {
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);

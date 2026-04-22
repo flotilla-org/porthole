@@ -45,9 +45,17 @@ impl From<LaunchPipelineError> for ApiError {
 impl From<ReplacePipelineError> for ApiError {
     fn from(err: ReplacePipelineError) -> Self {
         match err {
-            ReplacePipelineError::Porthole(e) => Self(e.into()),
-            ReplacePipelineError::ReturnedExisting { info, old_handle_alive: _ } => {
-                Self(existing_to_wire(info))
+            ReplacePipelineError::Porthole { error, old_handle_alive } => Self(WireError {
+                code: error.code,
+                message: error.message,
+                details: serde_json::to_value(serde_json::json!({ "old_handle_alive": old_handle_alive })).ok(),
+            }),
+            ReplacePipelineError::ReturnedExisting { info, old_handle_alive } => {
+                let mut wire = existing_to_wire(info);
+                if let Some(details) = wire.details.as_mut().and_then(|v| v.as_object_mut()) {
+                    details.insert("old_handle_alive".into(), serde_json::Value::Bool(old_handle_alive));
+                }
+                Self(wire)
             }
             ReplacePipelineError::CloseFailed { old_handle_alive, reason } => {
                 let body = CloseFailedBody { old_handle_alive };

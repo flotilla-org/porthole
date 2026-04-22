@@ -21,15 +21,9 @@ pub struct ReplaceOutcome {
 
 #[derive(Debug)]
 pub enum ReplacePipelineError {
-    Porthole(PortholeError),
+    Porthole { error: PortholeError, old_handle_alive: bool },
     ReturnedExisting { info: ExistingSurfaceInfo, old_handle_alive: bool },
     CloseFailed { old_handle_alive: bool, reason: String },
-}
-
-impl From<PortholeError> for ReplacePipelineError {
-    fn from(e: PortholeError) -> Self {
-        Self::Porthole(e)
-    }
 }
 
 impl ReplacePipeline {
@@ -48,7 +42,7 @@ impl ReplacePipeline {
             .handles
             .require_alive(old_id)
             .await
-            .map_err(ReplacePipelineError::Porthole)?;
+            .map_err(|e| ReplacePipelineError::Porthole { error: e, old_handle_alive: true })?;
         let snapshot = self.adapter.snapshot_geometry(&old_info).await.ok();
 
         // 2. Close old.
@@ -59,7 +53,10 @@ impl ReplacePipeline {
                 reason: e.message,
             });
         }
-        self.handles.mark_dead(old_id).await.map_err(ReplacePipelineError::Porthole)?;
+        self.handles
+            .mark_dead(old_id)
+            .await
+            .map_err(|e| ReplacePipelineError::Porthole { error: e, old_handle_alive: false })?;
 
         // 3. Inheritance: inject snapshot only if caller_placement is None AND we have a snapshot.
         let inherited = match (caller_placement, snapshot) {
@@ -75,7 +72,9 @@ impl ReplacePipeline {
         // 4. Launch the replacement.
         match self.launch.launch(new_spec, effective).await {
             Ok(out) => Ok(ReplaceOutcome { new: out, old_surface_id: old_id.clone() }),
-            Err(LaunchPipelineError::Porthole(e)) => Err(ReplacePipelineError::Porthole(e)),
+            Err(LaunchPipelineError::Porthole(e)) => {
+                Err(ReplacePipelineError::Porthole { error: e, old_handle_alive: false })
+            }
             Err(LaunchPipelineError::ReturnedExisting(info)) => {
                 Err(ReplacePipelineError::ReturnedExisting {
                     info,
