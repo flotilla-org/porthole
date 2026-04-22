@@ -12,6 +12,7 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use porthole_core::PortholeError;
 
+pub mod artifact;
 pub mod attention;
 pub mod ax;
 pub mod capture;
@@ -126,9 +127,9 @@ impl Adapter for MacOsAdapter {
 
     async fn launch_artifact(
         &self,
-        _spec: &porthole_core::adapter::ArtifactLaunchSpec,
+        spec: &porthole_core::adapter::ArtifactLaunchSpec,
     ) -> Result<porthole_core::adapter::LaunchOutcome, porthole_core::PortholeError> {
-        todo!("implemented in slice-C Task 18")
+        artifact::launch_artifact(spec).await
     }
 
     async fn place_surface(
