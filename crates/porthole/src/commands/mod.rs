@@ -1,3 +1,4 @@
+pub mod attach;
 pub mod attention;
 pub mod click;
 pub mod close;
@@ -8,5 +9,7 @@ pub mod key;
 pub mod launch;
 pub mod screenshot;
 pub mod scroll;
+pub mod search;
 pub mod text;
+pub mod track;
 pub mod wait;

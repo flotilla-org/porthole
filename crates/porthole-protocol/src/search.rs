@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub use porthole_core::search::{Candidate, SearchQuery};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchRequest {
     #[serde(flatten)]
     pub query: SearchQuery,
@@ -15,7 +15,7 @@ pub struct SearchResponse {
     pub candidates: Vec<Candidate>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrackRequest {
     #[serde(rename = "ref")]
     pub ref_: String,

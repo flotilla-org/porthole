@@ -135,6 +135,51 @@ enum Command {
     Attention,
     /// Print monitor list.
     Displays,
+    /// Search for candidate windows.
+    Search {
+        #[arg(long)]
+        app_name: Option<String>,
+        #[arg(long)]
+        title_pattern: Option<String>,
+        #[arg(long = "pid")]
+        pids: Vec<u32>,
+        #[arg(long = "cg-window-id")]
+        cg_window_ids: Vec<u32>,
+        #[arg(long)]
+        frontmost: bool,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Track a candidate ref, minting a surface handle.
+    Track {
+        #[arg(value_name = "REF")]
+        ref_: String,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search + pick-if-unique + track. Exits non-zero on 0 or >1 matches.
+    Attach {
+        #[arg(long)]
+        app_name: Option<String>,
+        #[arg(long)]
+        title_pattern: Option<String>,
+        #[arg(long = "pid")]
+        pids: Vec<u32>,
+        #[arg(long = "containing-pid")]
+        containing_pids: Vec<u32>,
+        #[arg(long = "cg-window-id")]
+        cg_window_ids: Vec<u32>,
+        #[arg(long)]
+        frontmost: bool,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -252,6 +297,43 @@ async fn main() -> std::process::ExitCode {
         Command::Focus { surface_id, session } => focus_cmd::run(&client, surface_id, session).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
+        Command::Search { app_name, title_pattern, pids, cg_window_ids, frontmost, session, json } => {
+            use porthole::commands::search as search_cmd;
+            search_cmd::run(
+                &client,
+                search_cmd::SearchArgs {
+                    app_name,
+                    title_pattern,
+                    pids,
+                    cg_window_ids,
+                    frontmost: if frontmost { Some(true) } else { None },
+                    session,
+                    json,
+                },
+            )
+            .await
+        }
+        Command::Track { ref_, session, json } => {
+            use porthole::commands::track as track_cmd;
+            track_cmd::run(&client, track_cmd::TrackArgs { ref_, session, json }).await
+        }
+        Command::Attach { app_name, title_pattern, pids, containing_pids, cg_window_ids, frontmost, session, json } => {
+            use porthole::commands::attach as attach_cmd;
+            attach_cmd::run(
+                &client,
+                attach_cmd::AttachArgs {
+                    app_name,
+                    title_pattern,
+                    pids,
+                    containing_pids,
+                    cg_window_ids,
+                    frontmost: if frontmost { Some(true) } else { None },
+                    session,
+                    json,
+                },
+            )
+            .await
+        }
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
