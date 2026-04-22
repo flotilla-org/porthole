@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use porthole_adapter_macos::MacOsAdapter;
 use porthole_core::adapter::{Adapter, ProcessLaunchSpec, RequireConfidence};
@@ -27,7 +27,7 @@ async fn text_types_into_textedit_and_wait_dirty_fires() {
 
     // Wait for the editor to be visible/stable first.
     adapter
-        .wait(&surface, &WaitCondition::Stable { window_ms: 800, threshold_pct: 1.0 })
+        .wait(&surface, &WaitCondition::Stable { window_ms: 800, threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
         .await
         .expect("initial stable");
 
@@ -35,7 +35,7 @@ async fn text_types_into_textedit_and_wait_dirty_fires() {
     let baseline = adapter.screenshot(&surface).await.expect("baseline");
     adapter.text(&surface, "hello porthole\n").await.expect("text");
     let dirty = adapter
-        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 })
+        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
         .await
         .expect("dirty");
     assert_eq!(dirty.condition, "dirty");
@@ -58,7 +58,7 @@ async fn key_event_triggers_dirty_after_typing() {
         .await
         .expect("key Enter");
     let dirty = adapter
-        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 })
+        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
         .await
         .expect("dirty");
     assert_eq!(dirty.condition, "dirty");

@@ -9,7 +9,7 @@ use porthole_core::display::DisplayInfo;
 use porthole_core::input::{ClickSpec, KeyEvent, ScrollSpec};
 use porthole_core::permission::PermissionStatus;
 use porthole_core::surface::SurfaceInfo;
-use porthole_core::wait::{LastObserved, WaitCondition, WaitOutcome};
+use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use porthole_core::PortholeError;
 
 pub mod attention;
@@ -86,16 +86,9 @@ impl Adapter for MacOsAdapter {
         &self,
         surface: &SurfaceInfo,
         condition: &WaitCondition,
-    ) -> Result<WaitOutcome, PortholeError> {
-        wait::wait(surface, condition).await
-    }
-
-    async fn wait_last_observed(
-        &self,
-        surface: &SurfaceInfo,
-        condition: &WaitCondition,
-    ) -> Result<LastObserved, PortholeError> {
-        wait::wait_last_observed(surface, condition).await
+        deadline: std::time::Instant,
+    ) -> Result<WaitOutcome, WaitTimeout> {
+        wait::wait(surface, condition, deadline).await
     }
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError> {

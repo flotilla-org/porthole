@@ -24,4 +24,4 @@ pub use input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
 pub use permission::PermissionStatus;
 pub use search::{Candidate, SearchQuery};
 pub use surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-pub use wait::{LastObserved, WaitCondition, WaitOutcome, DEFAULT_WAIT_TIMEOUT, WAIT_SAMPLE_INTERVAL};
+pub use wait::{LastObserved, WaitCondition, WaitOutcome, WaitTimeout, DEFAULT_WAIT_TIMEOUT, WAIT_SAMPLE_INTERVAL};

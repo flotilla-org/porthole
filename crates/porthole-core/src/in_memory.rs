@@ -12,7 +12,7 @@ use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
 use crate::permission::PermissionStatus;
 use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
+use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use crate::PortholeError;
 
 #[derive(Clone, Default)]
@@ -30,8 +30,7 @@ struct Script {
     next_scroll_result: Option<Result<(), PortholeError>>,
     next_close_result: Option<Result<(), PortholeError>>,
     next_focus_result: Option<Result<(), PortholeError>>,
-    next_wait_result: Option<Result<WaitOutcome, PortholeError>>,
-    next_wait_last_observed: Option<Result<LastObserved, PortholeError>>,
+    next_wait_result: Option<Result<WaitOutcome, WaitTimeout>>,
     next_attention: Option<Result<AttentionInfo, PortholeError>>,
     next_displays: Option<Result<Vec<DisplayInfo>, PortholeError>>,
     next_permissions: Option<Result<Vec<PermissionStatus>, PortholeError>>,
@@ -86,11 +85,8 @@ impl InMemoryAdapter {
     pub async fn set_next_focus_result(&self, v: Result<(), PortholeError>) {
         self.script.lock().await.next_focus_result = Some(v);
     }
-    pub async fn set_next_wait_result(&self, v: Result<WaitOutcome, PortholeError>) {
+    pub async fn set_next_wait_result(&self, v: Result<WaitOutcome, WaitTimeout>) {
         self.script.lock().await.next_wait_result = Some(v);
-    }
-    pub async fn set_next_wait_last_observed(&self, v: Result<LastObserved, PortholeError>) {
-        self.script.lock().await.next_wait_last_observed = Some(v);
     }
     pub async fn set_next_attention(&self, v: Result<AttentionInfo, PortholeError>) {
         self.script.lock().await.next_attention = Some(v);
@@ -258,7 +254,8 @@ impl Adapter for InMemoryAdapter {
         &self,
         surface: &SurfaceInfo,
         condition: &WaitCondition,
-    ) -> Result<WaitOutcome, PortholeError> {
+        _deadline: std::time::Instant,
+    ) -> Result<WaitOutcome, WaitTimeout> {
         let mut s = self.script.lock().await;
         s.wait_calls.push((surface.id.clone(), condition.clone()));
         s.next_wait_result.take().unwrap_or_else(|| {
@@ -267,15 +264,6 @@ impl Adapter for InMemoryAdapter {
                 elapsed_ms: 0,
             })
         })
-    }
-
-    async fn wait_last_observed(
-        &self,
-        _surface: &SurfaceInfo,
-        _condition: &WaitCondition,
-    ) -> Result<LastObserved, PortholeError> {
-        let mut s = self.script.lock().await;
-        s.next_wait_last_observed.take().unwrap_or(Ok(LastObserved::Presence { alive: true }))
     }
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError> {
@@ -427,7 +415,8 @@ mod tests {
     async fn wait_returns_default_outcome_with_condition_tag() {
         let adapter = InMemoryAdapter::new();
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
-        let result = adapter.wait(&outcome.surface, &WaitCondition::Exists).await.unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let result = adapter.wait(&outcome.surface, &WaitCondition::Exists, deadline).await.unwrap();
         assert_eq!(result.condition, "exists");
     }
 

@@ -55,6 +55,14 @@ pub enum LastObserved {
     Title { title: Option<String> },
 }
 
+/// Returned by `Adapter::wait` when the deadline passes before the condition
+/// is satisfied. Contains real diagnostics populated by the adapter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WaitTimeout {
+    pub last_observed: LastObserved,
+    pub elapsed_ms: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

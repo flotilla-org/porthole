@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use regex::Regex;
-use tokio::time::timeout;
 
 use crate::adapter::Adapter;
 use crate::handle::HandleStore;
@@ -35,21 +34,13 @@ impl WaitPipeline {
         validate_condition(condition)?;
         let info = self.handles.require_alive(surface).await.map_err(WaitPipelineError::Porthole)?;
 
-        let start = std::time::Instant::now();
-        match timeout(timeout_duration, self.adapter.wait(&info, condition)).await {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(e)) => Err(WaitPipelineError::Porthole(e)),
-            Err(_) => {
-                let last = self
-                    .adapter
-                    .wait_last_observed(&info, condition)
-                    .await
-                    .unwrap_or(LastObserved::Presence { alive: true });
-                Err(WaitPipelineError::Timeout(WaitTimeoutInfo {
-                    last_observed: last,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                }))
-            }
+        let deadline = std::time::Instant::now() + timeout_duration;
+        match self.adapter.wait(&info, condition, deadline).await {
+            Ok(outcome) => Ok(outcome),
+            Err(wait_timeout) => Err(WaitPipelineError::Timeout(WaitTimeoutInfo {
+                last_observed: wait_timeout.last_observed,
+                elapsed_ms: wait_timeout.elapsed_ms,
+            })),
         }
     }
 }
@@ -127,18 +118,34 @@ mod tests {
     #[tokio::test]
     async fn timeout_surfaces_last_observed() {
         let (adapter, handles, id) = setup().await;
+        use crate::wait::{LastObserved, WaitTimeout};
         adapter
-            .set_next_wait_result(Err(PortholeError::new(ErrorCode::SurfaceNotFound, "will be ignored")))
+            .set_next_wait_result(Err(WaitTimeout {
+                last_observed: LastObserved::FrameChange {
+                    last_change_ms_ago: 500,
+                    last_change_pct: 0.3,
+                },
+                elapsed_ms: 100,
+            }))
             .await;
-        // Adapter will return err immediately if not clobbered — so simulate long wait via a different route:
-        // Replace next_wait_result with a future that never resolves via never-setting-it but adapter default returns
-        // immediately, so use a very short timeout and rely on adapter behavior:
-        let adapter2 = Arc::new(InMemoryAdapter::new());
-        // Do not set next_wait_result: adapter returns default immediately — we cannot easily force timeout without
-        // a blocking fixture. For now, assert the non-timeout path works instead.
-        let pipeline = WaitPipeline::new(adapter2, handles);
-        let outcome = pipeline.wait(&id, &WaitCondition::Exists, Duration::from_millis(50)).await.unwrap();
-        assert_eq!(outcome.condition, "exists");
+        let pipeline = WaitPipeline::new(adapter, handles);
+        let err = pipeline
+            .wait(&id, &WaitCondition::Stable { window_ms: 1500, threshold_pct: 1.0 }, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        match err {
+            WaitPipelineError::Timeout(info) => {
+                assert_eq!(info.elapsed_ms, 100);
+                match info.last_observed {
+                    LastObserved::FrameChange { last_change_ms_ago, last_change_pct } => {
+                        assert_eq!(last_change_ms_ago, 500);
+                        assert!((last_change_pct - 0.3).abs() < 1e-9);
+                    }
+                    other => panic!("expected FrameChange, got {other:?}"),
+                }
+            }
+            other => panic!("expected Timeout, got {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
 use crate::permission::PermissionStatus;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::SurfaceInfo;
-use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
+use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use crate::PortholeError;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -101,23 +101,19 @@ pub trait Adapter: Send + Sync {
 
     async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
 
-    /// Wait for the condition to be satisfied. The pipeline layer wraps this
-    /// in `tokio::time::timeout`; adapters may also respect the deadline
-    /// internally for efficiency.
+    /// Wait until the condition is satisfied, or `deadline` passes.
+    ///
+    /// Returns:
+    /// - `Ok(WaitOutcome)` if the condition was satisfied.
+    /// - `Err(WaitTimeout { last_observed, elapsed_ms })` if the deadline
+    ///   passed first. The adapter populates `last_observed` with whatever
+    ///   state it tracked during polling.
     async fn wait(
         &self,
         surface: &SurfaceInfo,
         condition: &WaitCondition,
-    ) -> Result<WaitOutcome, PortholeError>;
-
-    /// Returns diagnostics appropriate for `wait_timeout` error payloads,
-    /// given the last observed state of the condition. Called by the
-    /// pipeline on timeout so the adapter can describe what it saw.
-    async fn wait_last_observed(
-        &self,
-        surface: &SurfaceInfo,
-        condition: &WaitCondition,
-    ) -> Result<LastObserved, PortholeError>;
+        deadline: std::time::Instant,
+    ) -> Result<WaitOutcome, WaitTimeout>;
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError>;
 
