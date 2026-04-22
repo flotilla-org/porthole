@@ -26,6 +26,7 @@ pub mod input;
 pub mod key_codes;
 pub mod launch;
 pub mod permissions;
+pub mod placement;
 pub mod search;
 pub mod wait;
 pub mod window_alive;
@@ -131,10 +132,10 @@ impl Adapter for MacOsAdapter {
 
     async fn place_surface(
         &self,
-        _surface: &porthole_core::surface::SurfaceInfo,
-        _rect: porthole_core::display::Rect,
+        surface: &porthole_core::surface::SurfaceInfo,
+        rect: porthole_core::display::Rect,
     ) -> Result<(), porthole_core::PortholeError> {
-        todo!("implemented in slice-C Task 16")
+        placement::place_surface(surface, rect).await
     }
 
     async fn snapshot_geometry(

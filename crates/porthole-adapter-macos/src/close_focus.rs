@@ -197,7 +197,7 @@ where
 /// The `AxElementRef` passed to `op` is borrowed from the AXWindows array
 /// (held alive by this function until `op` returns) and must not be stored
 /// beyond the closure.
-fn with_ax_window_by_cg_id<F, R>(pid: i32, target: u32, op: F) -> Result<R, PortholeError>
+pub(crate) fn with_ax_window_by_cg_id<F, R>(pid: i32, target: u32, op: F) -> Result<R, PortholeError>
 where
     F: FnOnce(AxElementRef) -> Result<R, PortholeError>,
 {
