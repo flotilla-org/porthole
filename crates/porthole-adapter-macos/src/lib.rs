@@ -145,6 +145,8 @@ impl Adapter for MacOsAdapter {
             "attention_focused_display",
             "attention_focused_surface",
             "displays",
+            "search",
+            "track",
         ]
     }
 }

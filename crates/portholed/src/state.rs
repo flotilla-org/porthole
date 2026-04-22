@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use porthole_core::adapter::Adapter;
+use porthole_core::attach_pipeline::AttachPipeline;
 use porthole_core::handle::HandleStore;
 use porthole_core::input_pipeline::InputPipeline;
 use porthole_core::launch::LaunchPipeline;
@@ -14,6 +15,7 @@ pub struct AppState {
     pub pipeline: Arc<LaunchPipeline>,
     pub input: Arc<InputPipeline>,
     pub wait: Arc<WaitPipeline>,
+    pub attach: Arc<AttachPipeline>,
     pub started_at: Instant,
     pub daemon_version: &'static str,
 }
@@ -24,12 +26,14 @@ impl AppState {
         let pipeline = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
         let input = Arc::new(InputPipeline::new(adapter.clone(), handles.clone()));
         let wait = Arc::new(WaitPipeline::new(adapter.clone(), handles.clone()));
+        let attach = Arc::new(AttachPipeline::new(adapter.clone(), handles.clone()));
         Self {
             adapter,
             handles,
             pipeline,
             input,
             wait,
+            attach,
             started_at: Instant::now(),
             daemon_version: env!("CARGO_PKG_VERSION"),
         }

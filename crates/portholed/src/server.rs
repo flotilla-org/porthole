@@ -8,6 +8,7 @@ use tokio::net::UnixListener;
 use tracing::info;
 
 use crate::routes::{
+    attach as attach_route,
     attention as attention_route,
     close_focus as close_focus_route,
     info as info_route,
@@ -24,6 +25,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/attention", get(attention_route::get_attention))
         .route("/displays", get(attention_route::get_displays))
         .route("/launches", post(launches_route::post_launches))
+        .route("/surfaces/search", post(attach_route::post_search))
+        .route("/surfaces/track", post(attach_route::post_track))
         .route("/surfaces/{id}/screenshot", post(screenshot_route::post_screenshot))
         .route("/surfaces/{id}/key", post(input_route::post_key))
         .route("/surfaces/{id}/text", post(input_route::post_text))
@@ -191,5 +194,69 @@ mod tests {
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let resp: porthole_protocol::attention::DisplaysResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(resp.displays.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn post_search_returns_candidates_from_adapter_script() {
+        use porthole_core::search::Candidate;
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let candidate = Candidate {
+            ref_: "ref_abc".into(),
+            app_name: Some("X".into()),
+            title: Some("t".into()),
+            pid: 1,
+            cg_window_id: 7,
+        };
+        adapter.set_next_search_result(Ok(vec![candidate])).await;
+        let router = build_router(AppState::new(adapter));
+        let res = post(router, "/surfaces/search", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::search::SearchResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.candidates.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn post_track_mints_handle_and_idempotent_reuse() {
+        use porthole_core::search::encode_ref;
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let router = build_router(AppState::new(adapter.clone()));
+
+        let r = encode_ref(1, 7);
+        let body = serde_json::json!({ "ref": r });
+
+        // First call: script window_alive to return an alive surface.
+        let mut info = SurfaceInfo::window(SurfaceId::new(), 1);
+        info.cg_window_id = Some(7);
+        info.app_name = Some("X".into());
+        adapter.set_next_window_alive_result(Ok(Some(info))).await;
+        let res = post(router.clone(), "/surfaces/track", body.clone()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let first_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let first: porthole_protocol::search::TrackResponse = serde_json::from_slice(&first_body).unwrap();
+        assert!(!first.reused_existing_handle);
+
+        // Second call: script another alive surface with same cg_window_id.
+        // track_or_get should find the existing handle and return reused=true.
+        let mut info2 = SurfaceInfo::window(SurfaceId::new(), 1);
+        info2.cg_window_id = Some(7);
+        info2.app_name = Some("X".into());
+        adapter.set_next_window_alive_result(Ok(Some(info2))).await;
+        let res = post(router, "/surfaces/track", body).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let second_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let second: porthole_protocol::search::TrackResponse = serde_json::from_slice(&second_body).unwrap();
+        assert!(second.reused_existing_handle);
+        assert_eq!(second.surface_id, first.surface_id);
+    }
+
+    #[tokio::test]
+    async fn post_track_with_malformed_ref_returns_not_found() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let router = build_router(AppState::new(adapter));
+        let res = post(router, "/surfaces/track", serde_json::json!({ "ref": "junk" })).await;
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 }

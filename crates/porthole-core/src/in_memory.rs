@@ -335,6 +335,8 @@ impl Adapter for InMemoryAdapter {
             "attention_focused_app",
             "attention_focused_display",
             "displays",
+            "search",
+            "track",
         ]
     }
 }

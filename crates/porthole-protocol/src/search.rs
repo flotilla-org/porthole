@@ -10,7 +10,7 @@ pub struct SearchRequest {
     pub session: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
     pub candidates: Vec<Candidate>,
 }
@@ -23,7 +23,7 @@ pub struct TrackRequest {
     pub session: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrackResponse {
     pub surface_id: String,
     pub cg_window_id: u32,

@@ -1,3 +1,4 @@
+pub mod attach;
 pub mod attention;
 pub mod close_focus;
 pub mod errors;
