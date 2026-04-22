@@ -24,5 +24,13 @@ objc2 = "0.5"
 objc2-foundation = "0.2"
 objc2-app-kit = { version = "0.2", features = ["NSRunningApplication", "NSWorkspace", "libc"] }
 
+[dev-dependencies]
+porthole = { path = "../porthole" }
+portholed = { path = "../portholed" }
+porthole-core = { path = "../porthole-core" }
+serde_json = { workspace = true }
+tempfile = "3"
+tokio = { workspace = true }
+
 [lints]
 workspace = true
