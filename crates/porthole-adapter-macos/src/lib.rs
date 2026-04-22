@@ -13,6 +13,7 @@ use porthole_core::wait::{LastObserved, WaitCondition, WaitOutcome};
 use porthole_core::PortholeError;
 
 pub mod attention;
+pub mod ax;
 pub mod capture;
 pub mod close_focus;
 pub mod correlation;
