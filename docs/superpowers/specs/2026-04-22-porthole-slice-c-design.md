@@ -150,6 +150,8 @@ When `surface_was_preexisting: true` (artifact launch correlated to a window tha
 
 The caller learns about preexisting status via the launch response flag. If they want to reposition anyway, a future `POST /surfaces/{id}/place` will let them do it explicitly on a tracked handle. Not in this slice.
 
+Callers that want to *avoid* reusing a preexisting window entirely — for example, to guarantee a replace lands in the old window's slot — should pass `require_fresh_surface: true` on the launch request. See §5.8.
+
 ### 5.6 Implementation
 
 Macos adapter, after correlation succeeds and `surface_was_preexisting == false`:
@@ -159,7 +161,40 @@ Macos adapter, after correlation succeeds and `surface_was_preexisting == false`
 3. If `geometry` is absent and `anchor` resolves to focused_display/cursor, compute a centered rect using the OS-reported window size (or a conservative default).
 4. Write `AXPosition` and `AXSize` on the AX window via `AxElement::set_attribute_value` (a small addition to `ax.rs`).
 
-Some apps refuse position/size writes (non-resizable windows, modal dialogs). The adapter returns `placement_failed` (new error code) with the AX error. The surface is still tracked — placement failure doesn't invalidate the handle.
+Some apps refuse position/size writes (non-resizable windows, modal dialogs). This is **not** an error at the launch contract — the surface is already tracked and the handle is valid. The launch response carries the outcome explicitly in `placement` (see §5.7), so callers can detect the partial success without losing the surface_id.
+
+### 5.7 Placement outcome in `LaunchResponse`
+
+`LaunchResponse` (and by extension the `replace` response) gains a `placement` field:
+
+```json
+{
+  "surface_id": "surf_abc",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "document_match",
+  "placement": { "type": "applied" }
+}
+```
+
+The `placement` field is a tagged enum with four variants:
+
+| Variant | Meaning |
+|---|---|
+| `{ "type": "not_requested" }` | Caller did not supply `placement` on the launch body. OS default geometry used. |
+| `{ "type": "applied" }` | Placement resolved and AX writes succeeded. |
+| `{ "type": "skipped_preexisting" }` | Placement was requested but the launch correlated to a preexisting surface (§5.5). |
+| `{ "type": "failed", "reason": "..." }` | Placement was requested and AX writes failed (e.g., non-resizable window). Free-form reason string. |
+
+The handle is valid in all four cases. Callers that *require* placement to have applied should check `placement.type == "applied"` before treating the launch as successful for their purposes. This is strictly richer than an error return because the caller gets the surface_id regardless.
+
+### 5.8 `require_fresh_surface`
+
+Optional boolean on the launch body. Defaults to `false`.
+
+When `true`, a launch that would correlate to a preexisting surface (`surface_was_preexisting: true`) returns the new `launch_returned_existing` error instead of succeeding. The caller learns the window they wanted wasn't freshly produced, and can decide what to do.
+
+Motivating use case: `POST /surfaces/{id}/replace` relies on the replacement being a *fresh* window so that the inherited geometry actually lands there. If the replacement correlates to a preexisting window elsewhere on screen, the geometry inheritance is pointless and the user sees a confusing displaced result. Callers building replace flows should pass `require_fresh_surface: true` to get an explicit failure instead of silent displacement.
 
 ## 6. `POST /surfaces/{id}/replace`
 
@@ -190,21 +225,30 @@ Response is a `LaunchResponse` carrying the new surface id:
 
 ### 6.2 Semantics
 
-1. **Snapshot the old geometry.** Read `AXPosition` + `AXSize` from the old window. If the adapter can't read them (permission, window already gone), proceed without — the replacement uses whatever placement the caller supplied or the OS default.
-2. **Close the old surface.** Uses the existing close path (AXPress on close button, Cmd+W fallback, verified via `list_windows`). Returns `close_failed` if the window refuses to close — replace aborts, old handle stays alive.
-3. **Inherit geometry.** If the caller's replacement body has no `placement.geometry`, inject the snapshotted geometry. Caller-supplied placement always wins.
+1. **Snapshot the old geometry.** Read AX position + size from the old window *plus* the display it's currently on, returning a `GeometrySnapshot { display_id, display_local: Rect }`. The adapter computes the display-local rect by subtracting the containing display's origin from the global AX position. If the adapter can't read the geometry (permission, window already gone), the snapshot is `None` and step 3 does not inject anything.
+2. **Close the old surface.** Uses the existing close path (AXPress on close button, Cmd+W fallback, verified via `list_windows`). Returns `close_failed` (the slice-A error code; no new code introduced) if the window refuses to close — replace aborts, old handle stays alive.
+3. **Inherit geometry.** If the caller's replacement body has no `placement.geometry`, inject the snapshotted `display_local` rect *and* the snapshot's `display_id` as `on_display`. Both fields must travel together — a raw rect without the display id would mis-place across multi-monitor setups. Caller-supplied placement fields always win; if the caller provided `on_display` or `geometry`, that wins field-by-field.
 4. **Launch the replacement.** Standard launch path — artifact or process.
 5. **Return the new launch response.** The new surface is owned by the replace caller; the old handle is dead.
 
 ### 6.3 Atomicity
 
-Handle-atomic: either the response carries a new `surface_id` or a typed error. On error (`close_failed`, `launch_correlation_failed`, etc.), the old handle state is explicit in the error details — dead if we got past step 2, alive if we failed during step 1.
+Handle-atomic: either the response carries a new `surface_id` or a typed error. On error:
+
+- `close_failed` during step 2 → old handle is **still alive**, no new surface created. This is a deliberate revision of v0 spec §6.8 (which assumed close always succeeds); slice A added close verification that can genuinely fail when apps present save/discard dialogs, so replace must handle the "close refused" case. The caller gets their old surface back and can investigate (e.g., driving the save dialog programmatically) or try again.
+- `launch_correlation_failed` / `launch_correlation_ambiguous` / `launch_returned_existing` during step 4 → old handle is **dead**. The replacement couldn't be identified (or was going to reuse an existing window under `require_fresh_surface: true`), but the old window is gone. Caller gets the error and a note that the old handle is now dead.
+
+The error body carries an explicit `old_handle_alive: bool` field so callers don't have to infer the state from the error code.
 
 Not visually atomic. Brief gap while the OS tears down the old window and brings up the new one, during which nothing is on-screen in that slot. A future overlay subsystem could paper over this; not in any current slice.
 
-### 6.4 Preexisting replacement
+### 6.4 Preventing displaced replacements
 
-If the replacement launch correlates to a pre-existing surface (artifact dispatch reused some other window), the snapshotted geometry is not applied (per §5.5). This means `replace` with a preexisting-correlated replacement produces a weird result: the old surface is closed, but the new one is wherever the OS put it (not in the old slot). Callers should pass `require_confidence: "strong"` and only use `replace` against artifact types where DocumentMatch reliably returns a freshly minted window. Documented as a known limitation.
+Replace inherits geometry so the new window lands where the old one was. But if the replacement correlates to a *preexisting* window (artifact dispatch reused some other Preview or browser window elsewhere on screen), the inherited geometry is not applied (§5.5), and the result is a displaced replacement — old window closed, new "replacement" sitting in whatever slot it was already in.
+
+**Callers doing replace should pass `require_fresh_surface: true` on the replacement launch body.** This turns preexisting-correlated replacements into an explicit `launch_returned_existing` error rather than a silently displaced success. (The earlier proposal to require strong confidence was wrong: strong DocumentMatch *is* the path that finds reused windows. Freshness is a separate axis from confidence.)
+
+Documented as a known limitation and the recommended caller pattern.
 
 ## 7. `auto_dismiss_after_ms`
 
@@ -248,17 +292,29 @@ async fn launch_artifact(
     &self,
     path: &Path,
     require_confidence: RequireConfidence,
+    require_fresh_surface: bool,
     timeout: Duration,
 ) -> Result<LaunchOutcome, PortholeError>;
 
-/// Apply a resolved placement rectangle in screen coordinates to a
-/// tracked surface. Used after correlation by the launch path, and
-/// available for future POST /surfaces/{id}/place.
+/// Apply a resolved placement rectangle in global screen coordinates
+/// to a tracked surface. Used after correlation by the launch path,
+/// and available for future POST /surfaces/{id}/place.
 async fn place_surface(&self, surface: &SurfaceInfo, rect: Rect) -> Result<(), PortholeError>;
 
-/// Read the current geometry of a tracked surface. Used by replace
-/// to snapshot the old surface before closing.
-async fn snapshot_geometry(&self, surface: &SurfaceInfo) -> Result<Rect, PortholeError>;
+/// Read the current geometry of a tracked surface, along with the
+/// display id it is currently on. Used by replace to snapshot the
+/// old surface before closing, in a form that round-trips across
+/// multi-monitor setups.
+async fn snapshot_geometry(&self, surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError>;
+```
+
+Where `GeometrySnapshot` is a new type in `porthole-core`:
+
+```rust
+pub struct GeometrySnapshot {
+    pub display_id: DisplayId,
+    pub display_local: Rect,   // coords relative to the display's origin
+}
 ```
 
 No signature changes on existing methods. `launch_process` and `launch_artifact` are parallel entry points (not one method with a discriminator); the pipeline picks based on `LaunchRequest.kind`.
@@ -290,11 +346,16 @@ New pipeline: `ReplacePipeline` (in `crates/porthole-core/src/replace_pipeline.r
 
 ## 9. Error model additions
 
-Three new error codes:
+One new error code:
 
-- `placement_failed` — AX refused to set position/size. Surface is still tracked; the handle is valid. Caller gets the details and can choose to retry, track-and-place manually, or proceed.
-- `replace_close_failed` — the old-surface close step in `/replace` failed (old surface still alive, no new launch attempted). Reuses slice A's `close_failed` semantics but distinct code so the caller knows they're in the replace flow. Old handle stays alive.
+- `launch_returned_existing` — launch correlated to a preexisting surface and the caller set `require_fresh_surface: true`. Returned from both `POST /launches` and `POST /surfaces/{id}/replace`. Includes the candidate's surface info in the error details so the caller can choose to attach to the existing surface instead.
+
+Extended use of existing codes:
+
+- `close_failed` (from slice A) now also returned from `POST /surfaces/{id}/replace` when step 2 (close of old surface) fails. The error body carries `old_handle_alive: true` so the caller can resume using the old handle.
 - `invalid_argument` used more broadly: rejects zero `auto_dismiss_after_ms`, unknown `on_display` ids, URL paths in `artifact` requests.
+
+**Placement failure is not an error** — §5.7 moves it into the `LaunchResponse.placement` field. Prior draft versions of this spec proposed a `placement_failed` error code; it was rejected because it lost the surface_id on a surface that was already tracked, making the handle unrecoverable to the caller. Similarly, a proposed `replace_close_failed` code was rejected in favor of reusing slice A's `close_failed` with a clear error body — the semantic (surface refused to close, still alive) is the same whether it happens during a standalone close or a replace.
 
 Existing codes continue to apply: `surface_not_found`, `surface_dead`, `permission_needed`, `launch_correlation_failed`, `launch_correlation_ambiguous`, `launch_timeout`, `close_failed`.
 
@@ -376,17 +437,23 @@ A yeoman agent can run this sequence against porthole and have it feel uneventfu
 SURFACE=$(porthole launch \
     --kind artifact --path /tmp/proposal.pdf \
     --on-display focused \
+    --require-fresh-surface \
     --auto-dismiss-ms 15000 \
     --json | jq -r .surface_id)
 
 # User nods. Swap in the next one without moving the window.
-porthole replace "$SURFACE" \
+# Replace returns a new surface_id; capture it for any later operations.
+SURFACE=$(porthole replace "$SURFACE" \
     --kind artifact --path /tmp/alternative.pdf \
-    --auto-dismiss-ms 15000
+    --require-fresh-surface \
+    --auto-dismiss-ms 15000 \
+    --json | jq -r .surface_id)
 
-# Explicit dismiss after a while.
+# Explicit dismiss of the replacement before the timer fires.
 porthole close "$SURFACE"
 ```
+
+The `--require-fresh-surface` flag ensures every step gets a freshly minted window so the replace geometry inheritance lands correctly. The `$SURFACE` re-assignment after replace captures the new handle — the old one is dead once replace returns.
 
 When that script runs cleanly across PDFs, PNGs, markdown (even landing in editors — the bar is that it *launches and tracks*, not that the UX is pretty), and the window ends up where the caller asked — this slice has done its job.
 
