@@ -6,6 +6,7 @@ use crate::attention::AttentionInfo;
 use crate::display::DisplayInfo;
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
 use crate::permission::PermissionStatus;
+use crate::search::{Candidate, SearchQuery};
 use crate::surface::SurfaceInfo;
 use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
 use crate::PortholeError;
@@ -128,6 +129,20 @@ pub trait Adapter: Send + Sync {
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
     async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;
+
+    /// Enumerate candidate surfaces matching the query. Empty matches
+    /// return `Ok(vec![])`, not an error.
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError>;
+
+    /// Return a live `SurfaceInfo` for the window identified by
+    /// `(pid, cg_window_id)` if it still exists. The liveness check
+    /// encompasses *all* windows, including hidden / minimized /
+    /// other-Space windows — not just on-screen enumeration.
+    async fn window_alive(
+        &self,
+        pid: u32,
+        cg_window_id: u32,
+    ) -> Result<Option<SurfaceInfo>, PortholeError>;
 
     /// The canonical string names of capabilities this adapter supports.
     /// Each entry corresponds to a verb/resource that the adapter can resolve

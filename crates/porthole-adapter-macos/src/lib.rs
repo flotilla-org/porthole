@@ -111,6 +111,21 @@ impl Adapter for MacOsAdapter {
         permissions::permissions().await
     }
 
+    async fn search(
+        &self,
+        _query: &porthole_core::SearchQuery,
+    ) -> Result<Vec<porthole_core::Candidate>, porthole_core::PortholeError> {
+        todo!("implemented in Task 5")
+    }
+
+    async fn window_alive(
+        &self,
+        _pid: u32,
+        _cg_window_id: u32,
+    ) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+        todo!("implemented in Task 5")
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         vec![
             "launch_process",

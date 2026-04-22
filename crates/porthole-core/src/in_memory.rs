@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use crate::adapter::{
     Adapter, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot,
 };
+use crate::search::{Candidate, SearchQuery};
 use crate::attention::{AttentionInfo, CursorPos};
 use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
@@ -34,6 +35,10 @@ struct Script {
     next_attention: Option<Result<AttentionInfo, PortholeError>>,
     next_displays: Option<Result<Vec<DisplayInfo>, PortholeError>>,
     next_permissions: Option<Result<Vec<PermissionStatus>, PortholeError>>,
+    next_search_result: Option<Result<Vec<Candidate>, PortholeError>>,
+    next_window_alive_result: Option<Result<Option<SurfaceInfo>, PortholeError>>,
+    search_calls: Vec<SearchQuery>,
+    window_alive_calls: Vec<(u32, u32)>,
 
     launch_calls: Vec<ProcessLaunchSpec>,
     screenshot_calls: Vec<SurfaceId>,
@@ -96,6 +101,12 @@ impl InMemoryAdapter {
     pub async fn set_next_permissions(&self, v: Result<Vec<PermissionStatus>, PortholeError>) {
         self.script.lock().await.next_permissions = Some(v);
     }
+    pub async fn set_next_search_result(&self, v: Result<Vec<Candidate>, PortholeError>) {
+        self.script.lock().await.next_search_result = Some(v);
+    }
+    pub async fn set_next_window_alive_result(&self, v: Result<Option<SurfaceInfo>, PortholeError>) {
+        self.script.lock().await.next_window_alive_result = Some(v);
+    }
 
     // Recorders:
     pub async fn launch_calls(&self) -> Vec<ProcessLaunchSpec> {
@@ -133,6 +144,12 @@ impl InMemoryAdapter {
     }
     pub async fn permissions_calls(&self) -> usize {
         self.script.lock().await.permissions_calls
+    }
+    pub async fn search_calls(&self) -> Vec<SearchQuery> {
+        self.script.lock().await.search_calls.clone()
+    }
+    pub async fn window_alive_calls(&self) -> Vec<(u32, u32)> {
+        self.script.lock().await.window_alive_calls.clone()
     }
 
     pub fn make_default_launch_outcome(pid: u32) -> LaunchOutcome {
@@ -283,6 +300,22 @@ impl Adapter for InMemoryAdapter {
         s.next_permissions.take().unwrap_or(Ok(vec![]))
     }
 
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
+        let mut s = self.script.lock().await;
+        s.search_calls.push(query.clone());
+        s.next_search_result.take().unwrap_or_else(|| Ok(vec![]))
+    }
+
+    async fn window_alive(
+        &self,
+        pid: u32,
+        cg_window_id: u32,
+    ) -> Result<Option<SurfaceInfo>, PortholeError> {
+        let mut s = self.script.lock().await;
+        s.window_alive_calls.push((pid, cg_window_id));
+        s.next_window_alive_result.take().unwrap_or(Ok(None))
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         // The in-memory adapter scripts outcomes for most verbs and returns
         // defaults otherwise. It does NOT resolve OS-level focus, so
@@ -406,5 +439,39 @@ mod tests {
             "in-memory adapter must not advertise attention_focused_surface \
              because frontmost_window_id() always returns None"
         );
+    }
+
+    #[tokio::test]
+    async fn search_records_query_and_returns_scripted_candidates() {
+        let adapter = InMemoryAdapter::new();
+        let candidate = Candidate {
+            ref_: "ref_abc".to_string(),
+            app_name: Some("TestApp".into()),
+            title: Some("t".into()),
+            pid: 42,
+            cg_window_id: 7,
+        };
+        adapter.set_next_search_result(Ok(vec![candidate.clone()])).await;
+        let result = adapter
+            .search(&SearchQuery { app_name: Some("TestApp".into()), ..Default::default() })
+            .await
+            .unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cg_window_id, 7);
+        let calls = adapter.search_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].app_name, Some("TestApp".into()));
+    }
+
+    #[tokio::test]
+    async fn window_alive_returns_scripted_outcome() {
+        let adapter = InMemoryAdapter::new();
+        let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
+        info.cg_window_id = Some(7);
+        adapter.set_next_window_alive_result(Ok(Some(info))).await;
+        let got = adapter.window_alive(42, 7).await.unwrap();
+        assert!(got.is_some());
+        let calls = adapter.window_alive_calls().await;
+        assert_eq!(calls, vec![(42, 7)]);
     }
 }
