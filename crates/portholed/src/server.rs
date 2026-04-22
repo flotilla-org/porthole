@@ -217,6 +217,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_search_with_empty_adapter_result_returns_empty_candidates_list() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        adapter.set_next_search_result(Ok(vec![])).await;
+        let router = build_router(AppState::new(adapter));
+        let res = post(router, "/surfaces/search", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::search::SearchResponse = serde_json::from_slice(&body).unwrap();
+        assert!(resp.candidates.is_empty());
+    }
+
+    #[tokio::test]
     async fn post_track_mints_handle_and_idempotent_reuse() {
         use porthole_core::search::encode_ref;
         use porthole_core::surface::{SurfaceId, SurfaceInfo};
