@@ -17,3 +17,22 @@ impl From<porthole_core::PortholeError> for WireError {
         Self { code: err.code, message: err.message, details: None }
     }
 }
+
+/// Structured body for `LaunchReturnedExisting` errors.
+/// Serialised into `WireError::details` as a JSON value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LaunchReturnedExistingBody {
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    pub app_name: Option<String>,
+    pub title: Option<String>,
+    pub pid: u32,
+    pub cg_window_id: u32,
+}
+
+/// Structured body for close-failed errors.
+/// Serialised into `WireError::details` as a JSON value.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CloseFailedBody {
+    pub old_handle_alive: bool,
+}
