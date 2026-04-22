@@ -38,6 +38,7 @@ fn request_to_spec(req: &LaunchRequest) -> Result<ProcessLaunchSpec, ApiError> {
             env: to_env_vec(&p.env),
             timeout: Duration::from_millis(req.timeout_ms),
             require_confidence: wire_to_require(req.require_confidence),
+            require_fresh_surface: false,
         }),
     }
 }

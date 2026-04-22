@@ -47,6 +47,7 @@ mod tests {
             env: vec![],
             timeout: Duration::from_secs(1),
             require_confidence: required,
+            require_fresh_surface: false,
         }
     }
 

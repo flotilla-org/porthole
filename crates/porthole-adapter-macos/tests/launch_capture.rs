@@ -16,6 +16,7 @@ async fn launch_textedit_and_capture() {
         env: vec![],
         timeout: Duration::from_secs(10),
         require_confidence: RequireConfidence::Strong,
+        require_fresh_surface: false,
     };
     let outcome = adapter.launch_process(&spec).await.expect("launch");
     assert!(outcome.surface.pid.is_some());

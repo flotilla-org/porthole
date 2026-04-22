@@ -367,6 +367,7 @@ mod tests {
             env: vec![],
             timeout: Duration::from_secs(5),
             require_confidence: RequireConfidence::Strong,
+            require_fresh_surface: false,
         };
         let outcome = adapter.launch_process(&spec).await.unwrap();
         assert_eq!(outcome.confidence, Confidence::Strong);

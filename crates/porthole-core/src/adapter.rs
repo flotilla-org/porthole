@@ -54,6 +54,37 @@ pub struct ProcessLaunchSpec {
     pub env: Vec<(String, String)>,
     pub timeout: Duration,
     pub require_confidence: RequireConfidence,
+    pub require_fresh_surface: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactLaunchSpec {
+    pub path: std::path::PathBuf,
+    pub require_confidence: RequireConfidence,
+    pub require_fresh_surface: bool,
+    pub timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub enum LaunchSpec {
+    Process(ProcessLaunchSpec),
+    Artifact(ArtifactLaunchSpec),
+}
+
+impl LaunchSpec {
+    pub fn require_confidence(&self) -> RequireConfidence {
+        match self {
+            LaunchSpec::Process(p) => p.require_confidence,
+            LaunchSpec::Artifact(a) => a.require_confidence,
+        }
+    }
+
+    pub fn require_fresh_surface(&self) -> bool {
+        match self {
+            LaunchSpec::Process(p) => p.require_fresh_surface,
+            LaunchSpec::Artifact(a) => a.require_fresh_surface,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
