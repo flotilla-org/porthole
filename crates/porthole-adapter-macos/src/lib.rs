@@ -163,6 +163,10 @@ impl Adapter for MacOsAdapter {
             "displays",
             "search",
             "track",
+            "launch_artifact",
+            "placement",
+            "replace",
+            "auto_dismiss",
         ]
     }
 }

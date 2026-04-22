@@ -376,6 +376,10 @@ impl Adapter for InMemoryAdapter {
             "displays",
             "search",
             "track",
+            "launch_artifact",
+            "placement",
+            "replace",
+            "auto_dismiss",
         ]
     }
 }

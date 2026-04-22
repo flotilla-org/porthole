@@ -354,6 +354,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn info_lists_slice_c_capabilities() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let router = build_router(AppState::new(adapter));
+        let req = Request::builder().method(Method::GET).uri("/info").body(Body::empty()).unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let info: porthole_protocol::info::InfoResponse = serde_json::from_slice(&body).unwrap();
+        let caps = &info.adapters[0].capabilities;
+        for expected in &["launch_artifact", "placement", "replace", "auto_dismiss"] {
+            assert!(caps.contains(&expected.to_string()), "missing capability: {expected}");
+        }
+    }
+
+    #[tokio::test]
     async fn post_launches_require_fresh_returns_409_with_ref_in_body() {
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
