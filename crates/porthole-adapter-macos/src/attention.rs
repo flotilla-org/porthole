@@ -32,7 +32,7 @@ pub fn frontmost_cg_window_id() -> Option<u32> {
 }
 
 pub async fn attention() -> Result<AttentionInfo, PortholeError> {
-    let frontmost_bundle = frontmost_app_bundle();
+    let frontmost_name = frontmost_app_name();
     let cursor = crate::cursor::cursor_position()?;
 
     // Determine which display holds the cursor.
@@ -55,22 +55,22 @@ pub async fn attention() -> Result<AttentionInfo, PortholeError> {
 
     Ok(AttentionInfo {
         focused_surface_id: None, // porthole-tracked focus matching is v0.1
-        focused_app_bundle: frontmost_bundle,
+        focused_app_name: frontmost_name,
         focused_display_id,
         cursor: CursorPos { x: cursor.0, y: cursor.1, display_id: cursor_display_id },
         recently_active_surface_ids: vec![],
     })
 }
 
-fn frontmost_app_bundle() -> Option<String> {
+fn frontmost_app_name() -> Option<String> {
     use objc2_app_kit::{NSRunningApplication, NSWorkspace};
 
     unsafe {
         let workspace = NSWorkspace::sharedWorkspace();
         let app: Option<objc2::rc::Retained<NSRunningApplication>> = workspace.frontmostApplication();
         app.and_then(|a| {
-            let bundle = a.bundleIdentifier();
-            bundle.map(|s| s.to_string())
+            let name = a.localizedName();
+            name.map(|s| s.to_string())
         })
     }
 }

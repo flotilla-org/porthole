@@ -28,7 +28,7 @@ pub async fn launch_process(spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, P
                     kind: SurfaceKind::Window,
                     state: SurfaceState::Alive,
                     title: window.title,
-                    app_bundle: window.app_bundle,
+                    app_name: window.app_name,
                     pid: Some(window.owner_pid as u32),
                     parent_surface_id: None,
                     cg_window_id: Some(window.cg_window_id),

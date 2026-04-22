@@ -61,7 +61,7 @@ pub struct SurfaceInfo {
     pub kind: SurfaceKind,
     pub state: SurfaceState,
     pub title: Option<String>,
-    pub app_bundle: Option<String>,
+    pub app_name: Option<String>,
     pub pid: Option<u32>,
     pub parent_surface_id: Option<SurfaceId>,
     /// The CGWindowID of the tracked window, captured at launch time.
@@ -80,7 +80,7 @@ impl SurfaceInfo {
             kind: SurfaceKind::Window,
             state: SurfaceState::Alive,
             title: None,
-            app_bundle: None,
+            app_name: None,
             pid: Some(pid),
             parent_surface_id: None,
             cg_window_id: None,

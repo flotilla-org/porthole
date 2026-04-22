@@ -141,7 +141,7 @@ impl InMemoryAdapter {
             kind: SurfaceKind::Window,
             state: SurfaceState::Alive,
             title: Some("test window".to_string()),
-            app_bundle: Some("com.example.test".to_string()),
+            app_name: Some("test-app".to_string()),
             pid: Some(pid),
             parent_surface_id: None,
             cg_window_id: None,
@@ -157,7 +157,7 @@ impl InMemoryAdapter {
     pub fn default_attention() -> AttentionInfo {
         AttentionInfo {
             focused_surface_id: None,
-            focused_app_bundle: None,
+            focused_app_name: None,
             focused_display_id: None,
             cursor: CursorPos { x: 0.0, y: 0.0, display_id: None },
             recently_active_surface_ids: vec![],

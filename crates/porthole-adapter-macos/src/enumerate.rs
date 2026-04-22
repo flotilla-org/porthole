@@ -5,7 +5,7 @@ pub struct WindowRecord {
     pub cg_window_id: u32,
     pub owner_pid: i32,
     pub title: Option<String>,
-    pub app_bundle: Option<String>,
+    pub app_name: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -62,12 +62,12 @@ pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
             .map(|s| s.to_string());
 
         let owner_name_key = unsafe { CFString::wrap_under_get_rule(kCGWindowOwnerName) };
-        let app_bundle = dict
+        let app_name = dict
             .find(&owner_name_key)
             .and_then(|v| v.downcast::<CFString>())
             .map(|s| s.to_string());
 
-        out.push(WindowRecord { cg_window_id, owner_pid, title, app_bundle });
+        out.push(WindowRecord { cg_window_id, owner_pid, title, app_name });
     }
 
     if out.is_empty() {
