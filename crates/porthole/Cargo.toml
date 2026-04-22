@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-base64 = "0.22"
+base64 = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 hyper = { workspace = true }
