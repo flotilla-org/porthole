@@ -19,6 +19,7 @@ pub enum ErrorCode {
     InvalidCoordinate,
     InvalidArgument,
     CloseFailed,
+    LaunchReturnedExisting,
 }
 
 impl fmt::Display for ErrorCode {
@@ -38,6 +39,7 @@ impl fmt::Display for ErrorCode {
             Self::InvalidCoordinate => "invalid_coordinate",
             Self::InvalidArgument => "invalid_argument",
             Self::CloseFailed => "close_failed",
+            Self::LaunchReturnedExisting => "launch_returned_existing",
         };
         f.write_str(s)
     }
@@ -84,5 +86,10 @@ mod tests {
         assert_eq!(ErrorCode::InvalidCoordinate.to_string(), "invalid_coordinate");
         assert_eq!(ErrorCode::InvalidArgument.to_string(), "invalid_argument");
         assert_eq!(ErrorCode::CloseFailed.to_string(), "close_failed");
+    }
+
+    #[test]
+    fn launch_returned_existing_display_is_snake_case() {
+        assert_eq!(ErrorCode::LaunchReturnedExisting.to_string(), "launch_returned_existing");
     }
 }
