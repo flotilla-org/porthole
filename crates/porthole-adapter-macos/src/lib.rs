@@ -28,6 +28,7 @@ pub mod launch;
 pub mod permissions;
 pub mod placement;
 pub mod search;
+pub mod snapshot;
 pub mod wait;
 pub mod window_alive;
 
@@ -140,9 +141,9 @@ impl Adapter for MacOsAdapter {
 
     async fn snapshot_geometry(
         &self,
-        _surface: &porthole_core::surface::SurfaceInfo,
+        surface: &porthole_core::surface::SurfaceInfo,
     ) -> Result<porthole_core::placement::GeometrySnapshot, porthole_core::PortholeError> {
-        todo!("implemented in slice-C Task 17")
+        snapshot::snapshot_geometry(surface).await
     }
 
     fn capabilities(&self) -> Vec<&'static str> {
