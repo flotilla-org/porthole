@@ -113,7 +113,7 @@ This means a caller interacting with an adapter that can't prompt gets a single,
 ```
 
 - `granted_before` / `granted_after` are read from the adapter's liveness check (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`) before and immediately after the prompt call. Because the user usually hasn't granted in that window, `granted_after == false` is the common case on first request.
-- `prompt_triggered: true` means porthole asked the OS to show the prompt (via `AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})` or `CGRequestScreenCaptureAccess()`). On recent macOS the OS opens Settings directly; on older versions it shows a modal.
+- `prompt_triggered: true` means a fresh OS dialog was surfaced by this call. macOS's prompt APIs (`AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})` and `CGRequestScreenCaptureAccess()`) don't report back whether the dialog was actually drawn, so the adapter tracks this itself: per-permission, per-daemon-process bookkeeping of "have I called the prompt API for this permission yet?" (a small fixed state, reset when the daemon restarts). `prompt_triggered` is reported `true` when both (a) `granted_before == false` and (b) that bookkeeping bit was `false` at the start of the call; the bit is set to `true` after a successful API call. On recent macOS the OS opens Settings directly; on older versions it shows a modal. Repeat calls after dismissal, and calls when the permission was already granted, both report `prompt_triggered: false`.
 - `requires_daemon_restart`: true for Accessibility, false for Screen Recording.
   - **Why Accessibility is different.** `AXIsProcessTrusted()` itself is a live TCC query — after the user grants, the daemon's next call returns `true`, and `/info` reflects that immediately. What *doesn't* automatically recover is the internal AX runtime state: event taps (`CGEventTapCreate`), observers, and UI-element connections initialised when the daemon came up untrusted. Those stay in their old state until the process restarts. So the permission can show "granted" while AX-dependent operations still misbehave. `requires_daemon_restart` signals "trust is live, but restart the process for the AX runtime to pick it up."
   - Screen Recording has no equivalent init-time state; grants take effect on the next call.
@@ -131,17 +131,17 @@ Behaviour (default, blocking):
 
 1. Read `system_permissions` from the daemon's `/info` to capture `granted_before` per advertised permission.
 2. If all are already granted, print status and exit **0**.
-3. For each ungranted permission, call `POST /system-permissions/request`. Interpret the response:
-   - **Success:** print "dialog opened for X" if `prompt_triggered` is true; otherwise "prompt already fired earlier this daemon session — grant via Settings".
-   - **`system_permission_request_failed`:** print the OS reason and the Settings path from the error's `details` (see §6.4). This permission cannot be prompted by the daemon in its current state; the user grants manually in Settings. Onboard's final exit code will be non-zero.
-   - **Any other error:** print the code and message and treat the permission as un-promptable for this run.
+3. For each ungranted permission, call `POST /system-permissions/request`. Track a per-run `had_request_error` flag, initially false:
+   - **2xx success:** print "dialog opened for X" if `prompt_triggered` is true; otherwise "prompt already fired earlier this daemon session — grant via Settings".
+   - **`system_permission_request_failed`:** print the OS reason and the Settings path from the error's `details` (see §6.4). The daemon cannot prompt for this permission; the user grants manually in Settings. Set `had_request_error = true`.
+   - **Any other error** (`capability_missing`, `invalid_argument`, 5xx, etc.): print the code and message. These shouldn't happen against a correctly-configured adapter; when they do, set `had_request_error = true` and continue.
 4. Poll `/info` every 500 ms, printing live state changes, until either all permissions are granted or a 60-second timeout elapses (`--wait Ns` overrides).
 5. Read `/info` one final time to capture `granted_after`.
 6. Print a per-permission summary. For any permission that transitioned `ungranted → granted` this session *and* whose adapter reports `requires_daemon_restart = true`, flag "restart required" prominently.
 7. Exit with:
    - **0** — all permissions were already granted at step 1 (no prompts fired, nothing to restart).
-   - **2** — all permissions are granted as of step 5, and at least one permission that requires a daemon restart transitioned during this invocation. Setup scripts should restart the daemon before continuing.
-   - **1** — at least one permission remains ungranted at step 5, or any `system_permission_request_failed` was observed at step 3. The user should grant in Settings (using the path printed in the summary) and re-run `porthole onboard`.
+   - **1** — at least one permission remains ungranted at step 5, *or* `had_request_error == true` from step 3. The user should grant in Settings (using the path printed in the summary) and re-run `porthole onboard`. This rule takes precedence: a request-time error at step 3 always produces exit 1, even if `/info` later shows all permissions granted (the user may have clicked through Settings in parallel, which is good — but we still signal the transient failure to setup scripts).
+   - **2** — all permissions are granted as of step 5, `had_request_error == false`, and at least one permission that requires a daemon restart transitioned during this invocation. Setup scripts should restart the daemon before continuing.
 
 **Re-running after dismissal.** If the user dismissed the OS dialog, re-running `porthole onboard` will *not* re-open the dialog — macOS fires a prompt at most once per daemon process (§14). It will, however, still report current grant state and print the Settings path. Users can grant directly in Settings without a fresh dialog; the liveness check and `/info` will reflect the change. Re-arming the dialog is optional and requires restarting the daemon — onboard prints this as a hint when it detects a prompt was already fired.
 
@@ -155,8 +155,8 @@ Exit-code summary:
 | Code | Meaning |
 |---|---|
 | 0 | All granted, no action pending |
-| 1 | Some permissions still ungranted after waiting; user needs to grant and re-run |
-| 2 | All granted, but daemon restart pending before AX-dependent calls work |
+| 1 | Some permissions still ungranted after waiting, *or* any request error occurred at step 3 |
+| 2 | All granted, no request errors, daemon restart pending before AX-dependent calls work |
 | 3 | `--no-wait`: prompts fired, grant state unknown |
 
 The exit-code distinction matters because granting Accessibility while the daemon is running leaves the daemon in a state where `AXIsProcessTrusted()` reports true but some AX-dependent features may still misbehave until a restart; `onboard` is the surface that captures the transition and tells the user. A future launchctl-based lifecycle makes the restart automatic; exit 2 remains a useful signal either way.
@@ -299,7 +299,7 @@ Call preflight at the top of every adapter method that depends on the correspond
 
 ### 7.3 Fail loudly, uniformly
 
-Some calls — `list_windows`, `search`, `window_alive` — could in principle return partial data (enumeration without titles) when Screen Recording is missing. We don't do that. Every guarded method returns `system_permission_needed` when its permission is missing.
+Some calls — `list_windows`, `search`, `window_alive` — could in principle return partial data (enumeration without titles) when Screen Recording is missing. We don't do that. Every guarded method returns either `system_permission_needed` (the common case: permission missing, prompt was triggered or already fired) or `system_permission_request_failed` (the daemon tried to trigger the prompt and the OS rejected it; see §7.2). Never a partial-data success.
 
 Reasons: simpler contract for agents (no "did this return empty because there are no windows, or because I lack a permission?" ambiguity), matches the anti-workaround rule, aligns with the preflight-triggers-prompt UX (one clear failure mode, one clear dialog). A future slice can relax specific endpoints to partial-success mode with an explicit `warnings` field if a concrete use case emerges; no such use case drives this slice.
 
@@ -388,7 +388,7 @@ pub fn ensure_accessibility_granted() -> Result<(), PortholeError>;
 pub fn ensure_screen_recording_granted() -> Result<(), PortholeError>;
 ```
 
-Both build the `PortholeError` with `code = system_permission_needed` and the full `SystemPermissionNeededBody` serialized into `details`. They trigger the OS prompt as a side effect when the permission is missing (§7.2).
+Return values follow §7.2: `Ok(())` when granted; `Err(PortholeError)` with `code = system_permission_needed` and a `SystemPermissionNeededBody` in `details` when the permission is missing and the prompt API call succeeded (or was a no-op because the prompt had already fired this process); `Err(PortholeError)` with `code = system_permission_request_failed` and a `SystemPermissionRequestFailedBody` in `details` when the prompt API call itself was rejected by the OS. They trigger the OS prompt as a side effect on first call per process (see §5.2 bookkeeping).
 
 ## 11. Error model additions
 
@@ -425,6 +425,7 @@ One rename, one new code, and one extension:
 ### 12.4 macOS adapter (ignored, real desktop)
 
 - `request_system_permission_prompt("accessibility")` — verifies the call returns without panicking. Cannot assert on the prompt appearing (no test-automatable way to see it), but can assert the `granted_before` / `granted_after` booleans match `AXIsProcessTrusted()` directly.
+- Per-process prompt bookkeeping — call `request_system_permission_prompt("accessibility")` twice in one test process. First call reports `prompt_triggered: true` iff the permission is ungranted; second call always reports `prompt_triggered: false`. Gate on the permission being ungranted at the start of the test (skip if granted).
 - `ensure_*_granted` preflight — gated real-desktop test confirming that a known-granted preflight returns `Ok`, and a known-missing preflight returns the expected `PortholeError` shape (code, message, populated `details`).
 
 ### 12.5 `porthole onboard` CLI
@@ -435,7 +436,8 @@ Drive these tests with an HTTP test double for `/info` and `/system-permissions/
 - Transition path (restart required): initial `/info` reports Accessibility ungranted; test double flips it to granted during the poll loop; `requires_daemon_restart = true` for Accessibility. Exit code 2 with restart message.
 - Transition path (no restart required): same as above but only Screen Recording transitions. Exit code 0 (no AX transition → no restart needed).
 - Still-ungranted path: test double keeps at least one permission ungranted through the full poll window. Exit code 1 with "grant in Settings and re-run" message.
-- `system_permission_request_failed` path: test double returns this error from `/system-permissions/request`; onboard prints the OS reason and Settings path, exits 1.
+- `system_permission_request_failed` path: test double returns this error from `/system-permissions/request`; onboard prints the OS reason and Settings path, exits 1 even if `/info` later shows the permission granted.
+- "Any other error" path: test double returns e.g. `capability_missing` or `invalid_argument`; onboard prints the code and message, sets `had_request_error`, and exits 1 regardless of final `/info` state.
 - Prompt-already-fired path: test double returns success with `prompt_triggered: false`; onboard prints the "grant via Settings" hint and proceeds to polling.
 - `--no-wait`: prompts fire, poll loop is skipped, exit code 3 regardless of `/info` state.
 - Output formatting golden tests for each exit-code path.
