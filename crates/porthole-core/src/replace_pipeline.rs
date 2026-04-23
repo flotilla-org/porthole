@@ -52,6 +52,14 @@ impl ReplacePipeline {
             // Any other close error (PermissionNeeded, CloseFailed, etc.) means the surface
             // is likely still there.
             let old_handle_alive = close_err.code != crate::ErrorCode::SurfaceDead;
+            // Keep the HandleStore in sync with reality: if the adapter
+            // reports SurfaceDead, the surface is genuinely gone at the OS
+            // level and the handle must transition to Dead. Other error
+            // codes leave the surface alive (possibly a save dialog, AX
+            // permission issue, etc.) and the handle stays tracked.
+            if !old_handle_alive {
+                let _ = self.handles.mark_dead(old_id).await;
+            }
             return Err(ReplacePipelineError::Porthole { error: close_err, old_handle_alive });
         }
         self.handles
@@ -208,6 +216,35 @@ mod tests {
             }
             other => panic!("expected Porthole(SurfaceDead), got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn replace_close_surface_dead_marks_old_handle_dead_in_store() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let launch = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
+        let replace = ReplacePipeline::new(adapter.clone(), handles.clone(), launch);
+
+        let old_id = tracked_surface(&handles, 100, 50).await;
+        adapter
+            .set_next_close_result(Err(PortholeError::new(
+                ErrorCode::SurfaceDead,
+                "window already closed by user",
+            )))
+            .await;
+
+        let result = replace.replace(&old_id, &artifact_spec("/tmp/x.pdf", false), None).await;
+        match result {
+            Err(ReplacePipelineError::Porthole { error, old_handle_alive }) => {
+                assert_eq!(error.code, ErrorCode::SurfaceDead);
+                assert!(!old_handle_alive);
+            }
+            other => panic!("expected Porthole error, got {other:?}"),
+        }
+
+        // Handle must now be Dead in the store — require_alive should fail with SurfaceDead.
+        let err = handles.require_alive(&old_id).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::SurfaceDead);
     }
 
     #[tokio::test]
