@@ -278,11 +278,11 @@ porthole screenshot $SURFACE --out repro.png
 SURFACE=$(porthole attach --containing-pid $$ --frontmost --json | jq -r .surface_id)
 
 # Show an artifact with placement and auto-dismiss
-porthole launch --kind artifact --app-or-path /tmp/proposal.pdf \
+porthole launch --kind artifact --app /tmp/proposal.pdf \
                 --on-display focused --auto-dismiss-ms 15000
 
 # Replace in place
-porthole replace $SURFACE --kind artifact --app-or-path /tmp/alt.pdf --inherit-placement
+porthole replace $SURFACE --kind artifact --app /tmp/alt.pdf --inherit-placement
 
 # Close
 porthole close $SURFACE
@@ -341,13 +341,13 @@ porthole screenshot $SURFACE --out self.png
 ```sh
 # Show a document on whatever display the user is currently looking at,
 # auto-dismiss after 15 seconds if they don't act on it.
-SURFACE=$(porthole launch --kind artifact --app-or-path /tmp/proposal.pdf \
+SURFACE=$(porthole launch --kind artifact --app /tmp/proposal.pdf \
                           --on-display focused \
                           --require-fresh-surface \
                           --auto-dismiss-ms 15000 --json | jq -r .surface_id)
 
 # User nods. Swap in the next artifact in the same slot.
-SURFACE=$(porthole replace $SURFACE --kind artifact --app-or-path /tmp/alternative.pdf \
+SURFACE=$(porthole replace $SURFACE --kind artifact --app /tmp/alternative.pdf \
                                      --require-fresh-surface \
                                      --auto-dismiss-ms 15000 --json | jq -r .surface_id)
 

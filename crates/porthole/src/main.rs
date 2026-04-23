@@ -32,9 +32,9 @@ enum Command {
         /// "process" or "artifact". Default "process".
         #[arg(long, value_enum, default_value_t = LaunchKindArg::Process)]
         kind: LaunchKindArg,
-        /// Process: app bundle path or executable. Artifact: file path.
-        #[arg(long)]
-        app_or_path: String,
+        /// For process launches: an app bundle path (.app) or executable path. For artifact launches: a file path.
+        #[arg(long = "app")]
+        app: String,
         /// Process: extra args (repeatable).
         #[arg(long = "arg", value_name = "ARG")]
         args: Vec<String>,
@@ -88,9 +88,9 @@ enum Command {
         /// "process" or "artifact". Default "process".
         #[arg(long, value_enum, default_value_t = LaunchKindArg::Process)]
         kind: LaunchKindArg,
-        /// Process: app bundle path or executable. Artifact: file path.
-        #[arg(long)]
-        app_or_path: String,
+        /// For process launches: an app bundle path (.app) or executable path. For artifact launches: a file path.
+        #[arg(long = "app")]
+        app: String,
         /// Process: extra args (repeatable).
         #[arg(long = "arg", value_name = "ARG")]
         args: Vec<String>,
@@ -395,7 +395,7 @@ async fn main() -> std::process::ExitCode {
         Command::Info => porthole::commands::info::run(&client).await,
         Command::Launch {
             kind,
-            app_or_path,
+            app,
             args,
             env,
             cwd,
@@ -421,14 +421,14 @@ async fn main() -> std::process::ExitCode {
                         })
                         .collect();
                     launch_cmd::LaunchKindArg::Process {
-                        app: app_or_path,
+                        app,
                         args,
                         env: parsed_env,
                         cwd,
                     }
                 }
                 LaunchKindArg::Artifact => launch_cmd::LaunchKindArg::Artifact {
-                    path: std::path::PathBuf::from(app_or_path),
+                    path: std::path::PathBuf::from(app),
                 },
             };
 
@@ -463,7 +463,7 @@ async fn main() -> std::process::ExitCode {
         Command::Replace {
             surface_id,
             kind,
-            app_or_path,
+            app,
             args,
             env,
             cwd,
@@ -491,7 +491,7 @@ async fn main() -> std::process::ExitCode {
                         .collect();
                     porthole_protocol::launches::LaunchKind::Process(
                         porthole_protocol::launches::ProcessLaunch {
-                            app: app_or_path,
+                            app,
                             args,
                             cwd,
                             env: parsed_env,
@@ -499,7 +499,7 @@ async fn main() -> std::process::ExitCode {
                     )
                 }
                 LaunchKindArg::Artifact => porthole_protocol::launches::LaunchKind::Artifact(
-                    porthole_protocol::launches::ArtifactLaunch { path: app_or_path },
+                    porthole_protocol::launches::ArtifactLaunch { path: app },
                 ),
             };
 
