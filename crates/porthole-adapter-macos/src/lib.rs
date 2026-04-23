@@ -26,6 +26,7 @@ pub mod frame_diff;
 pub mod input;
 pub mod key_codes;
 pub mod launch;
+pub mod nsscreen;
 pub mod permissions;
 pub mod placement;
 pub mod search;

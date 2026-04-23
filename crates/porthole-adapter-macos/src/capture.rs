@@ -23,6 +23,26 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
             PortholeError::new(ErrorCode::CapabilityMissing, "surface has no pid; cannot locate CGWindowID")
         })? as i32;
 
+        // Resolve geometry first (before holding any non-Send CG types across an await).
+        // Look up the backing scale for the display the window is on.
+        // The macOS display ID encoding is "disp_<cgid>".
+        let snap = crate::snapshot::snapshot_geometry(surface).await;
+        let (pre_snap, pre_scale) = match &snap {
+            Ok(s) => {
+                let cg_id: u32 = s.display_id.as_str()
+                    .strip_prefix("disp_")
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or(0);
+                let scale = if cg_id != 0 {
+                    crate::nsscreen::backing_scale_factor_for(cg_id)
+                } else {
+                    1.0
+                };
+                (Some(s.display_local), scale)
+            }
+            Err(_) => (None, 1.0),
+        };
+
         // Prefer the stored CGWindowID for precise targeting; fall back to
         // PID+title heuristic for surfaces created before slice-A.
         let cg_window_id = if let Some(id) = surface.cg_window_id {
@@ -67,6 +87,8 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
                 rgba.extend_from_slice(&[r, g, b, a]);
             }
         }
+        drop(data);
+        drop(image);
 
         let mut png_bytes = Vec::new();
         {
@@ -78,11 +100,22 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
                 .map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("png encode failed: {e}")))?;
         }
 
+        let (window_bounds_points, scale) = match pre_snap {
+            Some(bounds) => (bounds, pre_scale),
+            None => {
+                // snapshot_geometry failed; fall back to pixel dimensions with scale 1.
+                tracing::warn!(
+                    "snapshot_geometry failed during screenshot; reporting pixel bounds with scale 1"
+                );
+                (Rect { x: 0.0, y: 0.0, w: width as f64, h: height as f64 }, 1.0)
+            }
+        };
+
         Ok(Screenshot {
             png_bytes,
-            window_bounds_points: Rect { x: 0.0, y: 0.0, w: width as f64, h: height as f64 },
+            window_bounds_points,
             content_bounds_points: None,
-            scale: 1.0,
+            scale,
             captured_at_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)

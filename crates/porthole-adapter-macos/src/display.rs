@@ -23,8 +23,7 @@ pub async fn displays() -> Result<Vec<DisplayInfo>, PortholeError> {
     for id in ids {
         let display = CGDisplay::new(id);
         let bounds = display.bounds();
-        let (pixels_w, pixels_h) = (display.pixels_wide(), display.pixels_high());
-        let scale = if bounds.size.width > 0.0 { pixels_w as f64 / bounds.size.width } else { 1.0 };
+        let scale = crate::nsscreen::backing_scale_factor_for(id);
         let focused = cursor.is_some_and(|(cx, cy)| {
             cx >= bounds.origin.x
                 && cx < bounds.origin.x + bounds.size.width
@@ -43,7 +42,6 @@ pub async fn displays() -> Result<Vec<DisplayInfo>, PortholeError> {
             primary: id == main_id,
             focused,
         });
-        let _ = pixels_h;
     }
     Ok(out)
 }
