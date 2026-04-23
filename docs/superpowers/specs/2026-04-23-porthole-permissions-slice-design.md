@@ -59,18 +59,27 @@ Items not in this slice (see §13 Out of scope):
 POST /system-permissions/request   — trigger the OS permission prompt for a named system permission
 ```
 
-That's the only new endpoint. Reading state stays on `/info`, with the field renamed:
+That's the only new endpoint. Reading state stays on `/info`. The wire shape is unchanged except for a field rename inside each adapter block (`permissions` → `system_permissions`):
 
 ```json
 {
-  "system_permissions": [
-    { "name": "accessibility",      "granted": false, "purpose": "..." },
-    { "name": "screen_recording",   "granted": true,  "purpose": "..." }
+  "daemon_version": "...",
+  "uptime_seconds": 0,
+  "adapters": [
+    {
+      "name": "macos",
+      "loaded": true,
+      "capabilities": ["...", "system_permission_prompt"],
+      "system_permissions": [
+        { "name": "accessibility",    "granted": false, "purpose": "..." },
+        { "name": "screen_recording", "granted": true,  "purpose": "..." }
+      ]
+    }
   ]
 }
 ```
 
-`/info` capability additions: `"system_permission_prompt"` — declared by adapters that can trigger a prompt. macOS declares it; the in-memory adapter does not.
+Capability additions: `"system_permission_prompt"` — declared by adapters that can trigger a prompt. macOS declares it; the in-memory adapter does not. The daemon checks this capability *before* dispatching a request to the adapter (see §5.1).
 
 ## 5. Prompt-triggering primitive and the `onboard` flow
 
@@ -82,7 +91,13 @@ That's the only new endpoint. Reading state stays on `/info`, with the field ren
 { "name": "accessibility" }
 ```
 
-`name` is a free-form string, validated by the adapter against its supported set. Unknown names return `invalid_argument` with the list of known names in `details`. This matches the string-based name model already used by `SystemPermissionStatus` on `/info`; there is no closed Rust enum.
+Request handling order is fixed:
+
+1. **Capability check.** If the active adapter does not advertise `"system_permission_prompt"` in `capabilities()`, the route returns `capability_missing` (501) without touching the adapter. The in-memory adapter falls here.
+2. **Name validation.** Otherwise, the adapter is called. The adapter validates `name` against its supported set (the names it returns from `system_permissions()`). Unknown names return `invalid_argument` with the supported-name list in `details`.
+3. **Trigger.** On a valid name, the adapter calls the underlying OS API to open the prompt and returns the outcome.
+
+This means a caller interacting with an adapter that can't prompt gets a single, specific error (`capability_missing`) rather than reaching name validation with an empty supported set. The name is a free-form string, matching the `SystemPermissionStatus` model already used on `/info`; there is no closed Rust enum.
 
 ### 5.2 Response
 
@@ -93,13 +108,16 @@ That's the only new endpoint. Reading state stays on `/info`, with the field ren
   "granted_after": false,
   "prompt_triggered": true,
   "requires_daemon_restart": true,
-  "notes": "Open System Settings → Privacy & Security → Accessibility and enable porthole. After granting, restart the daemon for the change to take effect."
+  "notes": "Open System Settings → Privacy & Security → Accessibility and enable porthole. After granting, restart the daemon so the AX runtime initialises with the new trust state."
 }
 ```
 
-- `granted_before` / `granted_after` are read from the adapter's liveness check (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`) before and immediately after the prompt call. Because the user may not have granted in that window, `granted_after == false` is the common case on first request.
+- `granted_before` / `granted_after` are read from the adapter's liveness check (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`) before and immediately after the prompt call. Because the user usually hasn't granted in that window, `granted_after == false` is the common case on first request.
 - `prompt_triggered: true` means porthole asked the OS to show the prompt (via `AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: true})` or `CGRequestScreenCaptureAccess()`). On recent macOS the OS opens Settings directly; on older versions it shows a modal.
-- `requires_daemon_restart`: true for Accessibility (macOS caches the trust state at process start), false for Screen Recording (takes effect on next call). `notes` includes the restart instruction when true.
+- `requires_daemon_restart`: true for Accessibility, false for Screen Recording.
+  - **Why Accessibility is different.** `AXIsProcessTrusted()` itself is a live TCC query — after the user grants, the daemon's next call returns `true`, and `/info` reflects that immediately. What *doesn't* automatically recover is the internal AX runtime state: event taps (`CGEventTapCreate`), observers, and UI-element connections initialised when the daemon came up untrusted. Those stay in their old state until the process restarts. So the permission can show "granted" while AX-dependent operations still misbehave. `requires_daemon_restart` signals "trust is live, but restart the process for the AX runtime to pick it up."
+  - Screen Recording has no equivalent init-time state; grants take effect on the next call.
+- `notes` includes the restart instruction when `requires_daemon_restart` is true.
 
 ### 5.3 Polling vs. event
 
@@ -113,14 +131,19 @@ Behaviour (default, blocking):
 
 1. Read `system_permissions` from the daemon's `/info` to capture `granted_before` per advertised permission.
 2. If all are already granted, print status and exit **0**.
-3. For each ungranted permission, call `POST /system-permissions/request` to trigger the OS prompt. Print "dialog opened for X" as each fires.
+3. For each ungranted permission, call `POST /system-permissions/request`. Interpret the response:
+   - **Success:** print "dialog opened for X" if `prompt_triggered` is true; otherwise "prompt already fired earlier this daemon session — grant via Settings".
+   - **`system_permission_request_failed`:** print the OS reason and the Settings path from the error's `details` (see §6.4). This permission cannot be prompted by the daemon in its current state; the user grants manually in Settings. Onboard's final exit code will be non-zero.
+   - **Any other error:** print the code and message and treat the permission as un-promptable for this run.
 4. Poll `/info` every 500 ms, printing live state changes, until either all permissions are granted or a 60-second timeout elapses (`--wait Ns` overrides).
 5. Read `/info` one final time to capture `granted_after`.
-6. Print a per-permission summary. For any permission that transitioned `ungranted → granted` this session *and* whose adapter reports `requires_daemon_restart = true` (Accessibility on macOS), flag "restart required" prominently.
+6. Print a per-permission summary. For any permission that transitioned `ungranted → granted` this session *and* whose adapter reports `requires_daemon_restart = true`, flag "restart required" prominently.
 7. Exit with:
    - **0** — all permissions were already granted at step 1 (no prompts fired, nothing to restart).
    - **2** — all permissions are granted as of step 5, and at least one permission that requires a daemon restart transitioned during this invocation. Setup scripts should restart the daemon before continuing.
-   - **1** — at least one permission remains ungranted at step 5. The user likely dismissed the dialog or is still deciding. Re-run `porthole onboard` after granting.
+   - **1** — at least one permission remains ungranted at step 5, or any `system_permission_request_failed` was observed at step 3. The user should grant in Settings (using the path printed in the summary) and re-run `porthole onboard`.
+
+**Re-running after dismissal.** If the user dismissed the OS dialog, re-running `porthole onboard` will *not* re-open the dialog — macOS fires a prompt at most once per daemon process (§14). It will, however, still report current grant state and print the Settings path. Users can grant directly in Settings without a fresh dialog; the liveness check and `/info` will reflect the change. Re-arming the dialog is optional and requires restarting the daemon — onboard prints this as a hint when it detects a prompt was already fired.
 
 Flags:
 
@@ -196,12 +219,15 @@ The rule, applied uniformly when a route-level error attaches additional details
 
 `ApiError::from(ReplacePipelineError::Porthole { error, old_handle_alive })` will be rewritten to apply this rule (see the existing `ReturnedExisting` arm — same pattern, generalised).
 
-### 6.4 Typed body for `system_permission_needed`
+### 6.4 Typed bodies for permission errors
 
-To keep the `WireError::details` JSON well-formed, define a typed body at the protocol layer (same pattern as `LaunchReturnedExistingBody`, `CloseFailedBody`, `WaitTimeoutBody`):
+To keep `WireError::details` JSON well-formed, define typed bodies at the protocol layer (same pattern as `LaunchReturnedExistingBody`, `CloseFailedBody`, `WaitTimeoutBody`):
 
 ```rust
 // crates/porthole-protocol/src/error.rs
+
+/// Body for `system_permission_needed`. The user can fix this by running
+/// the CLI command or granting in Settings.
 pub struct SystemPermissionNeededBody {
     pub permission: String,
     pub remediation: Remediation,
@@ -213,9 +239,19 @@ pub struct Remediation {
     pub settings_path: String,
     pub binary_path: String,
 }
+
+/// Body for `system_permission_request_failed`. The daemon cannot open the
+/// prompt; the user must grant in Settings manually. No `cli_command` field
+/// because `onboard` can't help either.
+pub struct SystemPermissionRequestFailedBody {
+    pub permission: String,
+    pub reason: String,        // OS-level error text
+    pub settings_path: String,
+    pub binary_path: String,
+}
 ```
 
-The preflight helpers build one of these, serialize it into `PortholeError.details`, and every downstream conversion carries it through.
+The preflight helpers and the explicit endpoint both build one of these, serialize it into `PortholeError.details`, and every downstream conversion carries it through.
 
 ## 7. Silent-degrade audit
 
@@ -239,7 +275,9 @@ Add `ensure_accessibility_granted()` / `ensure_screen_recording_granted()` helpe
 
 1. Checks the live liveness API (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`).
 2. If granted: returns `Ok(())`.
-3. If not granted: **triggers the OS prompt as a side effect** (`AXIsProcessTrustedWithOptions({prompt: true})` / `CGRequestScreenCaptureAccess()`), then returns `Err(PortholeError)` with `code = system_permission_needed` and `details` populated via `SystemPermissionNeededBody` (§6.4).
+3. If not granted: **triggers the OS prompt as a side effect** (`AXIsProcessTrustedWithOptions({prompt: true})` / `CGRequestScreenCaptureAccess()`). Two sub-cases for the return:
+   - Prompt call succeeded (or was a no-op because a prompt already fired this process): return `Err(PortholeError)` with `code = system_permission_needed` and `details` populated via `SystemPermissionNeededBody` (§6.4).
+   - Prompt call failed because the OS rejected it (rare; process not in a bundle / missing context): return `Err(PortholeError)` with `code = system_permission_request_failed` and `details.reason` set to the OS-level error. This surfaces a daemon-structural problem rather than asking the user to "just grant" something they can't be prompted for. The error is route-agnostic — the same code is returned by the explicit endpoint in §5 when it hits the same failure (§11).
 
 This is the "safety-net" behaviour: if a caller skipped `porthole onboard` and hits a guarded method, the first blocked call pops the dialog and returns a remediation-carrying error. The OS only surfaces the prompt once per process lifetime — subsequent calls are prompt-silent but still return the typed error.
 
@@ -357,7 +395,7 @@ Both build the `PortholeError` with `code = system_permission_needed` and the fu
 One rename, one new code, and one extension:
 
 - **Rename**: wire `permission_needed` → `system_permission_needed`, Rust `ErrorCode::PermissionNeeded` → `ErrorCode::SystemPermissionNeeded`. Same semantics; clearer scope.
-- **New**: `system_permission_request_failed`. Returned from the adapter's `request_system_permission_prompt` if the OS rejects the call (rare; usually happens when the process isn't in a bundle / doesn't have the right context). `details` includes `reason` with the OS-level error.
+- **New**: `system_permission_request_failed`. Returned whenever porthole tries to trigger a prompt and the OS rejects the call (rare; usually when the process isn't in a bundle or lacks the right context). Produced by both paths — the explicit `POST /system-permissions/request` endpoint and the preflight helpers that auto-prompt on miss. `details` includes `reason` with the OS-level error so callers can tell a structural daemon problem apart from an ungranted-but-promptable state.
 - **Extension**: `PortholeError` gains `details: Option<serde_json::Value>` (§6.2), and `From<PortholeError> for WireError` carries it through. Route-level wrappers merge rather than overwrite (§6.3).
 
 `invalid_argument` continues to cover unknown permission names passed to `request_system_permission_prompt`; its `details` include the adapter's supported-name list.
@@ -368,6 +406,7 @@ One rename, one new code, and one extension:
 
 - `SystemPermissionPromptOutcome` serde roundtrip (snake_case wire).
 - `SystemPermissionNeededBody` serde roundtrip.
+- `SystemPermissionRequestFailedBody` serde roundtrip.
 - `PortholeError::with_details` builder and `From<PortholeError> for WireError` carrying details through — table-tested.
 - Route-wrapper merge rule (`ReplacePipelineError::Porthole`) — test that wrapped `system_permission_needed` details survive and gain the `old_handle_alive` key.
 
@@ -378,9 +417,9 @@ One rename, one new code, and one extension:
 
 ### 12.3 Daemon route
 
-- `POST /system-permissions/request` unknown name returns `invalid_argument` with a supported-names list in `details` (in-memory adapter exposes an empty supported set; macOS exposes the real one).
-- `POST /system-permissions/request` against the in-memory adapter returns `adapter_unsupported` (matches §12.2). This is the daemon-side happy path of the wiring — it proves the route is hooked up.
-- `system_permission_needed` errors emitted from existing routes carry populated `details.remediation` — assert on two representative routes using scripted in-memory permission state (e.g., scripted `ensure_*` helper stub for the cross-adapter test harness). Specifically: a screenshot call without Screen Recording, a key call without Accessibility.
+- `POST /system-permissions/request` against the in-memory adapter returns `capability_missing` (501). In-memory doesn't advertise `"system_permission_prompt"`, so the route short-circuits before reaching name validation. This is the daemon-side happy path of the wiring — it proves the capability check is hooked up and ordered correctly.
+- Unknown-name validation is tested against a cross-adapter harness or the macOS integration path (since in-memory never reaches step 2 of §5.1). The assertion: an adapter that *does* advertise the capability, given an unsupported name, returns `invalid_argument` with a supported-names list in `details`.
+- `system_permission_needed` errors emitted from existing routes carry populated `details.remediation` — assert on two representative routes using scripted `ensure_*` helper stubs. Specifically: a screenshot call without Screen Recording, a key call without Accessibility.
 - Route-wrapper merge: a `ReplacePipelineError::Porthole` wrapping a `system_permission_needed` produces a wire body containing both the remediation object and `old_handle_alive`.
 
 ### 12.4 macOS adapter (ignored, real desktop)
@@ -395,7 +434,9 @@ Drive these tests with an HTTP test double for `/info` and `/system-permissions/
 - All-granted path: `/info` reports both granted on the first read. Exit code 0. No `request` calls made.
 - Transition path (restart required): initial `/info` reports Accessibility ungranted; test double flips it to granted during the poll loop; `requires_daemon_restart = true` for Accessibility. Exit code 2 with restart message.
 - Transition path (no restart required): same as above but only Screen Recording transitions. Exit code 0 (no AX transition → no restart needed).
-- Still-ungranted path: test double keeps at least one permission ungranted through the full poll window. Exit code 1 with "run onboard again" message.
+- Still-ungranted path: test double keeps at least one permission ungranted through the full poll window. Exit code 1 with "grant in Settings and re-run" message.
+- `system_permission_request_failed` path: test double returns this error from `/system-permissions/request`; onboard prints the OS reason and Settings path, exits 1.
+- Prompt-already-fired path: test double returns success with `prompt_triggered: false`; onboard prints the "grant via Settings" hint and proceeds to polling.
 - `--no-wait`: prompts fire, poll loop is skipped, exit code 3 regardless of `/info` state.
 - Output formatting golden tests for each exit-code path.
 
@@ -415,11 +456,11 @@ Drive these tests with an HTTP test double for `/info` and `/system-permissions/
 
 ## 14. Known limitations
 
-- **Accessibility grants require a daemon restart.** macOS caches AX trust state at process-start time. After granting, the user must restart the daemon; `porthole onboard` detects this transition and exits with code 2 so setup scripts can branch on it. A future launchctl-based lifecycle makes the restart automatic.
+- **Accessibility grants need a daemon restart for full effect.** `AXIsProcessTrusted()` itself is a live TCC query — the daemon sees the grant immediately, and `/info` reflects it without restart. What doesn't automatically recover is the internal AX runtime: event taps, observers, and UI-element connections initialised at process start when the daemon was untrusted. Those stay stale until the process restarts. `porthole onboard` captures the transition and exits with code 2 to signal the restart. A future launchctl-based lifecycle makes the restart automatic.
 - **The CLI's `porthole onboard` triggers prompts for the daemon's binary, not the CLI's.** The CLI is just a client; the binary whose permission is being granted is `portholed`. The response and `info` output expose the binary path so it's clear.
 - **TCC state can get stale.** Rarely, macOS's TCC database reports stale grants (usually after crashes or force-quits). The dev playbook (§8.2) covers `tccutil reset` as the recovery. No automatic detection in this slice.
 - **Ad-hoc signing is not a real code signature.** The dev bundle is signed but not notarized and has no Developer ID. Fine for dev on the user's own machine; not distributable.
-- **Prompt fires once per process lifetime.** macOS shows the grant dialog only on the first `prompt: true` call for a given permission within a process. If the user dismisses it, subsequent preflight-triggered prompts in the same daemon process are silent (they still return `system_permission_needed` with remediation, they just don't re-open the dialog). Restarting the daemon re-arms the prompt; `porthole onboard` is the canonical way to do this cleanly.
+- **Prompt fires once per daemon process.** macOS shows the grant dialog only on the first `prompt: true` call for a given permission within a process. If the user dismisses it, subsequent prompt-triggering calls (from preflight or from `POST /system-permissions/request`) are silent no-ops for the dialog but still return current state. This is a UX limitation, not a blocker: users can grant directly in Settings (the path is in every remediation block), and the liveness check picks it up without a dialog. Re-arming the dialog requires restarting the daemon; `onboard` prints this as a hint when it observes a prompt has already fired this session.
 - **Fail-loudly is a behaviour change for callers of `list_windows` / `search` / `window_alive`.** Previously these returned enumeration with empty titles when Screen Recording was missing; they now return `system_permission_needed`. Callers that depended on the empty-titles quirk must request the permission. There is no partial-success mode in this slice (§7.3).
 
 ## 15. Success criterion
