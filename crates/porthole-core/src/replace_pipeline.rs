@@ -23,7 +23,6 @@ pub struct ReplaceOutcome {
 pub enum ReplacePipelineError {
     Porthole { error: PortholeError, old_handle_alive: bool },
     ReturnedExisting { info: ExistingSurfaceInfo, old_handle_alive: bool },
-    CloseFailed { old_handle_alive: bool, reason: String },
 }
 
 impl ReplacePipeline {
@@ -38,20 +37,22 @@ impl ReplacePipeline {
         caller_placement: Option<&PlacementSpec>,
     ) -> Result<ReplaceOutcome, ReplacePipelineError> {
         // 1. Snapshot (best-effort — snapshot failure doesn't abort).
-        let old_info = self
-            .handles
-            .require_alive(old_id)
-            .await
-            .map_err(|e| ReplacePipelineError::Porthole { error: e, old_handle_alive: true })?;
+        let old_info = match self.handles.require_alive(old_id).await {
+            Ok(info) => info,
+            Err(e) => {
+                // Surface is already dead or missing — old handle is NOT alive.
+                return Err(ReplacePipelineError::Porthole { error: e, old_handle_alive: false });
+            }
+        };
         let snapshot = self.adapter.snapshot_geometry(&old_info).await.ok();
 
         // 2. Close old.
-        if let Err(e) = self.adapter.close(&old_info).await {
-            // Old handle stays alive — don't mark dead.
-            return Err(ReplacePipelineError::CloseFailed {
-                old_handle_alive: true,
-                reason: e.message,
-            });
+        if let Err(close_err) = self.adapter.close(&old_info).await {
+            // old_handle_alive: false iff the adapter told us the surface is already dead.
+            // Any other close error (PermissionNeeded, CloseFailed, etc.) means the surface
+            // is likely still there.
+            let old_handle_alive = close_err.code != crate::ErrorCode::SurfaceDead;
+            return Err(ReplacePipelineError::Porthole { error: close_err, old_handle_alive });
         }
         self.handles
             .mark_dead(old_id)
@@ -175,12 +176,37 @@ mod tests {
             .await;
 
         match replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", false), None).await {
-            Err(ReplacePipelineError::CloseFailed { old_handle_alive, .. }) => {
+            Err(ReplacePipelineError::Porthole { error, old_handle_alive }) => {
+                assert_eq!(error.code, ErrorCode::CloseFailed);
                 assert!(old_handle_alive);
                 // Old handle still alive.
                 assert!(handles.require_alive(&old_id).await.is_ok());
             }
-            other => panic!("expected CloseFailed, got {other:?}"),
+            other => panic!("expected Porthole(CloseFailed), got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replace_close_surface_dead_reports_old_handle_not_alive() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let launch = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
+        let replace = ReplacePipeline::new(adapter.clone(), handles.clone(), launch);
+
+        let old_id = tracked_surface(&handles, 100, 50).await;
+        adapter
+            .set_next_close_result(Err(PortholeError::new(
+                ErrorCode::SurfaceDead,
+                "surface already gone",
+            )))
+            .await;
+
+        match replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", false), None).await {
+            Err(ReplacePipelineError::Porthole { error, old_handle_alive }) => {
+                assert_eq!(error.code, ErrorCode::SurfaceDead);
+                assert!(!old_handle_alive, "surface_dead means old handle is not alive");
+            }
+            other => panic!("expected Porthole(SurfaceDead), got {other:?}"),
         }
     }
 

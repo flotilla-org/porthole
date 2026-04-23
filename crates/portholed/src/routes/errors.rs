@@ -5,7 +5,7 @@ use porthole_core::launch::{ExistingSurfaceInfo, LaunchPipelineError};
 use porthole_core::replace_pipeline::ReplacePipelineError;
 use porthole_core::wait_pipeline::WaitPipelineError;
 use porthole_core::{ErrorCode, PortholeError};
-use porthole_protocol::error::{CloseFailedBody, LaunchReturnedExistingBody, WireError};
+use porthole_protocol::error::{LaunchReturnedExistingBody, WireError};
 use porthole_protocol::wait::WaitTimeoutBody;
 
 pub struct ApiError(pub WireError);
@@ -56,14 +56,6 @@ impl From<ReplacePipelineError> for ApiError {
                     details.insert("old_handle_alive".into(), serde_json::Value::Bool(old_handle_alive));
                 }
                 Self(wire)
-            }
-            ReplacePipelineError::CloseFailed { old_handle_alive, reason } => {
-                let body = CloseFailedBody { old_handle_alive };
-                Self(WireError {
-                    code: ErrorCode::CloseFailed,
-                    message: reason,
-                    details: serde_json::to_value(body).ok(),
-                })
             }
         }
     }

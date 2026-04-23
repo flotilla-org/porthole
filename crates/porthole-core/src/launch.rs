@@ -24,6 +24,11 @@ impl LaunchPipeline {
         spec: &LaunchSpec,
         placement: Option<&PlacementSpec>,
     ) -> Result<LaunchPipelineOutcome, LaunchPipelineError> {
+        // 0. Pre-flight: validate user-supplied placement spec.
+        if let Some(p) = placement {
+            validate_placement(p, &self.adapter).await.map_err(LaunchPipelineError::Porthole)?;
+        }
+
         // 1. Dispatch to the right adapter method.
         let outcome = match spec {
             LaunchSpec::Process(p) => self.adapter.launch_process(p).await?,
@@ -137,6 +142,35 @@ impl From<PortholeError> for LaunchPipelineError {
     }
 }
 
+/// Validates user-supplied placement spec against the current display set.
+/// Fails with `invalid_argument` when display ids don't resolve. Runtime
+/// AX failures during actual apply are NOT in scope — those become
+/// PlacementOutcome::Failed.
+async fn validate_placement(
+    spec: &PlacementSpec,
+    adapter: &Arc<dyn Adapter>,
+) -> Result<(), PortholeError> {
+    if spec.is_effectively_empty() {
+        return Ok(());
+    }
+    // Validate DisplayTarget::Id references an existing display.
+    if let Some(DisplayTarget::Id(id)) = &spec.on_display {
+        let displays = adapter.displays().await?;
+        if !displays.iter().any(|d| &d.id == id) {
+            let known: Vec<String> = displays.iter().map(|d| d.id.as_str().to_string()).collect();
+            return Err(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "unknown on_display id '{}'; known ids: [{}]",
+                    id.as_str(),
+                    known.join(", ")
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Resolve a PlacementSpec to a global screen rectangle. Uses the adapter's
 /// displays() and attention() to find target display; applies anchor/geometry
 /// semantics per spec §5.
@@ -152,7 +186,9 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
             .iter()
             .find(|d| &d.id == id)
             .cloned()
-            .ok_or_else(|| format!("unknown display id '{}'", id.as_str()))?,
+            // By the time we get here, validate_placement has already confirmed the id exists.
+            // This fallback handles the rare race where displays change between validation and apply.
+            .unwrap_or_else(|| displays[0].clone()),
         Some(DisplayTarget::Primary) => displays
             .iter()
             .find(|d| d.primary)
@@ -438,5 +474,29 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(40)).await;
 
         assert_eq!(adapter.close_calls().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn unknown_display_id_is_invalid_argument_not_soft_failure() {
+        use crate::display::DisplayId;
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let pipeline = LaunchPipeline::new(adapter.clone(), handles);
+        let placement = PlacementSpec {
+            on_display: Some(DisplayTarget::Id(DisplayId::new("disp_does_not_exist"))),
+            geometry: None,
+            anchor: None,
+        };
+        let spec = LaunchSpec::Process(spec_minimal(RequireConfidence::Strong));
+        match pipeline.launch(&spec, Some(&placement)).await {
+            Err(LaunchPipelineError::Porthole(e)) => {
+                assert_eq!(e.code, ErrorCode::InvalidArgument);
+                assert!(e.message.contains("unknown on_display"));
+            }
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+        // Critically: adapter.launch_process should NOT have been called.
+        assert_eq!(adapter.launch_calls().await.len(), 0);
     }
 }

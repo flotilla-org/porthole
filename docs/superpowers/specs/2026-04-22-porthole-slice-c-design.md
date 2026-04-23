@@ -242,7 +242,7 @@ Response is a `LaunchResponse` — same shape as `POST /launches`, including the
 
 Handle-atomic: either the response carries a new `surface_id` or a typed error. On error:
 
-- `close_failed` during step 2 → old handle is **still alive**, no new surface created. This is a deliberate revision of v0 spec §6.8 (which assumed close always succeeds); slice A added close verification that can genuinely fail when apps present save/discard dialogs, so replace must handle the "close refused" case. The caller gets their old surface back and can investigate (e.g., driving the save dialog programmatically) or try again.
+- A close error during step 2 (e.g., `close_failed`, `permission_needed`) → old handle is **still alive**, no new surface created. The typed error code from the adapter is preserved in the response; `surface_dead` is the one exception where `old_handle_alive` is false (the surface was already gone). Callers get their old surface back and can investigate (e.g., driving the save dialog programmatically) or try again.
 - `launch_correlation_failed` / `launch_correlation_ambiguous` / `launch_returned_existing` during step 4 → old handle is **dead**. The replacement couldn't be identified (or was going to reuse an existing window under `require_fresh_surface: true`), but the old window is gone. Caller gets the error and a note that the old handle is now dead.
 
 The error body carries an explicit `old_handle_alive: bool` field so callers don't have to infer the state from the error code.
@@ -359,7 +359,7 @@ One new error code:
 
 Extended use of existing codes:
 
-- `close_failed` (from slice A) now also returned from `POST /surfaces/{id}/replace` when step 2 (close of old surface) fails. The error body carries `old_handle_alive: true` so the caller can resume using the old handle.
+- `close_failed` is one possible close-step error. The adapter's typed error code is preserved when replace's step 2 fails — `permission_needed`, `surface_dead`, and `close_failed` are all possible, depending on what the close attempt hit. The error body always includes `old_handle_alive: bool` so the caller can decide whether to retry, investigate, or give up. `surface_dead` means the surface was already gone (old_handle_alive: false); other codes mean close was attempted and refused (old_handle_alive: true).
 - `invalid_argument` used more broadly: rejects zero `auto_dismiss_after_ms`, unknown `on_display` ids, URL paths in `artifact` requests.
 
 **Placement failure is not an error** — §5.7 moves it into the `LaunchResponse.placement` field. Prior draft versions of this spec proposed a `placement_failed` error code; it was rejected because it lost the surface_id on a surface that was already tracked, making the handle unrecoverable to the caller. Similarly, a proposed `replace_close_failed` code was rejected in favor of reusing slice A's `close_failed` with a clear error body — the semantic (surface refused to close, still alive) is the same whether it happens during a standalone close or a replace.
@@ -447,7 +447,7 @@ Extend `slice_b_e2e.rs` pattern — new `slice_c_e2e.rs`: artifact launch + plac
 - **Preexisting replacement produces a displaced window.** If `replace` correlates to an already-open window elsewhere on screen, the old slot's geometry is not applied. Callers doing replace should pass `require_fresh_surface: true` on the replacement launch body so that preexisting-correlated replacements return `launch_returned_existing` explicitly instead of silently landing in the wrong place. See §6.4.
 - **Auto-dismiss doesn't survive daemon restart.** Timer state is in-memory. A future slice can persist scheduled dismissals.
 - **Coordinate space is display-local.** Global-coordinate callers (rare; most callers don't need it) have to read `/displays` and convert.
-- **`close_failed` during replace is recoverable but surprising.** Old surface stays alive; new one never launched. Caller sees `close_failed` with `old_handle_alive: true` in the body. Retry or investigate the blocking dialog. See §6.3.
+- **Close error during replace is recoverable but surprising.** Old surface stays alive (unless `surface_dead`); new one never launched. Caller sees the typed error code with `old_handle_alive: bool` in the body. Retry or investigate the blocking dialog. See §6.3.
 - **No batch replace.** Each replace is one surface. For "swap in a new set of presentations," callers script it.
 
 ## 13. Success criterion
