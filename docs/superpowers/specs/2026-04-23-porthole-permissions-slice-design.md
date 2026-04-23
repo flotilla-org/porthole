@@ -1,18 +1,20 @@
-# Porthole Permissions Slice — Design
+# Porthole System-Permissions Slice — Design
 
 Date: 2026-04-23
-Status: Draft for review
+Status: Draft for review (revised 2026-04-23 after first-round review)
 Supersedes: nothing; extends v0 + slices A/B/C + polish round.
 
 ## 1. Purpose
 
-Make porthole's permission dependency a first-class, robust part of the system instead of a fragile implicit. Today permissions are granted-or-not by the user outside porthole; the system silently returns empty / null / wrong results on permission gaps in several places, the cold-start experience is "nothing works and no one knows why," and there is no documented development workflow for keeping grants alive across rebuilds.
+Make porthole's dependency on macOS privacy permissions a first-class, robust part of the system. Today those permissions are granted-or-not by the user outside porthole; the system silently returns empty / null / wrong results on permission gaps in several places, the cold-start experience is "nothing works and no one knows why," and there is no documented development workflow for keeping grants alive across rebuilds.
+
+The slice uses the term **system permissions** throughout — meaning permissions granted by the operating system (macOS TCC, future Linux/Windows equivalents). This is deliberately distinct from a future **agent permissions** layer that governs what subordinate agents are allowed to do (see §13 Out of scope). The two are different axes: system permissions are "what does the OS let this process do?" and agent permissions are "what does this agent let its workers do?" Don't conflate them in naming, wire fields, or error codes.
 
 This slice ships:
 
-- An explicit request flow (`POST /permissions/request` + CLI verbs) that triggers the macOS permission prompt and opens the right Settings panel.
-- A `remediation` field on every `permission_needed` error so agents can propose the exact fix rather than guess.
-- A silent-degrade audit — light pass plus preflight checks at the top of every adapter method that touches a guarded API, so missing permissions fail loudly with a clear code rather than degrade to empty results.
+- A single **onboarding CLI** (`porthole onboard`) that's the setup entrypoint for a new developer: triggers the OS permission prompts for everything porthole needs, prints status, flags restart requirements, and exits with a code that tells setup scripts whether a restart is pending. The verb is deliberately general so future slices can hang additional onboarding steps off it (agent-policy choices, recommended-app install, external-service auth) without a rename.
+- A `remediation` block on every `system_permission_needed` error so agents can propose the exact fix rather than guess. Implemented via an extension to `PortholeError` so details actually propagate through the wire layer (see §6).
+- A silent-degrade audit — one pass through the macOS adapter, plus preflight helpers at the top of every method that touches a guarded API. Preflight both triggers the OS prompt as a side effect *and* returns `system_permission_needed` with remediation, so a caller that skipped `onboard` still gets a dialog on the first blocked call.
 - A development workflow: a `Portholed.app` bundle for grant stability across rebuilds, ad-hoc code signing, and a short playbook for first-time setup / re-grant / TCC reset.
 - A guard against architectural retreat — a written rule (also in `AGENTS.md`) that agents encountering permission walls must stop and wait, not invent workarounds.
 
@@ -24,7 +26,7 @@ When any task in this slice (or any future slice) hits a permission-dependent op
 
 - **Do not** build a mock layer, a feature flag to skip the call, a "degrade to empty" path, or any other code-level workaround.
 - **Do not** refactor the operation to "not need the permission" unless the user has explicitly approved that direction first.
-- **Do** stop with `BLOCKED`, state the missing permission, provide the remediation command (`porthole request-permission <name>`), and wait.
+- **Do** stop with `BLOCKED`, state the missing permission, provide the remediation command (`porthole onboard`), and wait.
 - **Do** resume where you stopped after the user confirms the grant.
 
 Waiting is cheaper than invention. Every workaround produces dead code that gets removed once permissions are right, while burning context and often papering over real issues downstream. The permission dependency is deliberate; porthole's job is desktop orchestration and macOS reserves these permissions precisely for that job.
@@ -33,42 +35,54 @@ This is codified in `AGENTS.md` and will be repeated in implementation plan task
 
 ## 3. Relationship to existing design
 
-Additive, with one clarification pass over existing behaviour.
+Additive, with a clarification pass over existing behaviour and one structural extension to the error type.
 
-- **New endpoint**: `POST /permissions/request`.
-- **New CLI verbs**: `porthole request-permission <name>`, `porthole ensure-permissions`.
-- **Error body change**: every `permission_needed` response gains a `details.remediation` block. Existing callers who ignored `details` are unaffected; callers using `details` see the new field.
-- **Adapter trait**: gains a `request_permission` method. Existing methods unchanged.
-- **Silent-degrade audit**: changes internal behaviour of some existing methods so they return `permission_needed` where they previously returned degraded results. Callers that previously got empty / null silently will now see a typed error they can respond to — strictly more informative.
+- **New endpoint**: `POST /system-permissions/request` — internal primitive that `porthole onboard` calls; public for symmetry with the rest of the wire but not the recommended agent interface.
+- **Renamed `/info` field**: `permissions` → `system_permissions`. Pre-v1 wire change; applied consistently so the system vs agent distinction lands.
+- **New CLI verb**: `porthole onboard`. Replaces the old plan's `ensure-permissions`; there is no separate `request-permission` verb.
+- **Error code rename**: wire `permission_needed` → `system_permission_needed` (Rust variant `ErrorCode::PermissionNeeded` → `ErrorCode::SystemPermissionNeeded`). Pre-v1; clearer scope.
+- **New error code**: `system_permission_request_failed`, returned when the adapter tries to trigger a prompt but the OS rejects the call (see §11).
+- **`PortholeError` extension**: gains a `details: Option<serde_json::Value>` field, and `From<PortholeError> for WireError` carries it through. Route-level errors that wrap a `PortholeError` while adding their own details merge rather than overwrite (§6). This is the structural change that lets remediation actually reach the client.
+- **Adapter trait**: gains a `request_system_permission_prompt` method, and the existing `permissions()` method renames to `system_permissions()` for internal consistency with the wire-side `system_permissions` field. The `PermissionStatus` Rust type renames to `SystemPermissionStatus` for the same reason. No other trait methods change.
+- **Silent-degrade audit**: changes internal behaviour of some existing methods so they return `system_permission_needed` where they previously returned degraded results, and the preflight helpers additionally trigger the OS prompt as a side effect. Callers that previously got empty / null silently will now see a typed error and a dialog — strictly more informative.
 - **Dev tooling**: adds `scripts/dev-bundle.sh` and `docs/development.md`. No code changes.
 
 Items not in this slice (see §13 Out of scope):
 
-- Fine-grained permission policy for subordinate agents (future "machine-side model" concept the user referenced)
-- Linux / Windows permission models
-- Entitlements / signed-bundle-distribution for production releases
+- Agent permissions — the policy model for subordinate agents (crew scoping, guest-machine free-roam, default file-open handlers, etc.). The `onboard` verb is shaped to accommodate future steps, but none ship here.
+- Linux / Windows permission models.
+- Entitlements / signed-bundle-distribution for production releases.
 
 ## 4. New resources and endpoints
 
 ```
-POST /permissions/request   — trigger the OS permission prompt for a named permission
+POST /system-permissions/request   — trigger the OS permission prompt for a named system permission
 ```
 
-That's the only new endpoint. Reading state stays on `/info` (already shipped — returns `permissions: [{name, granted, purpose}]` per adapter).
-
-`/info` capability additions: `"request_permission"` — declared by adapters that can trigger a prompt. macOS gets it; the in-memory adapter doesn't (it's scripted, not backed by an OS).
-
-## 5. Request-permission flow
-
-### 5.1 Request
-
-`POST /permissions/request` body:
+That's the only new endpoint. Reading state stays on `/info`, with the field renamed:
 
 ```json
-{ "name": "accessibility" | "screen_recording" }
+{
+  "system_permissions": [
+    { "name": "accessibility",      "granted": false, "purpose": "..." },
+    { "name": "screen_recording",   "granted": true,  "purpose": "..." }
+  ]
+}
 ```
 
-Unknown names return `invalid_argument` with the list of known names in the error details.
+`/info` capability additions: `"system_permission_prompt"` — declared by adapters that can trigger a prompt. macOS declares it; the in-memory adapter does not.
+
+## 5. Prompt-triggering primitive and the `onboard` flow
+
+### 5.1 The endpoint
+
+`POST /system-permissions/request` body:
+
+```json
+{ "name": "accessibility" }
+```
+
+`name` is a free-form string, validated by the adapter against its supported set. Unknown names return `invalid_argument` with the list of known names in `details`. This matches the string-based name model already used by `SystemPermissionStatus` on `/info`; there is no closed Rust enum.
 
 ### 5.2 Response
 
@@ -79,7 +93,7 @@ Unknown names return `invalid_argument` with the list of known names in the erro
   "granted_after": false,
   "prompt_triggered": true,
   "requires_daemon_restart": true,
-  "notes": "Open System Settings → Privacy & Security → Accessibility and enable porthole. After granting, run `launchctl kickstart` on the daemon or restart it manually for Accessibility changes to take effect."
+  "notes": "Open System Settings → Privacy & Security → Accessibility and enable porthole. After granting, restart the daemon for the change to take effect."
 }
 ```
 
@@ -89,26 +103,57 @@ Unknown names return `invalid_argument` with the list of known names in the erro
 
 ### 5.3 Polling vs. event
 
-This slice does not block the connection waiting for the user to grant. The endpoint returns immediately after triggering the prompt. Callers check `/info` to observe the new grant state. Once SSE events ship, a `permission_changed` event will let callers subscribe rather than poll; not in this slice.
+This slice does not block the connection waiting for the user to grant. The endpoint returns immediately after triggering the prompt. Callers check `/info` to observe the new grant state. Once SSE events ship, a `system_permission_changed` event will let callers subscribe rather than poll; not in this slice.
 
-### 5.4 CLI surface
+### 5.4 `porthole onboard`
 
-- `porthole request-permission accessibility` — triggers the prompt, prints the response.
-- `porthole request-permission screen_recording` — same.
-- `porthole ensure-permissions` — checks both, triggers prompts for any ungranted, prints per-permission status and restart hints. Exits non-zero if any remain ungranted.
+This is the primary CLI surface and the intended user entrypoint.
 
-## 6. Remediation on error bodies
+Behaviour (default, blocking):
 
-Every `permission_needed` error returned from any endpoint gains a structured `remediation` field in `details`:
+1. Read `system_permissions` from the daemon's `/info` to capture `granted_before` per advertised permission.
+2. If all are already granted, print status and exit **0**.
+3. For each ungranted permission, call `POST /system-permissions/request` to trigger the OS prompt. Print "dialog opened for X" as each fires.
+4. Poll `/info` every 500 ms, printing live state changes, until either all permissions are granted or a 60-second timeout elapses (`--wait Ns` overrides).
+5. Read `/info` one final time to capture `granted_after`.
+6. Print a per-permission summary. For any permission that transitioned `ungranted → granted` this session *and* whose adapter reports `requires_daemon_restart = true` (Accessibility on macOS), flag "restart required" prominently.
+7. Exit with:
+   - **0** — all permissions were already granted at step 1 (no prompts fired, nothing to restart).
+   - **2** — all permissions are granted as of step 5, and at least one permission that requires a daemon restart transitioned during this invocation. Setup scripts should restart the daemon before continuing.
+   - **1** — at least one permission remains ungranted at step 5. The user likely dismissed the dialog or is still deciding. Re-run `porthole onboard` after granting.
+
+Flags:
+
+- `--wait Ns` — override the 60-second polling window. `--wait 0` disables polling (behaves like `--no-wait`).
+- `--no-wait` — skip step 4 entirely; exit immediately after firing prompts with code **3** ("prompts triggered, awaiting grants"). For setup scripts that want to do other work in parallel with the user clicking through Settings.
+
+Exit-code summary:
+
+| Code | Meaning |
+|---|---|
+| 0 | All granted, no action pending |
+| 1 | Some permissions still ungranted after waiting; user needs to grant and re-run |
+| 2 | All granted, but daemon restart pending before AX-dependent calls work |
+| 3 | `--no-wait`: prompts fired, grant state unknown |
+
+The exit-code distinction matters because granting Accessibility while the daemon is running leaves the daemon in a state where `AXIsProcessTrusted()` reports true but some AX-dependent features may still misbehave until a restart; `onboard` is the surface that captures the transition and tells the user. A future launchctl-based lifecycle makes the restart automatic; exit 2 remains a useful signal either way.
+
+Future slices will extend `onboard` with additional steps (agent-policy choices, recommended apps, external-service auth). For this slice, the only step is system-permission prompting.
+
+## 6. Remediation and the error-details extension
+
+### 6.1 Wire contract
+
+Every `system_permission_needed` error returned from any endpoint includes a structured `remediation` block in `details`:
 
 ```json
 {
-  "code": "permission_needed",
+  "code": "system_permission_needed",
   "message": "accessibility permission required for window inspection",
   "details": {
     "permission": "accessibility",
     "remediation": {
-      "cli_command": "porthole request-permission accessibility",
+      "cli_command": "porthole onboard",
       "requires_daemon_restart": true,
       "settings_path": "System Settings → Privacy & Security → Accessibility",
       "binary_path": "/Users/.../target/debug/Portholed.app/Contents/MacOS/portholed"
@@ -117,33 +162,90 @@ Every `permission_needed` error returned from any endpoint gains a structured `r
 }
 ```
 
-- `binary_path` is the path the user must grant in Settings. On dev builds this is typically `target/debug/Portholed.app` (via the dev bundle). On production it would be the installed location. Resolved at runtime via `SecCodeCopyPath` or `CFBundleURLForApplication`.
-- Agents can surface `cli_command` directly to users or run it themselves.
+- `binary_path` is the path the user must grant in Settings. On dev builds this is typically `target/debug/Portholed.app` (via the dev bundle). Resolved at runtime via `SecCodeCopyPath` or `CFBundleURLForApplication`.
+- `cli_command` is always `porthole onboard` in this slice — the single setup entrypoint. Agents can surface it to users or run it themselves.
 - `settings_path` is the human-navigable location in Settings for users not using the CLI.
 
-Agents reading `details.remediation` can remediate without guessing. This is the wire-level contract that enforces "don't invent workarounds, propose the fix" at the agent layer.
+### 6.2 Structural change to `PortholeError`
+
+Today `PortholeError` has only `code` and `message`; `From<PortholeError> for WireError` sets `details: None`. That means anywhere preflight builds a `PortholeError` with remediation, the wire layer drops it.
+
+Fix: extend `PortholeError`:
+
+```rust
+pub struct PortholeError {
+    pub code: ErrorCode,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+}
+```
+
+With a constructor that preserves the ergonomics of the existing call sites (`PortholeError::new(code, msg)` leaves `details: None`, and a new `with_details(json)` chainer adds them).
+
+`From<PortholeError> for WireError` then carries `details` through directly. All existing error construction sites remain unchanged behaviourally (they produce `details: None`, same as today).
+
+### 6.3 Merge rule for wrapping route errors
+
+Some route-level errors wrap a `PortholeError` and add their own keys. The current `ReplacePipelineError::Porthole` conversion overwrites `details` with an object containing only `{"old_handle_alive": ...}` — which would clobber remediation if the wrapped error had it.
+
+The rule, applied uniformly when a route-level error attaches additional details to a wrapped `PortholeError`:
+
+1. If the wrapped `PortholeError.details` is `None`, the route's details object is the final `details`.
+2. If it's `Some(Value::Object)`, merge at the top level: the route's keys are inserted into the wrapped object. On key collision, the route layer wins (it has broader context).
+3. If it's `Some(non-object)`, that's a construction bug — none of our preflight helpers build non-object details — but log and fall through to rule (1) rather than crash.
+
+`ApiError::from(ReplacePipelineError::Porthole { error, old_handle_alive })` will be rewritten to apply this rule (see the existing `ReturnedExisting` arm — same pattern, generalised).
+
+### 6.4 Typed body for `system_permission_needed`
+
+To keep the `WireError::details` JSON well-formed, define a typed body at the protocol layer (same pattern as `LaunchReturnedExistingBody`, `CloseFailedBody`, `WaitTimeoutBody`):
+
+```rust
+// crates/porthole-protocol/src/error.rs
+pub struct SystemPermissionNeededBody {
+    pub permission: String,
+    pub remediation: Remediation,
+}
+
+pub struct Remediation {
+    pub cli_command: String,
+    pub requires_daemon_restart: bool,
+    pub settings_path: String,
+    pub binary_path: String,
+}
+```
+
+The preflight helpers build one of these, serialize it into `PortholeError.details`, and every downstream conversion carries it through.
 
 ## 7. Silent-degrade audit
 
-Today the macOS adapter has places where missing permissions produce degraded or empty results rather than `permission_needed`. The audit has two parts.
+Today the macOS adapter has places where missing permissions produce degraded or empty results rather than `system_permission_needed`. The audit has two parts.
 
 ### 7.1 Light audit (one pass through the macOS adapter)
 
 Find every call site that can return `Ok(empty)` / `Ok(None)` / `Ok(null_ptr_handled)` when a permission is missing. Confirmed candidates from manual inspection:
 
-- `enumerate::list_windows()` — `CGWindowListCopyWindowInfo` returns records with empty titles when Screen Recording is missing. Enumeration still works; titles silently empty. Should return `permission_needed` if screen recording is not granted (or, arguably, a warning in the response since enumeration still partially works — see §7.3).
+- `enumerate::list_windows()` — `CGWindowListCopyWindowInfo` returns records with empty titles when Screen Recording is missing. Enumeration still works; titles silently empty.
 - `window_alive::window_alive()` — same, broader enumeration.
 - `attention::attention()` — can return reduced info without Accessibility (no AX focus).
 - `snapshot::snapshot_geometry()` — AX reads silently fail to null.
 - `artifact::launch_artifact()` — AXDocument lookups fail silently.
 
-### 7.2 Preflight everywhere
+All of these get preflight guards (§7.2) and return `system_permission_needed` when the required permission is missing.
 
-Add `ensure_accessibility_granted()` / `ensure_screen_recording_granted()` helpers in `permissions.rs`. Each returns `Result<(), PortholeError>` with the full `permission_needed` error (including remediation) ready to propagate. Call at the top of every adapter method that depends on the corresponding permission.
+### 7.2 Preflight everywhere, with prompt on miss
 
-Each call is sub-microsecond (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()` are cheap) so the overhead is negligible. The explicitness is worth the ~nanoseconds.
+Add `ensure_accessibility_granted()` / `ensure_screen_recording_granted()` helpers in `permissions.rs`. Each one:
 
-Trait method → permission mapping (drive from a table in `permissions.rs` to keep it honest):
+1. Checks the live liveness API (`AXIsProcessTrusted()` / `CGPreflightScreenCaptureAccess()`).
+2. If granted: returns `Ok(())`.
+3. If not granted: **triggers the OS prompt as a side effect** (`AXIsProcessTrustedWithOptions({prompt: true})` / `CGRequestScreenCaptureAccess()`), then returns `Err(PortholeError)` with `code = system_permission_needed` and `details` populated via `SystemPermissionNeededBody` (§6.4).
+
+This is the "safety-net" behaviour: if a caller skipped `porthole onboard` and hits a guarded method, the first blocked call pops the dialog and returns a remediation-carrying error. The OS only surfaces the prompt once per process lifetime — subsequent calls are prompt-silent but still return the typed error.
+
+Each live check is sub-microsecond, so the overhead is negligible. The explicitness is worth the ~nanoseconds.
+
+Call preflight at the top of every adapter method that depends on the corresponding permission. Trait method → permission mapping (drive from a table in `permissions.rs` to keep it honest):
 
 | Adapter method | Requires |
 |---|---|
@@ -153,24 +255,21 @@ Trait method → permission mapping (drive from a table in `permissions.rs` to k
 | `close`, `focus` | accessibility |
 | `wait` (stable/dirty) | screen_recording + accessibility |
 | `wait` (exists/gone/title_matches) | accessibility |
-| `attention`, `displays` | (neither — CG basics work unprivileged; but AX-based focus resolution degrades without accessibility) |
-| `search`, `window_alive` | screen_recording for titles; the call otherwise succeeds |
+| `attention`, `displays` | (neither — CG basics work unprivileged; AX-based focus resolution degrades without accessibility and preflights accordingly) |
+| `search`, `window_alive` | screen_recording |
 | `place_surface`, `snapshot_geometry` | accessibility |
 
-### 7.3 Partial-success cases
+### 7.3 Fail loudly, uniformly
 
-Some calls degrade partially rather than fail entirely. For example, `list_windows` returns useful enumeration without Screen Recording — just with empty titles. Two choices:
+Some calls — `list_windows`, `search`, `window_alive` — could in principle return partial data (enumeration without titles) when Screen Recording is missing. We don't do that. Every guarded method returns `system_permission_needed` when its permission is missing.
 
-- **Fail loudly**: require the permission up front, return `permission_needed` even for the partial-success paths. Forces the caller to grant before getting any data.
-- **Succeed with warning**: return the partial data with a `warnings` field in the response noting that titles are missing because of the permission gap.
-
-I propose **fail loudly** for this slice. It's the simpler contract, matches the anti-workaround rule, and avoids a "did my search return empty because there are no windows or because I lack a permission?" ambiguity for agents. A future slice can relax specific endpoints to partial-success mode if use cases emerge.
+Reasons: simpler contract for agents (no "did this return empty because there are no windows, or because I lack a permission?" ambiguity), matches the anti-workaround rule, aligns with the preflight-triggers-prompt UX (one clear failure mode, one clear dialog). A future slice can relax specific endpoints to partial-success mode with an explicit `warnings` field if a concrete use case emerges; no such use case drives this slice.
 
 ## 8. Development workflow
 
 ### 8.1 Dev bundle
 
-Shipping a `scripts/dev-bundle.sh` that:
+Ship a `scripts/dev-bundle.sh` that:
 
 1. Builds the workspace (debug by default, release with `--release`).
 2. Creates `target/<profile>/Portholed.app/` with the standard bundle skeleton:
@@ -182,7 +281,7 @@ Shipping a `scripts/dev-bundle.sh` that:
          portholed      # the actual binary, copied from target/<profile>/portholed
    ```
 3. Ad-hoc code-signs it: `codesign -s - --force --deep target/<profile>/Portholed.app`.
-4. Prints the path so the user can drag it into Settings.
+4. Prints the path so the user can drag it into Settings or run `porthole onboard`.
 
 The Info.plist uses a fixed bundle identifier like `org.flotilla.porthole.dev` so TCC tracks it stably. Real production releases would use a real identifier and real signing; this is just for dev.
 
@@ -192,7 +291,7 @@ Rebuild workflow: `cargo build` replaces `target/debug/portholed`; a separate `s
 
 Create `docs/development.md` with:
 
-- First-time setup (build, bundle, grant both permissions, restart daemon).
+- First-time setup (build, bundle, start daemon, run `porthole onboard`, grant both permissions in Settings, restart daemon when prompted, re-run `onboard` to confirm).
 - Running the daemon from the bundle (`open target/debug/Portholed.app` or direct `./target/debug/Portholed.app/Contents/MacOS/portholed`).
 - What to do if grants get stuck: `tccutil reset Accessibility org.flotilla.porthole.dev`; same for `ScreenCapture`; rebundle and regrant.
 - Debug vs. release bundle — they're separate TCC identities; grant both if switching frequently.
@@ -206,18 +305,18 @@ Production-ready code signing (Apple Developer ID, notarization, entitlements) i
 
 When the daemon starts:
 
-1. Check both permissions via the adapter's `permissions()` method (already shipped).
-2. If either is missing, log at `WARN` level: `"accessibility permission missing; calls that need it will return permission_needed. Run `porthole request-permission accessibility` or see docs/development.md."`
-3. Include the same info in every `/info` response (already shipped — grant state and purpose).
+1. Check both permissions via the adapter's `system_permissions()` method (renamed from `permissions()` in this slice; same logic).
+2. If either is missing, log at `WARN` level: `"accessibility system permission missing; calls that need it will return system_permission_needed. Run `porthole onboard` or see docs/development.md."`
+3. Include the same info in every `/info` response (already shipped — grant state and purpose, under the renamed `system_permissions` field).
 4. Do not block startup. The daemon runs fine without permissions; most endpoints simply error consistently.
 
 `porthole info` already prints the permission grant state as of the polish round. This slice extends the printed output to include the remediation hint when a permission is missing:
 
 ```
 adapter: macos (loaded=true) capabilities=...
-  permission accessibility: MISSING (input injection and some wait conditions)
-    fix: porthole request-permission accessibility  (requires daemon restart after grant)
-  permission screen_recording: granted (window screenshot capture and frame-diff waits)
+  system permission accessibility: MISSING (input injection and some wait conditions)
+    fix: porthole onboard  (will trigger the OS prompt; daemon restart required after grant)
+  system permission screen_recording: granted (window screenshot capture and frame-diff waits)
 ```
 
 ## 10. Adapter trait additions
@@ -225,16 +324,23 @@ adapter: macos (loaded=true) capabilities=...
 One new method on `Adapter`:
 
 ```rust
-/// Trigger the OS prompt for the named permission. Returns a structured
+/// Trigger the OS prompt for the named system permission. Returns a structured
 /// result with the grant state before/after and any restart requirement.
 /// Calling this for a permission that's already granted is a no-op that
 /// still returns the current state.
-async fn request_permission(&self, name: &PermissionName) -> Result<RequestPermissionOutcome, PortholeError>;
+///
+/// `name` is a string matching one of the names the adapter advertises via
+/// `system_permissions()`. Unknown names return an `InvalidArgument` error
+/// with the supported names in details.
+async fn request_system_permission_prompt(
+    &self,
+    name: &str,
+) -> Result<SystemPermissionPromptOutcome, PortholeError>;
 ```
 
-Where `PermissionName` is an enum (`Accessibility`, `ScreenRecording` for this slice; future adapters can extend) and `RequestPermissionOutcome` is a struct matching the wire response shape in §5.2.
+Where `SystemPermissionPromptOutcome` is a struct matching the wire response shape in §5.2. No closed Rust enum for the permission name — we use `&str` to stay aligned with the `SystemPermissionStatus.name: String` model and to let each adapter declare its own supported set at runtime. Future Linux / Windows adapters add new permission names by returning them from `system_permissions()`; nothing in core needs to change.
 
-The macOS adapter implements it via `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`. The in-memory adapter returns `AdapterUnsupported` — there's no prompt to trigger in a scripted context, and agents depending on the in-memory adapter's behaviour shouldn't be calling request-permission anyway.
+The macOS adapter implements `request_system_permission_prompt` via `AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`. The in-memory adapter returns `AdapterUnsupported` — there is no OS prompt to trigger in a scripted context, and it does not advertise `"system_permission_prompt"` in its capability list.
 
 The preflight helpers in §7.2 live alongside (not on the trait) — they're adapter-internal:
 
@@ -244,62 +350,77 @@ pub fn ensure_accessibility_granted() -> Result<(), PortholeError>;
 pub fn ensure_screen_recording_granted() -> Result<(), PortholeError>;
 ```
 
-Both build the `PortholeError` with the full `details.remediation` block populated (permission name, CLI command, restart requirement, settings path, binary path).
+Both build the `PortholeError` with `code = system_permission_needed` and the full `SystemPermissionNeededBody` serialized into `details`. They trigger the OS prompt as a side effect when the permission is missing (§7.2).
 
 ## 11. Error model additions
 
-One new error code and one extended body:
+One rename, one new code, and one extension:
 
-- **`permission_request_failed`** — the adapter tried to trigger the prompt but the OS rejected the call (rare; usually happens when the process isn't in a bundle / doesn't have the right context). The body includes `details.reason` with the OS-level error.
-- **`permission_needed`** (existing) — body gains `details.remediation` per §6. Existing callers reading only `code` / `message` are unaffected.
+- **Rename**: wire `permission_needed` → `system_permission_needed`, Rust `ErrorCode::PermissionNeeded` → `ErrorCode::SystemPermissionNeeded`. Same semantics; clearer scope.
+- **New**: `system_permission_request_failed`. Returned from the adapter's `request_system_permission_prompt` if the OS rejects the call (rare; usually happens when the process isn't in a bundle / doesn't have the right context). `details` includes `reason` with the OS-level error.
+- **Extension**: `PortholeError` gains `details: Option<serde_json::Value>` (§6.2), and `From<PortholeError> for WireError` carries it through. Route-level wrappers merge rather than overwrite (§6.3).
 
-`invalid_argument` continues to cover unknown permission names passed to `request_permission`.
+`invalid_argument` continues to cover unknown permission names passed to `request_system_permission_prompt`; its `details` include the adapter's supported-name list.
 
 ## 12. Testing strategy
 
 ### 12.1 Core / protocol
 
-- `PermissionName` serde roundtrip (snake_case strings).
-- `RequestPermissionOutcome` serde roundtrip.
-- `ensure_accessibility_granted` / `ensure_screen_recording_granted` returning correctly-formed `PortholeError`s with populated remediation details — table-tested with scripted grant states via a shim.
+- `SystemPermissionPromptOutcome` serde roundtrip (snake_case wire).
+- `SystemPermissionNeededBody` serde roundtrip.
+- `PortholeError::with_details` builder and `From<PortholeError> for WireError` carrying details through — table-tested.
+- Route-wrapper merge rule (`ReplacePipelineError::Porthole`) — test that wrapped `system_permission_needed` details survive and gain the `old_handle_alive` key.
 
 ### 12.2 In-memory adapter
 
-- `InMemoryAdapter::request_permission` returns `AdapterUnsupported` — one test.
-- Scripting hooks so core tests can simulate grant states. New field: `next_permission_state: HashMap<PermissionName, bool>`. Preflight helpers check this.
+- `InMemoryAdapter::request_system_permission_prompt` returns `AdapterUnsupported` — one test. No scripted happy path.
+- `InMemoryAdapter::capabilities()` does **not** include `"system_permission_prompt"` — one test.
 
 ### 12.3 Daemon route
 
-- `POST /permissions/request` happy path (via in-memory adapter's scripted state).
-- Unknown permission name returns `invalid_argument` with known-names list.
-- Every `permission_needed` error emitted from existing routes now has `details.remediation` populated — assert on at least two representative routes (screenshot without screen_recording, key without accessibility).
+- `POST /system-permissions/request` unknown name returns `invalid_argument` with a supported-names list in `details` (in-memory adapter exposes an empty supported set; macOS exposes the real one).
+- `POST /system-permissions/request` against the in-memory adapter returns `adapter_unsupported` (matches §12.2). This is the daemon-side happy path of the wiring — it proves the route is hooked up.
+- `system_permission_needed` errors emitted from existing routes carry populated `details.remediation` — assert on two representative routes using scripted in-memory permission state (e.g., scripted `ensure_*` helper stub for the cross-adapter test harness). Specifically: a screenshot call without Screen Recording, a key call without Accessibility.
+- Route-wrapper merge: a `ReplacePipelineError::Porthole` wrapping a `system_permission_needed` produces a wire body containing both the remediation object and `old_handle_alive`.
 
-### 12.4 macOS adapter (ignored)
+### 12.4 macOS adapter (ignored, real desktop)
 
-- `request_permission_accessibility` — verifies the call returns without panicking. Cannot assert on the prompt appearing (no test-automatable way to see it), but can assert the `granted_before` / `granted_after` booleans match `AXIsProcessTrusted()` directly.
-- `ensure_*_granted` preflight — gated real-desktop test confirming that a known-granted permission preflight returns Ok and a known-missing one returns the expected error shape.
+- `request_system_permission_prompt("accessibility")` — verifies the call returns without panicking. Cannot assert on the prompt appearing (no test-automatable way to see it), but can assert the `granted_before` / `granted_after` booleans match `AXIsProcessTrusted()` directly.
+- `ensure_*_granted` preflight — gated real-desktop test confirming that a known-granted preflight returns `Ok`, and a known-missing preflight returns the expected `PortholeError` shape (code, message, populated `details`).
 
-### 12.5 Dev tooling
+### 12.5 `porthole onboard` CLI
+
+Drive these tests with an HTTP test double for `/info` and `/system-permissions/request` so the CLI's logic is exercised without a real daemon. Use a controllable clock / polling hook so timeout paths are fast.
+
+- All-granted path: `/info` reports both granted on the first read. Exit code 0. No `request` calls made.
+- Transition path (restart required): initial `/info` reports Accessibility ungranted; test double flips it to granted during the poll loop; `requires_daemon_restart = true` for Accessibility. Exit code 2 with restart message.
+- Transition path (no restart required): same as above but only Screen Recording transitions. Exit code 0 (no AX transition → no restart needed).
+- Still-ungranted path: test double keeps at least one permission ungranted through the full poll window. Exit code 1 with "run onboard again" message.
+- `--no-wait`: prompts fire, poll loop is skipped, exit code 3 regardless of `/info` state.
+- Output formatting golden tests for each exit-code path.
+
+### 12.6 Dev tooling
 
 - `scripts/dev-bundle.sh` — a tiny shell test that runs the script in a tempdir, then `codesign -v` to verify the signature, then `./target/debug/Portholed.app/Contents/MacOS/portholed --help` to confirm the bundled binary is executable.
 - `docs/development.md` — no programmatic test; it's prose for humans. Correctness is validated by following the playbook on a clean machine (see §15 success criterion).
 
 ## 13. Out of scope
 
-- **Policy model for subordinate agents** — the "machine-side curator that gives constrained agents blurred screenshots" concept is a future direction, not this slice.
-- **Linux / Windows permission models** — the adapter trait accepts a `PermissionName` enum that future platform adapters can extend. No Linux / Windows adapter code here.
-- **Production signing / notarization / Developer ID** — this slice makes dev work; shipping a release-signed binary is a separate project decision.
-- **`launchctl`-based daemon lifecycle management** — starting the daemon as a user agent that restarts on grant changes is future tooling. Today the user manually restarts after an Accessibility grant.
-- **Permission state change events on SSE** — the `/events` slice adds a `permission_changed` event so callers can react without polling. Today callers poll `/info`.
-- **Fine-grained permissions per session tag or caller** — no authorization model in this slice. The UDS is already per-user and trusts any connected caller.
+- **Agent permissions.** The policy model for subordinate agents — crew-scoped process access, guest-machine free-roam, default file-open handlers, recommended-app install, external-service auth — is a future direction. The `porthole onboard` verb is deliberately general so these can hang off the same entrypoint later; none of them ship here.
+- **Linux / Windows system permissions.** The adapter trait uses `&str` for permission names and each adapter declares its own supported set, so a Linux / Windows adapter can add permissions without touching core. No Linux / Windows adapter code in this slice.
+- **Production signing / notarization / Developer ID.** This slice makes dev work; shipping a release-signed binary is a separate project decision.
+- **`launchctl`-based daemon lifecycle management.** Starting the daemon as a user agent that restarts itself on grant changes is future tooling. Today the user manually restarts after an Accessibility grant; `onboard` exit code 2 signals when.
+- **Permission state change events on SSE.** The `/events` slice adds a `system_permission_changed` event so callers can react without polling. Today callers poll `/info`.
+- **Fine-grained authorization per caller.** No caller-identity model in this slice. The UDS is already per-user and trusts any connected caller.
 
 ## 14. Known limitations
 
-- **Accessibility grants require daemon restart.** macOS caches AX trust state at process-start time. After granting, the user must restart the daemon; the response and CLI output both call this out, but the restart is manual. A future launchctl-based lifecycle makes this automatic.
-- **The CLI's `porthole request-permission` can only prompt for the daemon's binary, not the CLI's.** The CLI is just a client; the binary whose permission is being granted is `portholed`. The response and `info` output expose the binary path so it's clear.
+- **Accessibility grants require a daemon restart.** macOS caches AX trust state at process-start time. After granting, the user must restart the daemon; `porthole onboard` detects this transition and exits with code 2 so setup scripts can branch on it. A future launchctl-based lifecycle makes the restart automatic.
+- **The CLI's `porthole onboard` triggers prompts for the daemon's binary, not the CLI's.** The CLI is just a client; the binary whose permission is being granted is `portholed`. The response and `info` output expose the binary path so it's clear.
 - **TCC state can get stale.** Rarely, macOS's TCC database reports stale grants (usually after crashes or force-quits). The dev playbook (§8.2) covers `tccutil reset` as the recovery. No automatic detection in this slice.
 - **Ad-hoc signing is not a real code signature.** The dev bundle is signed but not notarized and has no Developer ID. Fine for dev on the user's own machine; not distributable.
-- **Partial-success paths are removed.** Calls that previously returned empty titles without Screen Recording now return `permission_needed`. This is intentional (§7.3) but represents a behaviour change — callers depending on the empty-titles quirk need to either request the permission or use `search` / `attach` which are permission-tolerant for their own enumeration paths.
+- **Prompt fires once per process lifetime.** macOS shows the grant dialog only on the first `prompt: true` call for a given permission within a process. If the user dismisses it, subsequent preflight-triggered prompts in the same daemon process are silent (they still return `system_permission_needed` with remediation, they just don't re-open the dialog). Restarting the daemon re-arms the prompt; `porthole onboard` is the canonical way to do this cleanly.
+- **Fail-loudly is a behaviour change for callers of `list_windows` / `search` / `window_alive`.** Previously these returned enumeration with empty titles when Screen Recording was missing; they now return `system_permission_needed`. Callers that depended on the empty-titles quirk must request the permission. There is no partial-success mode in this slice (§7.3).
 
 ## 15. Success criterion
 
@@ -312,12 +433,16 @@ cargo build --workspace --release
 ./scripts/dev-bundle.sh --release
 open -R target/release/Portholed.app    # finder reveals the bundle
 ./target/release/Portholed.app/Contents/MacOS/portholed &
-./target/release/porthole ensure-permissions
-# (daemon prints remediation, the user grants in Settings, restarts when prompted)
+./target/release/porthole onboard
+# (daemon prints remediation; user grants both permissions in Settings)
+# onboard exits with code 2: "Accessibility granted; restart the daemon before using AX-dependent features."
+kill %1 && ./target/release/Portholed.app/Contents/MacOS/portholed &
+./target/release/porthole onboard
+# exits 0; everything granted and daemon is fresh
 ./target/release/porthole info
-# shows both permissions granted
+# shows both system_permissions granted
 ./target/release/porthole attach --containing-pid $$ --frontmost
 # returns a tracked surface handle
 ```
 
-No manual Info.plist editing. No mysterious silent failures. No agent inventing workarounds because something failed with an opaque error. Every wall has a remediation sign in front of it.
+No manual Info.plist editing. No mysterious silent failures. No agent inventing workarounds because something failed with an opaque error. Every wall has a remediation sign in front of it, and the setup path is one CLI verb.
