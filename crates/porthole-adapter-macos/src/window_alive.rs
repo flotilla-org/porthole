@@ -16,7 +16,7 @@ pub async fn window_alive(pid: u32, cg_window_id: u32) -> Result<Option<SurfaceI
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
     use core_graphics::window::{
-        copy_window_info, kCGNullWindowID, kCGWindowListExcludeDesktopElements,
+        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements,
         kCGWindowListOptionAll, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
         kCGWindowOwnerPID,
     };
@@ -34,6 +34,16 @@ pub async fn window_alive(pid: u32, cg_window_id: u32) -> Result<Option<SurfaceI
         let raw_ptr: *const std::ffi::c_void = unsafe { *arr.get_unchecked(i) };
         let dict: CFDictionary<CFString, CFType> =
             unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
+
+        let layer_key = unsafe { CFString::wrap_under_get_rule(kCGWindowLayer) };
+        let layer = dict
+            .find(&layer_key)
+            .and_then(|v| v.downcast::<CFNumber>())
+            .and_then(|n| n.to_i32())
+            .unwrap_or(0);
+        if layer != 0 {
+            continue;
+        }
 
         let owner_pid_key = unsafe { CFString::wrap_under_get_rule(kCGWindowOwnerPID) };
         let owner_pid = dict
