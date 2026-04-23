@@ -60,7 +60,7 @@ enum Command {
         #[arg(long, value_parser = parse_display_target)]
         on_display: Option<DisplayTarget>,
         /// Placement: x position (display-local logical points).
-        #[arg(long, requires_all = ["geom_y", "geom_w", "geom_h"])]
+        #[arg(long)]
         geom_x: Option<f64>,
         /// Placement: y position.
         #[arg(long)]
@@ -315,6 +315,25 @@ impl From<AnchorArg> for Anchor {
     }
 }
 
+/// Validates that geometry flags are either all provided or all absent.
+/// A partial set (e.g. three of four flags) produces a clear error rather than
+/// silently discarding the partial input.
+fn require_full_geometry(
+    x: Option<f64>,
+    y: Option<f64>,
+    w: Option<f64>,
+    h: Option<f64>,
+) -> Result<Option<Rect>, String> {
+    match (x, y, w, h) {
+        (None, None, None, None) => Ok(None),
+        (Some(x), Some(y), Some(w), Some(h)) => Ok(Some(Rect { x, y, w, h })),
+        _ => Err(
+            "partial geometry: must specify all of --geom-x, --geom-y, --geom-w, --geom-h together"
+                .into(),
+        ),
+    }
+}
+
 fn parse_display_target(s: &str) -> Result<DisplayTarget, String> {
     Ok(match s {
         "focused" => DisplayTarget::Focused,
@@ -413,9 +432,12 @@ async fn main() -> std::process::ExitCode {
                 },
             };
 
-            let geometry = match (geom_x, geom_y, geom_w, geom_h) {
-                (Some(x), Some(y), Some(w), Some(h)) => Some(Rect { x, y, w, h }),
-                _ => None,
+            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return std::process::ExitCode::FAILURE;
+                }
             };
             let placement = if on_display.is_some() || geometry.is_some() || anchor.is_some() {
                 Some(PlacementSpec { on_display, geometry, anchor: anchor.map(Anchor::from) })
@@ -481,9 +503,12 @@ async fn main() -> std::process::ExitCode {
                 ),
             };
 
-            let geometry = match (geom_x, geom_y, geom_w, geom_h) {
-                (Some(x), Some(y), Some(w), Some(h)) => Some(Rect { x, y, w, h }),
-                _ => None,
+            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return std::process::ExitCode::FAILURE;
+                }
             };
             let placement = if inherit_placement {
                 // Explicit inheritance: send placement: null so the daemon

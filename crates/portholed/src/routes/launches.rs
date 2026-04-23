@@ -116,4 +116,3 @@ pub(crate) fn correlation_to_wire(c: porthole_core::adapter::Correlation) -> Wir
         FrontmostChanged => WireCorrelation::FrontmostChanged,
     }
 }
-

@@ -15,6 +15,26 @@ use crate::enumerate::{list_windows, WindowRecord};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(150);
 
+/// Resolve the name of the default handler application for the given file path
+/// by invoking `NSWorkspace.URLForApplicationToOpenURL:` via objc2-app-kit.
+/// Returns the `.app` bundle's stem (e.g. "Preview") or `None` on failure.
+fn resolve_handler_app_name(path: &str) -> Option<String> {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSString, NSURL};
+
+    unsafe {
+        let ns_path = NSString::from_str(path);
+        let file_url = NSURL::fileURLWithPath(&ns_path);
+        let workspace = NSWorkspace::sharedWorkspace();
+        let app_url = workspace.URLForApplicationToOpenURL(&file_url)?;
+        // `path()` returns the file-system path string for the app URL.
+        let path_ns = app_url.path()?;
+        let s = path_ns.to_string();
+        // ".../Preview.app" -> "Preview"
+        s.rsplit('/').next()?.strip_suffix(".app").map(str::to_string)
+    }
+}
+
 pub async fn launch_artifact(spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
     let path_str = spec
         .path
@@ -28,6 +48,18 @@ pub async fn launch_artifact(spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome,
     // Snapshot the set of existing window IDs (for surface_was_preexisting).
     let before = list_windows()?;
     let before_ids: HashSet<u32> = before.iter().map(|w| w.cg_window_id).collect();
+
+    // Resolve the handler app name so we can narrow fallbacks to it.
+    let handler_app = resolve_handler_app_name(&path_str);
+
+    // Record the frontmost window of the handler app before `open`, for
+    // FrontmostChanged correlation (plausible tier, spec §4.3).
+    let before_frontmost = handler_app.as_deref().and_then(|app| {
+        before
+            .iter()
+            .find(|w| w.app_name.as_deref() == Some(app))
+            .map(|w| w.cg_window_id)
+    });
 
     // Invoke `open <path>`.
     let status = Command::new("/usr/bin/open")
@@ -68,15 +100,44 @@ pub async fn launch_artifact(spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome,
         sleep(SAMPLE_INTERVAL).await;
     }
 
-    // Fallback: temporal — first new window across all apps within the timeout window.
+    // FrontmostChanged — plausible tier (spec §4.3).
+    // Check whether the frontmost window of the handler app changed since `open`.
+    if let Some(app) = &handler_app {
+        let after = list_windows()?;
+        let current_frontmost = after
+            .iter()
+            .find(|w| w.app_name.as_deref() == Some(app.as_str()))
+            .map(|w| w.cg_window_id);
+        if current_frontmost != before_frontmost {
+            if let Some(w) = after
+                .into_iter()
+                .find(|w| Some(w.cg_window_id) == current_frontmost)
+            {
+                return Ok(LaunchOutcome {
+                    surface: make_surface(&w),
+                    confidence: Confidence::Plausible,
+                    correlation: Correlation::FrontmostChanged,
+                    surface_was_preexisting: before_ids.contains(&w.cg_window_id),
+                });
+            }
+        }
+    }
+
+    // Temporal fallback — first new window of the handler app (spec §4.3).
+    // If the handler app could not be resolved, fall back to any new window.
     let after = list_windows()?;
     let new_windows: Vec<_> = after
-        .iter()
+        .into_iter()
         .filter(|w| !before_ids.contains(&w.cg_window_id))
+        .filter(|w| {
+            handler_app
+                .as_deref()
+                .is_none_or(|app| w.app_name.as_deref() == Some(app))
+        })
         .collect();
-    if let Some(w) = new_windows.first() {
+    if let Some(w) = new_windows.into_iter().next() {
         return Ok(LaunchOutcome {
-            surface: make_surface(w),
+            surface: make_surface(&w),
             confidence: Confidence::Weak,
             correlation: Correlation::Temporal,
             surface_was_preexisting: false,

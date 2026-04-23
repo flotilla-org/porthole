@@ -62,8 +62,10 @@ impl LaunchPipeline {
             }));
         }
 
-        // 4. Insert the handle.
-        self.handles.insert(outcome.surface.clone()).await;
+        // 4. Insert or reuse the handle — prevents duplicate SurfaceIds for the
+        //    same cg_window_id when an attach or prior launch already tracked it.
+        let (stored, _reused) = self.handles.track_or_get(outcome.surface.clone()).await;
+        let outcome = LaunchOutcome { surface: stored, ..outcome };
 
         // 5. Resolve + apply placement.
         let placement_outcome = if outcome.surface_was_preexisting {
@@ -180,6 +182,15 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
         return Err("no displays enumerated".into());
     }
 
+    // Fetch attention info once if any display/anchor resolution needs it.
+    let needs_attention = matches!(&spec.on_display, Some(DisplayTarget::Focused))
+        || matches!(spec.anchor, Some(Anchor::Cursor) | Some(Anchor::FocusedDisplay));
+    let attn_opt = if needs_attention {
+        Some(adapter.attention().await.map_err(|e| e.message)?)
+    } else {
+        None
+    };
+
     // 1. Determine target display.
     let target = match &spec.on_display {
         Some(DisplayTarget::Id(id)) => displays
@@ -195,11 +206,11 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
             .cloned()
             .unwrap_or_else(|| displays[0].clone()),
         Some(DisplayTarget::Focused) => {
-            let attn = adapter.attention().await.map_err(|e| e.message)?;
-            match attn.focused_display_id {
+            let attn = attn_opt.as_ref().unwrap();
+            match &attn.focused_display_id {
                 Some(id) => displays
                     .iter()
-                    .find(|d| d.id == id)
+                    .find(|d| &d.id == id)
                     .cloned()
                     .unwrap_or_else(|| displays[0].clone()),
                 None => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
@@ -207,7 +218,7 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
         }
         None => match spec.anchor {
             Some(Anchor::Cursor) => {
-                let attn = adapter.attention().await.map_err(|e| e.message)?;
+                let attn = attn_opt.as_ref().unwrap();
                 displays
                     .iter()
                     .find(|d| {
@@ -220,11 +231,11 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
                     .unwrap_or_else(|| displays[0].clone())
             }
             Some(Anchor::FocusedDisplay) => {
-                let attn = adapter.attention().await.map_err(|e| e.message)?;
-                match attn.focused_display_id {
+                let attn = attn_opt.as_ref().unwrap();
+                match &attn.focused_display_id {
                     Some(id) => displays
                         .iter()
-                        .find(|d| d.id == id)
+                        .find(|d| &d.id == id)
                         .cloned()
                         .unwrap_or_else(|| displays[0].clone()),
                     None => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
@@ -241,11 +252,20 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
     let global = if let Some(local) = &spec.geometry {
         Rect { x: target.bounds.x + local.x, y: target.bounds.y + local.y, w: local.w, h: local.h }
     } else {
-        // No explicit geometry — use a conservative centered default based on display size.
+        // No explicit geometry — synthesise a conservative default.
         let w = (target.bounds.w * 0.7).min(1400.0);
         let h = (target.bounds.h * 0.7).min(1000.0);
-        let x = target.bounds.x + (target.bounds.w - w) / 2.0;
-        let y = target.bounds.y + (target.bounds.h - h) / 2.0;
+        // For Cursor anchor: center at the cursor position, clamped to display bounds
+        // so the window never falls off-screen (spec §5.4).
+        // For all other anchors: center on the display.
+        let (cx, cy) = if matches!(spec.anchor, Some(Anchor::Cursor)) {
+            let attn = attn_opt.as_ref().unwrap();
+            (attn.cursor.x, attn.cursor.y)
+        } else {
+            (target.bounds.x + target.bounds.w / 2.0, target.bounds.y + target.bounds.h / 2.0)
+        };
+        let x = (cx - w / 2.0).clamp(target.bounds.x, target.bounds.x + target.bounds.w - w);
+        let y = (cy - h / 2.0).clamp(target.bounds.y, target.bounds.y + target.bounds.h - h);
         Rect { x, y, w, h }
     };
 
@@ -498,5 +518,86 @@ mod tests {
         }
         // Critically: adapter.launch_process should NOT have been called.
         assert_eq!(adapter.launch_calls().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn launch_reuses_existing_handle_for_same_cg_window_id() {
+        use crate::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        // Seed an existing tracked surface.
+        let mut existing = SurfaceInfo::window(SurfaceId::new(), 42);
+        existing.cg_window_id = Some(777);
+        let existing_id = existing.id.clone();
+        handles.insert(existing).await;
+
+        // Script a launch outcome whose surface has the same cg_window_id.
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(42);
+        outcome.surface.cg_window_id = Some(777);
+        outcome.surface_was_preexisting = true;
+        adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
+
+        let pipeline = LaunchPipeline::new(adapter, handles);
+        let spec = LaunchSpec::Artifact(ArtifactLaunchSpec {
+            path: "/tmp/x.pdf".into(),
+            require_confidence: RequireConfidence::Plausible,
+            require_fresh_surface: false,
+            timeout: std::time::Duration::from_secs(5),
+        });
+        let result = pipeline.launch(&spec, None).await.unwrap();
+        assert_eq!(
+            result.outcome.surface.id, existing_id,
+            "launch must return the already-tracked surface id, not a new one"
+        );
+    }
+
+    #[tokio::test]
+    async fn cursor_anchor_centers_at_cursor_position() {
+        use crate::attention::{AttentionInfo, CursorPos};
+        use crate::display::{DisplayId, DisplayInfo, Rect as DRect};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        // Script displays: one 1920x1080 primary.
+        adapter
+            .set_next_displays(Ok(vec![DisplayInfo {
+                id: DisplayId::new("in-mem-display-0"),
+                bounds: DRect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 },
+                scale: 1.0,
+                primary: true,
+                focused: true,
+            }]))
+            .await;
+        // Script attention with a specific cursor position.
+        adapter
+            .set_next_attention(Ok(AttentionInfo {
+                focused_surface_id: None,
+                focused_app_name: None,
+                focused_display_id: Some(DisplayId::new("in-mem-display-0")),
+                cursor: CursorPos { x: 1000.0, y: 500.0, display_id: Some(DisplayId::new("in-mem-display-0")) },
+                recently_active_surface_ids: vec![],
+            }))
+            .await;
+
+        let handles = HandleStore::new();
+        let pipeline = LaunchPipeline::new(adapter.clone(), handles);
+        let placement = PlacementSpec {
+            on_display: None,
+            geometry: None,
+            anchor: Some(Anchor::Cursor),
+        };
+        let spec = LaunchSpec::Process(spec_minimal(RequireConfidence::Strong));
+        pipeline.launch(&spec, Some(&placement)).await.unwrap();
+
+        let place_calls = adapter.place_surface_calls().await;
+        assert_eq!(place_calls.len(), 1, "place_surface should have been called");
+        let rect = place_calls[0].1;
+        // Default size: 0.7 * 1920 = 1344 (< 1400), 0.7 * 1080 = 756 (< 1000).
+        // Centered at cursor (1000, 500): x = 1000 - 672 = 328, y = 500 - 378 = 122.
+        // Both within display bounds, so no clamping.
+        assert!((rect.x - 328.0).abs() < 2.0, "cursor-anchored x should be ~328, got {}", rect.x);
+        assert!((rect.y - 122.0).abs() < 2.0, "cursor-anchored y should be ~122, got {}", rect.y);
+        // Verify attention was called exactly once (fetch-once pattern).
+        assert_eq!(adapter.attention_calls().await, 1, "attention should be fetched exactly once");
     }
 }
