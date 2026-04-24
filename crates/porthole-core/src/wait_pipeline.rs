@@ -38,8 +38,8 @@ impl WaitPipeline {
         let info = self.handles.require_alive(surface).await.map_err(WaitPipelineError::Porthole)?;
 
         // Preflight: check permissions before dispatching into the adapter.
-        // Stable/Dirty conditions use frame-diff (screen_recording + accessibility).
-        // All other conditions need accessibility only.
+        // Stable/Dirty conditions use frame-diff; TitleMatches needs window titles
+        // (screen_recording + accessibility). All other conditions need accessibility only.
         let required: &[&str] = match condition {
             Wc::Stable { .. } | Wc::Dirty { .. } | Wc::TitleMatches { .. } => &["screen_recording", "accessibility"],
             _ => &["accessibility"],

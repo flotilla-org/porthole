@@ -103,7 +103,7 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     }
 
     // 3. Optionally skip polling.
-    if opts.no_wait {
+    if opts.no_wait || opts.wait_seconds == 0 {
         return Ok(OnboardResult { exit_code: 3 });
     }
 
@@ -323,6 +323,16 @@ mod tests {
             prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
         };
         let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: true }).await.unwrap();
+        assert_eq!(res.exit_code, 3);
+    }
+
+    #[tokio::test]
+    async fn wait_zero_exits_three_without_polling() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
+            prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 0, no_wait: false }).await.unwrap();
         assert_eq!(res.exit_code, 3);
     }
 
