@@ -11,6 +11,7 @@ use porthole_core::permission::SystemPermissionStatus;
 use porthole_core::surface::SurfaceInfo;
 use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use porthole_core::PortholeError;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod artifact;
 pub mod attention;
@@ -34,11 +35,37 @@ pub mod snapshot;
 pub mod wait;
 pub mod window_alive;
 
-pub struct MacOsAdapter;
+pub struct MacOsAdapter {
+    ax_prompted: AtomicBool,
+    sr_prompted: AtomicBool,
+}
 
 impl MacOsAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            ax_prompted: AtomicBool::new(false),
+            sr_prompted: AtomicBool::new(false),
+        }
+    }
+
+    /// For preflight / request paths: mark a permission as having had its
+    /// prompt API called. Returns the *previous* value (true if already
+    /// prompted, false on first call).
+    pub fn set_prompted(&self, name: &str) -> bool {
+        match name {
+            "accessibility" => self.ax_prompted.swap(true, Ordering::SeqCst),
+            "screen_recording" => self.sr_prompted.swap(true, Ordering::SeqCst),
+            _ => true, // unknown name: don't track, caller's problem
+        }
+    }
+
+    /// Check without modifying.
+    pub fn was_prompted(&self, name: &str) -> bool {
+        match name {
+            "accessibility" => self.ax_prompted.load(Ordering::SeqCst),
+            "screen_recording" => self.sr_prompted.load(Ordering::SeqCst),
+            _ => true,
+        }
     }
 }
 
