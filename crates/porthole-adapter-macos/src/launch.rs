@@ -8,16 +8,19 @@ use tokio::time::sleep;
 
 use crate::correlation::{new_launch_tag, PORTHOLE_LAUNCH_TAG_ENV};
 use crate::enumerate::list_windows;
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
-pub async fn launch_process(spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+pub async fn launch_process(adapter: &MacOsAdapter, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = spec;
+        let _ = (adapter, spec);
         return Err(PortholeError::new(ErrorCode::AdapterUnsupported, "macOS adapter on non-macOS"));
     }
 
     #[cfg(target_os = "macos")]
     {
+        ensure_accessibility_granted(adapter)?;
         let tag = new_launch_tag();
         let child = build_and_spawn(spec, &tag)?;
         let deadline = Instant::now() + spec.timeout;
@@ -100,6 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_missing_app_fails_with_correlation_failed() {
+        let adapter = crate::MacOsAdapter::new();
         let spec = ProcessLaunchSpec {
             app: "/Applications/__definitely_not_installed__.app".to_string(),
             args: vec![],
@@ -109,8 +113,12 @@ mod tests {
             require_confidence: porthole_core::adapter::RequireConfidence::Strong,
             require_fresh_surface: false,
         };
-        let err = launch_process(&spec).await.unwrap_err();
+        let err = launch_process(&adapter, &spec).await.unwrap_err();
         // `open` will exit nonzero but our poll loop still hits the deadline.
-        assert!(matches!(err.code, ErrorCode::LaunchCorrelationFailed | ErrorCode::CapabilityMissing));
+        // If accessibility is not granted, we may get SystemPermissionNeeded instead.
+        assert!(matches!(
+            err.code,
+            ErrorCode::LaunchCorrelationFailed | ErrorCode::CapabilityMissing | ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed
+        ));
     }
 }

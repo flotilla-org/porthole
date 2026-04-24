@@ -9,6 +9,9 @@ use crate::surface::SurfaceId;
 use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
 use crate::{ErrorCode, PortholeError};
 
+// Alias for clarity in preflight match arms.
+use WaitCondition as Wc;
+
 pub struct WaitPipeline {
     adapter: Arc<dyn Adapter>,
     handles: HandleStore,
@@ -33,6 +36,20 @@ impl WaitPipeline {
     ) -> Result<WaitOutcome, WaitPipelineError> {
         validate_condition(condition)?;
         let info = self.handles.require_alive(surface).await.map_err(WaitPipelineError::Porthole)?;
+
+        // Preflight: check permissions before dispatching into the adapter.
+        // Stable/Dirty conditions use frame-diff (screen_recording + accessibility).
+        // All other conditions need accessibility only.
+        let required: &[&str] = match condition {
+            Wc::Stable { .. } | Wc::Dirty { .. } => &["screen_recording", "accessibility"],
+            _ => &["accessibility"],
+        };
+        for name in required {
+            self.adapter
+                .ensure_system_permission(name)
+                .await
+                .map_err(WaitPipelineError::Porthole)?;
+        }
 
         let deadline = std::time::Instant::now() + timeout_duration;
         match self.adapter.wait(&info, condition, deadline).await {

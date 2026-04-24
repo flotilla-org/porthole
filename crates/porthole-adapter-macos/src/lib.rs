@@ -82,35 +82,35 @@ impl Adapter for MacOsAdapter {
     }
 
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
-        launch::launch_process(spec).await
+        launch::launch_process(self, spec).await
     }
 
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
-        capture::screenshot(surface).await
+        capture::screenshot(self, surface).await
     }
 
     async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
-        input::key(surface, events).await
+        input::key(self, surface, events).await
     }
 
     async fn text(&self, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
-        input::text(surface, text).await
+        input::text(self, surface, text).await
     }
 
     async fn click(&self, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
-        input::click(surface, spec).await
+        input::click(self, surface, spec).await
     }
 
     async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
-        input::scroll(surface, spec).await
+        input::scroll(self, surface, spec).await
     }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
-        close_focus::close(surface).await
+        close_focus::close(self, surface).await
     }
 
     async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
-        close_focus::focus(surface).await
+        close_focus::focus(self, surface).await
     }
 
     async fn wait(
@@ -119,7 +119,7 @@ impl Adapter for MacOsAdapter {
         condition: &WaitCondition,
         deadline: std::time::Instant,
     ) -> Result<WaitOutcome, WaitTimeout> {
-        wait::wait(surface, condition, deadline).await
+        wait::wait(self, surface, condition, deadline).await
     }
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError> {
@@ -193,7 +193,7 @@ impl Adapter for MacOsAdapter {
         &self,
         query: &porthole_core::SearchQuery,
     ) -> Result<Vec<porthole_core::Candidate>, porthole_core::PortholeError> {
-        search::search(query).await
+        search::search(self, query).await
     }
 
     async fn window_alive(
@@ -201,14 +201,14 @@ impl Adapter for MacOsAdapter {
         pid: u32,
         cg_window_id: u32,
     ) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
-        window_alive::window_alive(pid, cg_window_id).await
+        window_alive::window_alive(self, pid, cg_window_id).await
     }
 
     async fn launch_artifact(
         &self,
         spec: &porthole_core::adapter::ArtifactLaunchSpec,
     ) -> Result<porthole_core::adapter::LaunchOutcome, porthole_core::PortholeError> {
-        artifact::launch_artifact(spec).await
+        artifact::launch_artifact(self, spec).await
     }
 
     async fn place_surface(
@@ -216,14 +216,14 @@ impl Adapter for MacOsAdapter {
         surface: &porthole_core::surface::SurfaceInfo,
         rect: porthole_core::display::Rect,
     ) -> Result<(), porthole_core::PortholeError> {
-        placement::place_surface(surface, rect).await
+        placement::place_surface(self, surface, rect).await
     }
 
     async fn snapshot_geometry(
         &self,
         surface: &porthole_core::surface::SurfaceInfo,
     ) -> Result<porthole_core::placement::GeometrySnapshot, porthole_core::PortholeError> {
-        snapshot::snapshot_geometry(surface).await
+        snapshot::snapshot_geometry(self, surface).await
     }
 
     fn capabilities(&self) -> Vec<&'static str> {

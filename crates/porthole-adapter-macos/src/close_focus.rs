@@ -6,12 +6,15 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::{ErrorCode, PortholeError};
 
 use crate::ax::{AxElement, AxElementRef, AXValueGetValue};
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 // AXValue type tags for CGPoint and CGSize.
 const K_AX_VALUE_CG_POINT_TYPE: i32 = 1;
 const K_AX_VALUE_CG_SIZE_TYPE: i32 = 2;
 
-pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
+pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let pid = surface.pid.ok_or_else(|| {
         PortholeError::new(ErrorCode::CapabilityMissing, "focus: surface has no pid")
     })? as i32;
@@ -37,7 +40,8 @@ pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
     Ok(())
 }
 
-pub async fn close(surface: &SurfaceInfo) -> Result<(), PortholeError> {
+pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     use crate::enumerate::list_windows;
     use tokio::time::sleep;
 
@@ -69,7 +73,8 @@ pub async fn close(surface: &SurfaceInfo) -> Result<(), PortholeError> {
 
     if !via_close_button {
         // Fallback: focus + Cmd+W via input path.
-        focus(surface).await?;
+        // accessibility was already preflighted at the top of close().
+        focus(adapter, surface).await?;
         let src = core_graphics::event_source::CGEventSource::new(
             core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
         )

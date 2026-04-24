@@ -5,8 +5,11 @@ use porthole_core::{ErrorCode, PortholeError};
 use regex::Regex;
 
 use crate::enumerate::{list_windows, WindowRecord};
+use crate::MacOsAdapter;
+use crate::permissions::ensure_screen_recording_granted;
 
-pub async fn search(query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
+pub async fn search(adapter: &MacOsAdapter, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
+    ensure_screen_recording_granted(adapter)?;
     let title_regex = match &query.title_pattern {
         Some(p) => Some(Regex::new(p).map_err(|e| {
             PortholeError::new(ErrorCode::InvalidArgument, format!("invalid title_pattern regex: {e}"))

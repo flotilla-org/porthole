@@ -11,8 +11,10 @@ use tokio::time::sleep;
 use crate::capture;
 use crate::enumerate::list_windows;
 use crate::frame_diff::Fingerprint;
+use crate::MacOsAdapter;
 
 pub async fn wait(
+    adapter: &MacOsAdapter,
     surface: &SurfaceInfo,
     condition: &WaitCondition,
     deadline: Instant,
@@ -70,7 +72,7 @@ pub async fn wait(
             }
         }
         WaitCondition::Stable { window_ms, threshold_pct } => {
-            let mut last_fp = sample_fingerprint(surface)
+            let mut last_fp = sample_fingerprint(adapter, surface)
                 .await
                 .map_err(|e| timeout_from_err(start, e))?;
             let mut last_change_at = Instant::now();
@@ -86,7 +88,7 @@ pub async fn wait(
                     });
                 }
                 sleep(WAIT_SAMPLE_INTERVAL).await;
-                let fp = sample_fingerprint(surface)
+                let fp = sample_fingerprint(adapter, surface)
                     .await
                     .map_err(|e| timeout_from_err(start, e))?;
                 let diff = fp.diff_pct(&last_fp);
@@ -101,7 +103,7 @@ pub async fn wait(
             }
         }
         WaitCondition::Dirty { threshold_pct } => {
-            let initial = sample_fingerprint(surface)
+            let initial = sample_fingerprint(adapter, surface)
                 .await
                 .map_err(|e| timeout_from_err(start, e))?;
             let mut last_pct: f64 = 0.0;
@@ -116,7 +118,7 @@ pub async fn wait(
                     });
                 }
                 sleep(WAIT_SAMPLE_INTERVAL).await;
-                let fp = sample_fingerprint(surface)
+                let fp = sample_fingerprint(adapter, surface)
                     .await
                     .map_err(|e| timeout_from_err(start, e))?;
                 let diff = fp.diff_pct(&initial);
@@ -173,8 +175,8 @@ fn current_title(surface: &SurfaceInfo) -> Result<Option<String>, PortholeError>
     }
 }
 
-async fn sample_fingerprint(surface: &SurfaceInfo) -> Result<Fingerprint, PortholeError> {
-    let shot = capture::screenshot(surface).await?;
+async fn sample_fingerprint(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<Fingerprint, PortholeError> {
+    let shot = capture::screenshot(adapter, surface).await?;
     Fingerprint::from_png(&shot.png_bytes)
         .map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("frame decode failed: {e}")))
 }

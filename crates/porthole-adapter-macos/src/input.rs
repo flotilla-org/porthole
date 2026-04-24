@@ -12,6 +12,8 @@ use porthole_core::{ErrorCode, PortholeError};
 
 use crate::close_focus;
 use crate::key_codes::key_code;
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 fn event_source() -> Result<CGEventSource, PortholeError> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -31,8 +33,9 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
     flags
 }
 
-pub async fn key(surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
-    close_focus::focus(surface).await?;
+pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
     for ev in events {
         let code = key_code(&ev.key).ok_or_else(|| {
@@ -53,8 +56,9 @@ pub async fn key(surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), Porth
     Ok(())
 }
 
-pub async fn text(surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
-    close_focus::focus(surface).await?;
+pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
 
     let units: Vec<u16> = text.encode_utf16().collect();
@@ -70,9 +74,10 @@ pub async fn text(surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError
     Ok(())
 }
 
-pub async fn click(surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+pub async fn click(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
-    close_focus::focus(surface).await?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
     let flags = flags_for(&spec.modifiers);
     let (down_ty, up_ty, button) = match spec.button {
@@ -97,12 +102,13 @@ pub async fn click(surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), Portho
     Ok(())
 }
 
-pub async fn scroll(surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     // Scroll events on macOS are positioned at the mouse cursor, so we move
     // the cursor to the window-local point first. This is a visible side
     // effect; acceptable for v0.x.
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
-    close_focus::focus(surface).await?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
 
     // Move cursor.

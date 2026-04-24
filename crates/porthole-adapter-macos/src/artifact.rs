@@ -12,6 +12,8 @@ use tokio::time::sleep;
 use crate::ax::AxElement;
 use crate::close_focus::with_ax_window_by_cg_id;
 use crate::enumerate::{list_windows, WindowRecord};
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(150);
 
@@ -35,7 +37,8 @@ fn resolve_handler_app_name(path: &str) -> Option<String> {
     }
 }
 
-pub async fn launch_artifact(spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let path_str = spec
         .path
         .to_str()

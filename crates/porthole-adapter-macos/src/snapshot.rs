@@ -7,10 +7,13 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::{ErrorCode, PortholeError};
 
 use crate::ax::AxElement;
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 /// Read the current global position + size of the tracked surface and
 /// resolve which display it's on, returning display-local coordinates.
-pub async fn snapshot_geometry(surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError> {
+pub async fn snapshot_geometry(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let pid = surface
         .pid
         .ok_or_else(|| {
