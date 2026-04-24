@@ -166,12 +166,7 @@ impl Adapter for MacOsAdapter {
         if !granted_before {
             // Attempt to open the OS prompt.
             if let Err(reason) = permissions::try_trigger_prompt(name) {
-                let body = porthole_protocol::system_permission::SystemPermissionRequestFailedBody {
-                    permission: name.to_string(),
-                    reason,
-                    settings_path: permissions::settings_path_for(name).to_string(),
-                    binary_path: permissions::daemon_binary_path(),
-                };
+                let body = permissions::build_request_failed_body(name, reason);
                 return Err(
                     PortholeError::new(ErrorCode::SystemPermissionRequestFailed, "prompt rejected by OS")
                         .with_details(serde_json::to_value(body).unwrap_or_default()),

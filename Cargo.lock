@@ -899,6 +899,7 @@ dependencies = [
  "objc2-foundation",
  "porthole",
  "porthole-core",
+ "porthole-protocol",
  "portholed",
  "regex",
  "serde_json",

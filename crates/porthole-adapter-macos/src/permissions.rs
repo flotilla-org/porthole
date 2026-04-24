@@ -158,7 +158,7 @@ fn build_needed_body(name: &str) -> SystemPermissionNeededBody {
     }
 }
 
-fn build_request_failed_body(name: &str, reason: String) -> SystemPermissionRequestFailedBody {
+pub(crate) fn build_request_failed_body(name: &str, reason: String) -> SystemPermissionRequestFailedBody {
     SystemPermissionRequestFailedBody {
         permission: name.to_string(),
         reason,
