@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum ErrorCode {
     SurfaceNotFound,
     SurfaceDead,
-    PermissionNeeded,
+    SystemPermissionNeeded,
     LaunchCorrelationFailed,
     LaunchCorrelationAmbiguous,
     LaunchTimeout,
@@ -27,7 +27,7 @@ impl fmt::Display for ErrorCode {
         let s = match self {
             Self::SurfaceNotFound => "surface_not_found",
             Self::SurfaceDead => "surface_dead",
-            Self::PermissionNeeded => "permission_needed",
+            Self::SystemPermissionNeeded => "system_permission_needed",
             Self::LaunchCorrelationFailed => "launch_correlation_failed",
             Self::LaunchCorrelationAmbiguous => "launch_correlation_ambiguous",
             Self::LaunchTimeout => "launch_timeout",
@@ -76,6 +76,7 @@ mod tests {
     fn error_code_display_matches_wire_string() {
         assert_eq!(ErrorCode::SurfaceNotFound.to_string(), "surface_not_found");
         assert_eq!(ErrorCode::LaunchCorrelationAmbiguous.to_string(), "launch_correlation_ambiguous");
+        assert_eq!(ErrorCode::SystemPermissionNeeded.to_string(), "system_permission_needed");
     }
 
     #[test]
@@ -101,9 +102,9 @@ mod tests {
 
     #[test]
     fn with_details_attaches_json_object() {
-        let err = PortholeError::new(ErrorCode::PermissionNeeded, "accessibility needed")
+        let err = PortholeError::new(ErrorCode::SystemPermissionNeeded, "accessibility needed")
             .with_details(serde_json::json!({ "permission": "accessibility" }));
-        assert_eq!(err.code, ErrorCode::PermissionNeeded);
+        assert_eq!(err.code, ErrorCode::SystemPermissionNeeded);
         let details = err.details.expect("details set");
         assert_eq!(details["permission"], "accessibility");
     }

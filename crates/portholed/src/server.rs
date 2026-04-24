@@ -416,7 +416,7 @@ mod tests {
 
         adapter
             .set_next_close_result(Err(porthole_core::PortholeError::new(
-                porthole_core::ErrorCode::PermissionNeeded,
+                porthole_core::ErrorCode::SystemPermissionNeeded,
                 "AX denied",
             )))
             .await;
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
-        assert_eq!(err.code, porthole_core::ErrorCode::PermissionNeeded);
+        assert_eq!(err.code, porthole_core::ErrorCode::SystemPermissionNeeded);
         let details = err.details.expect("details populated");
         assert_eq!(
             details.get("old_handle_alive").and_then(|v| v.as_bool()),

@@ -49,7 +49,7 @@ impl ReplacePipeline {
         // 2. Close old.
         if let Err(close_err) = self.adapter.close(&old_info).await {
             // old_handle_alive: false iff the adapter told us the surface is already dead.
-            // Any other close error (PermissionNeeded, CloseFailed, etc.) means the surface
+            // Any other close error (SystemPermissionNeeded, CloseFailed, etc.) means the surface
             // is likely still there.
             let old_handle_alive = close_err.code != crate::ErrorCode::SurfaceDead;
             // Keep the HandleStore in sync with reality: if the adapter

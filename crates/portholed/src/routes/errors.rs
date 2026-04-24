@@ -91,7 +91,7 @@ impl IntoResponse for ApiError {
         let status = match self.0.code {
             ErrorCode::SurfaceNotFound => StatusCode::NOT_FOUND,
             ErrorCode::SurfaceDead => StatusCode::GONE,
-            ErrorCode::PermissionNeeded => StatusCode::FORBIDDEN,
+            ErrorCode::SystemPermissionNeeded => StatusCode::FORBIDDEN,
             ErrorCode::LaunchCorrelationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::LaunchCorrelationAmbiguous => StatusCode::CONFLICT,
             ErrorCode::LaunchTimeout => StatusCode::GATEWAY_TIMEOUT,
@@ -140,10 +140,10 @@ mod tests {
 
     #[test]
     fn porthole_error_with_details_propagates_to_wire() {
-        let err = PortholeError::new(ErrorCode::PermissionNeeded, "ax needed")
+        let err = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax needed")
             .with_details(serde_json::json!({ "permission": "accessibility" }));
         let wire: porthole_protocol::error::WireError = err.into();
-        assert_eq!(wire.code, ErrorCode::PermissionNeeded);
+        assert_eq!(wire.code, ErrorCode::SystemPermissionNeeded);
         let details = wire.details.expect("details propagated");
         assert_eq!(details["permission"], "accessibility");
     }
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn replace_porthole_merges_old_handle_alive_into_existing_details() {
         use porthole_core::replace_pipeline::ReplacePipelineError;
-        let wrapped = PortholeError::new(ErrorCode::PermissionNeeded, "ax")
+        let wrapped = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax")
             .with_details(serde_json::json!({
                 "permission": "accessibility",
                 "remediation": { "cli_command": "porthole onboard" }

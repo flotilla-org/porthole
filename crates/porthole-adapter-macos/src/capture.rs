@@ -63,7 +63,7 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
             Some(img) => img,
             None => {
                 return Err(PortholeError::new(
-                    ErrorCode::PermissionNeeded,
+                    ErrorCode::SystemPermissionNeeded,
                     "CGWindowListCreateImage returned null — likely missing Screen Recording permission",
                 ));
             }

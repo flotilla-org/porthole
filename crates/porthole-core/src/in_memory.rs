@@ -440,10 +440,10 @@ mod tests {
     #[tokio::test]
     async fn scripted_error_is_surfaced() {
         let adapter = InMemoryAdapter::new();
-        adapter.set_next_key_result(Err(PortholeError::new(ErrorCode::PermissionNeeded, "no ax"))).await;
+        adapter.set_next_key_result(Err(PortholeError::new(ErrorCode::SystemPermissionNeeded, "no ax"))).await;
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
         let err = adapter.key(&outcome.surface, &[]).await.unwrap_err();
-        assert_eq!(err.code, ErrorCode::PermissionNeeded);
+        assert_eq!(err.code, ErrorCode::SystemPermissionNeeded);
     }
 
     #[tokio::test]
