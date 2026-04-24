@@ -129,6 +129,16 @@ mod tests {
     }
 
     #[test]
+    fn porthole_error_with_details_propagates_to_wire() {
+        let err = PortholeError::new(ErrorCode::PermissionNeeded, "ax needed")
+            .with_details(serde_json::json!({ "permission": "accessibility" }));
+        let wire: porthole_protocol::error::WireError = err.into();
+        assert_eq!(wire.code, ErrorCode::PermissionNeeded);
+        let details = wire.details.expect("details propagated");
+        assert_eq!(details["permission"], "accessibility");
+    }
+
+    #[test]
     fn wire_error_details_skipped_when_none() {
         let w = WireError { code: ErrorCode::SurfaceDead, message: "gone".into(), details: None };
         let json = serde_json::to_string(&w).unwrap();
