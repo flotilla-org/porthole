@@ -14,12 +14,20 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
             adapter.capabilities.join(","),
         );
         for perm in &adapter.system_permissions {
-            println!(
-                "  system permission {}: {} ({})",
-                perm.name,
-                if perm.granted { "granted" } else { "MISSING" },
-                perm.purpose,
-            );
+            if perm.granted {
+                println!("  system permission {}: granted ({})", perm.name, perm.purpose);
+            } else {
+                let restart_hint = if perm.name == "accessibility" {
+                    "  (will trigger the OS prompt; daemon restart required after grant)"
+                } else {
+                    "  (will trigger the OS prompt)"
+                };
+                println!(
+                    "  system permission {}: MISSING ({})",
+                    perm.name, perm.purpose
+                );
+                println!("    fix: porthole onboard{restart_hint}");
+            }
         }
     }
     Ok(())
