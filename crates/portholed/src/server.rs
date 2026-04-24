@@ -404,7 +404,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_replace_preserves_permission_needed_from_close() {
+    async fn post_replace_preserves_system_permission_needed_from_close() {
         use porthole_core::surface::{SurfaceId, SurfaceInfo};
 
         let adapter = Arc::new(InMemoryAdapter::new());
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(
             details.get("old_handle_alive").and_then(|v| v.as_bool()),
             Some(true),
-            "permission_needed on close means surface is likely still alive"
+            "system_permission_needed on close means surface is likely still alive"
         );
     }
 
