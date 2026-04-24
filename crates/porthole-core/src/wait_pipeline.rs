@@ -41,7 +41,7 @@ impl WaitPipeline {
         // Stable/Dirty conditions use frame-diff (screen_recording + accessibility).
         // All other conditions need accessibility only.
         let required: &[&str] = match condition {
-            Wc::Stable { .. } | Wc::Dirty { .. } => &["screen_recording", "accessibility"],
+            Wc::Stable { .. } | Wc::Dirty { .. } | Wc::TitleMatches { .. } => &["screen_recording", "accessibility"],
             _ => &["accessibility"],
         };
         for name in required {

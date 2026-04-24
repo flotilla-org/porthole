@@ -31,8 +31,8 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
         // Look up the backing scale for the display the window is on.
         // The macOS display ID encoding is "disp_<cgid>".
         let snap = crate::snapshot::snapshot_geometry(adapter, surface).await;
-        let (pre_snap, pre_scale) = match &snap {
-            Ok(s) => {
+        let (pre_snap, pre_scale) = match snap {
+            Ok(ref s) => {
                 let cg_id: u32 = s.display_id.as_str()
                     .strip_prefix("disp_")
                     .and_then(|x| x.parse().ok())
@@ -43,6 +43,12 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
                     1.0
                 };
                 (Some(s.display_local), scale)
+            }
+            Err(e) if matches!(
+                e.code,
+                ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed
+            ) => {
+                return Err(e);
             }
             Err(_) => (None, 1.0),
         };
