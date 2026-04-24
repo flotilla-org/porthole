@@ -27,6 +27,15 @@ struct Cli {
 enum Command {
     /// Print daemon info and loaded adapters.
     Info,
+    /// Guided setup: trigger system-permission prompts and report status.
+    Onboard {
+        /// Poll timeout in seconds (default 60).
+        #[arg(long, default_value_t = 60)]
+        wait: u64,
+        /// Skip polling; exit immediately after firing prompts with code 3.
+        #[arg(long)]
+        no_wait: bool,
+    },
     /// Launch a process or an artifact.
     Launch {
         /// "process" or "artifact". Default "process".
@@ -393,6 +402,23 @@ async fn main() -> std::process::ExitCode {
     let client = DaemonClient::new(socket_path());
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
+        Command::Onboard { wait, no_wait } => {
+            match porthole::commands::onboard::run(
+                &client,
+                porthole::commands::onboard::OnboardOptions {
+                    wait_seconds: wait,
+                    no_wait,
+                },
+            )
+            .await
+            {
+                Ok(result) => std::process::exit(result.exit_code),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Command::Launch {
             kind,
             app,
