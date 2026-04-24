@@ -7,4 +7,5 @@ pub mod input;
 pub mod launches;
 pub mod replace;
 pub mod screenshot;
+pub mod system_permissions;
 pub mod wait;

@@ -16,6 +16,7 @@ use crate::routes::{
     launches as launches_route,
     replace as replace_route,
     screenshot as screenshot_route,
+    system_permissions as system_permissions_route,
     wait as wait_route,
 };
 use crate::state::AppState;
@@ -37,6 +38,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/replace", post(replace_route::post_replace))
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
+        .route(
+            "/system-permissions/request",
+            post(system_permissions_route::post_request),
+        )
         .with_state(state)
 }
 
