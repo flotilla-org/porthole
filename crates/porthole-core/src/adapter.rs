@@ -165,6 +165,13 @@ pub trait Adapter: Send + Sync {
         name: &str,
     ) -> Result<SystemPermissionPromptOutcome, PortholeError>;
 
+    /// Preflight: verify the named system permission is granted. If not, the
+    /// adapter may attempt to trigger an OS prompt as a side effect, then
+    /// returns `Err(PortholeError)` with code `system_permission_needed` or
+    /// `system_permission_request_failed`. Adapters that don't gate on
+    /// OS permissions return `Ok(())`.
+    async fn ensure_system_permission(&self, name: &str) -> Result<(), PortholeError>;
+
     /// Enumerate candidate surfaces matching the query. Empty matches
     /// return `Ok(vec![])`, not an error.
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError>;

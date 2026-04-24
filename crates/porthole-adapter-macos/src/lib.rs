@@ -138,6 +138,20 @@ impl Adapter for MacOsAdapter {
         permissions::system_permissions().await
     }
 
+    async fn ensure_system_permission(&self, name: &str) -> Result<(), PortholeError> {
+        match name {
+            "accessibility" => permissions::ensure_accessibility_granted(self),
+            "screen_recording" => permissions::ensure_screen_recording_granted(self),
+            _ => Err(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                format!("unknown system permission: {name}"),
+            )
+            .with_details(serde_json::json!({
+                "supported_names": ["accessibility", "screen_recording"]
+            }))),
+        }
+    }
+
     async fn request_system_permission_prompt(
         &self,
         name: &str,

@@ -324,6 +324,10 @@ impl Adapter for InMemoryAdapter {
         ))
     }
 
+    async fn ensure_system_permission(&self, _name: &str) -> Result<(), PortholeError> {
+        Ok(())
+    }
+
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
         let mut s = self.script.lock().await;
         s.search_calls.push(query.clone());

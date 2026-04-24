@@ -140,6 +140,75 @@ pub(crate) fn try_trigger_prompt(name: &str) -> Result<(), String> {
     }
 }
 
+use crate::MacOsAdapter;
+use porthole_protocol::system_permission::{
+    Remediation, SystemPermissionNeededBody, SystemPermissionRequestFailedBody,
+};
+
+fn build_needed_body(name: &str) -> SystemPermissionNeededBody {
+    let requires_restart = requires_daemon_restart(name);
+    SystemPermissionNeededBody {
+        permission: name.to_string(),
+        remediation: Remediation {
+            cli_command: "porthole onboard".to_string(),
+            requires_daemon_restart: requires_restart,
+            settings_path: settings_path_for(name).to_string(),
+            binary_path: daemon_binary_path(),
+        },
+    }
+}
+
+fn build_request_failed_body(name: &str, reason: String) -> SystemPermissionRequestFailedBody {
+    SystemPermissionRequestFailedBody {
+        permission: name.to_string(),
+        reason,
+        settings_path: settings_path_for(name).to_string(),
+        binary_path: daemon_binary_path(),
+    }
+}
+
+/// Preflight for operations that require Accessibility. Triggers the OS
+/// prompt on first miss per daemon process.
+pub fn ensure_accessibility_granted(adapter: &MacOsAdapter) -> Result<(), PortholeError> {
+    ensure_granted(adapter, "accessibility")
+}
+
+/// Preflight for operations that require Screen Recording. Triggers the OS
+/// prompt on first miss per daemon process.
+pub fn ensure_screen_recording_granted(adapter: &MacOsAdapter) -> Result<(), PortholeError> {
+    ensure_granted(adapter, "screen_recording")
+}
+
+fn ensure_granted(adapter: &MacOsAdapter, name: &str) -> Result<(), PortholeError> {
+    if is_granted(name)? {
+        return Ok(());
+    }
+
+    // Try to trigger prompt only on first miss per process.
+    if !adapter.was_prompted(name) {
+        match try_trigger_prompt(name) {
+            Ok(()) => {
+                adapter.set_prompted(name);
+            }
+            Err(reason) => {
+                let body = build_request_failed_body(name, reason);
+                return Err(PortholeError::new(
+                    ErrorCode::SystemPermissionRequestFailed,
+                    format!("cannot open prompt for {name}"),
+                )
+                .with_details(serde_json::to_value(body).unwrap_or_default()));
+            }
+        }
+    }
+
+    let body = build_needed_body(name);
+    Err(PortholeError::new(
+        ErrorCode::SystemPermissionNeeded,
+        format!("{name} permission required"),
+    )
+    .with_details(serde_json::to_value(body).unwrap_or_default()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +259,31 @@ mod tests {
         let details = err.details.expect("details populated");
         let supported = details.get("supported_names").and_then(|v| v.as_array()).unwrap();
         assert!(supported.iter().any(|v| v == "accessibility"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_accessibility_returns_needed_when_missing() {
+        let adapter = MacOsAdapter::new();
+        if ax_is_trusted_live() {
+            eprintln!("granted; test skipped");
+            return;
+        }
+        let err = ensure_accessibility_granted(&adapter).expect_err("should error");
+        assert_eq!(err.code, ErrorCode::SystemPermissionNeeded);
+        let details = err.details.expect("details populated");
+        assert_eq!(details["permission"], "accessibility");
+        assert_eq!(details["remediation"]["cli_command"], "porthole onboard");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn ensure_accessibility_returns_ok_when_granted() {
+        let adapter = MacOsAdapter::new();
+        if !ax_is_trusted_live() {
+            eprintln!("not granted; test skipped");
+            return;
+        }
+        ensure_accessibility_granted(&adapter).expect("should be Ok when granted");
     }
 }
