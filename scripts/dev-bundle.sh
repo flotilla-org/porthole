@@ -66,6 +66,10 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <string>APPL</string>
     <key>LSBackgroundOnly</key>
     <true/>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Porthole needs Accessibility to inject input and inspect window state.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Porthole needs Screen Recording to capture window screenshots and detect frame changes.</string>
 </dict>
 </plist>
 EOF

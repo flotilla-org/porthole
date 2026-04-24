@@ -84,7 +84,10 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
                     restart_required_seen = true;
                 }
                 if out.prompt_triggered {
-                    println!("  dialog opened for {name}");
+                    println!(
+                        "  prompt requested for {name} — a dialog should appear unless previously denied (in which case grant via {})",
+                        settings_path_fallback(name)
+                    );
                 } else {
                     println!(
                         "  prompt already fired earlier this daemon session for {name} — grant via {} (re-arm dialog by restarting the daemon)",
@@ -167,8 +170,6 @@ async fn poll_until_granted(
     client: &dyn OnboardClient,
     deadline: Instant,
 ) -> Result<InfoResponse, ClientError> {
-    #[allow(unused_assignments)]
-    let mut last_seen: Option<InfoResponse> = None;
     loop {
         let info: InfoResponse = client.get_info().await?;
         let all_granted = info
@@ -176,13 +177,11 @@ async fn poll_until_granted(
             .first()
             .map(|a| a.system_permissions.iter().all(|p| p.granted))
             .unwrap_or(true);
-        last_seen = Some(info);
         if all_granted || Instant::now() >= deadline {
-            break;
+            return Ok(info);
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    Ok(last_seen.expect("at least one /info read"))
 }
 
 fn restart_required_flag_for(name: &str) -> bool {
