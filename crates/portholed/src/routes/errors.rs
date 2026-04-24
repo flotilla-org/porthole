@@ -92,6 +92,7 @@ impl IntoResponse for ApiError {
             ErrorCode::SurfaceNotFound => StatusCode::NOT_FOUND,
             ErrorCode::SurfaceDead => StatusCode::GONE,
             ErrorCode::SystemPermissionNeeded => StatusCode::FORBIDDEN,
+            ErrorCode::SystemPermissionRequestFailed => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::LaunchCorrelationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::LaunchCorrelationAmbiguous => StatusCode::CONFLICT,
             ErrorCode::LaunchTimeout => StatusCode::GATEWAY_TIMEOUT,

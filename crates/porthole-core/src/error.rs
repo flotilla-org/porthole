@@ -8,6 +8,7 @@ pub enum ErrorCode {
     SurfaceNotFound,
     SurfaceDead,
     SystemPermissionNeeded,
+    SystemPermissionRequestFailed,
     LaunchCorrelationFailed,
     LaunchCorrelationAmbiguous,
     LaunchTimeout,
@@ -28,6 +29,7 @@ impl fmt::Display for ErrorCode {
             Self::SurfaceNotFound => "surface_not_found",
             Self::SurfaceDead => "surface_dead",
             Self::SystemPermissionNeeded => "system_permission_needed",
+            Self::SystemPermissionRequestFailed => "system_permission_request_failed",
             Self::LaunchCorrelationFailed => "launch_correlation_failed",
             Self::LaunchCorrelationAmbiguous => "launch_correlation_ambiguous",
             Self::LaunchTimeout => "launch_timeout",
@@ -77,6 +79,10 @@ mod tests {
         assert_eq!(ErrorCode::SurfaceNotFound.to_string(), "surface_not_found");
         assert_eq!(ErrorCode::LaunchCorrelationAmbiguous.to_string(), "launch_correlation_ambiguous");
         assert_eq!(ErrorCode::SystemPermissionNeeded.to_string(), "system_permission_needed");
+        assert_eq!(
+            ErrorCode::SystemPermissionRequestFailed.to_string(),
+            "system_permission_request_failed"
+        );
     }
 
     #[test]
