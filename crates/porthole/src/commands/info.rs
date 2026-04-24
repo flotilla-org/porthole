@@ -13,15 +13,13 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
             adapter.loaded,
             adapter.capabilities.join(","),
         );
-        if !adapter.permissions.is_empty() {
-            for perm in &adapter.permissions {
-                println!(
-                    "  permission {}: {} ({})",
-                    perm.name,
-                    if perm.granted { "granted" } else { "MISSING" },
-                    perm.purpose,
-                );
-            }
+        for perm in &adapter.system_permissions {
+            println!(
+                "  system permission {}: {} ({})",
+                perm.name,
+                if perm.granted { "granted" } else { "MISSING" },
+                perm.purpose,
+            );
         }
     }
     Ok(())

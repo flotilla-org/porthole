@@ -7,7 +7,7 @@ use porthole_core::adapter::{
 use porthole_core::attention::AttentionInfo;
 use porthole_core::display::DisplayInfo;
 use porthole_core::input::{ClickSpec, KeyEvent, ScrollSpec};
-use porthole_core::permission::PermissionStatus;
+use porthole_core::permission::SystemPermissionStatus;
 use porthole_core::surface::SurfaceInfo;
 use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
 use porthole_core::PortholeError;
@@ -107,8 +107,8 @@ impl Adapter for MacOsAdapter {
         display::displays().await
     }
 
-    async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError> {
-        permissions::permissions().await
+    async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError> {
+        permissions::system_permissions().await
     }
 
     async fn search(

@@ -6,7 +6,7 @@ use crate::attention::AttentionInfo;
 use crate::display::DisplayInfo;
 pub use crate::display::Rect;
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::PermissionStatus;
+use crate::permission::SystemPermissionStatus;
 use crate::placement::GeometrySnapshot;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::SurfaceInfo;
@@ -150,7 +150,7 @@ pub trait Adapter: Send + Sync {
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
-    async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;
+    async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError>;
 
     /// Enumerate candidate surfaces matching the query. Empty matches
     /// return `Ok(vec![])`, not an error.
