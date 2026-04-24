@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use porthole_protocol::error::WireError;
 use porthole_protocol::info::InfoResponse;
 use porthole_protocol::system_permission::SystemPermissionPromptOutcome;
@@ -22,9 +23,35 @@ pub struct OnboardResult {
     pub exit_code: i32,
 }
 
-pub async fn run(client: &DaemonClient, opts: OnboardOptions) -> Result<OnboardResult, ClientError> {
+#[async_trait]
+pub trait OnboardClient: Send + Sync {
+    async fn get_info(&self) -> Result<InfoResponse, ClientError>;
+    async fn request_prompt(
+        &self,
+        name: &str,
+    ) -> Result<SystemPermissionPromptOutcome, ClientError>;
+}
+
+#[async_trait]
+impl OnboardClient for DaemonClient {
+    async fn get_info(&self) -> Result<InfoResponse, ClientError> {
+        self.get_json("/info").await
+    }
+    async fn request_prompt(
+        &self,
+        name: &str,
+    ) -> Result<SystemPermissionPromptOutcome, ClientError> {
+        self.post_json(
+            "/system-permissions/request",
+            &serde_json::json!({ "name": name }),
+        )
+        .await
+    }
+}
+
+pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<OnboardResult, ClientError> {
     // 1. Read initial /info.
-    let info: InfoResponse = client.get_json("/info").await?;
+    let info: InfoResponse = client.get_info().await?;
     let Some(adapter) = info.adapters.into_iter().next() else {
         println!("no adapters loaded");
         return Ok(OnboardResult { exit_code: 0 });
@@ -51,13 +78,7 @@ pub async fn run(client: &DaemonClient, opts: OnboardOptions) -> Result<OnboardR
     let mut had_request_error = false;
     let mut restart_required_seen = false;
     for name in &ungranted {
-        match client
-            .post_json::<serde_json::Value, SystemPermissionPromptOutcome>(
-                "/system-permissions/request",
-                &serde_json::json!({ "name": name }),
-            )
-            .await
-        {
+        match client.request_prompt(name).await {
             Ok(out) => {
                 if out.requires_daemon_restart {
                     restart_required_seen = true;
@@ -143,13 +164,13 @@ pub async fn run(client: &DaemonClient, opts: OnboardOptions) -> Result<OnboardR
 }
 
 async fn poll_until_granted(
-    client: &DaemonClient,
+    client: &dyn OnboardClient,
     deadline: Instant,
 ) -> Result<InfoResponse, ClientError> {
     #[allow(unused_assignments)]
     let mut last_seen: Option<InfoResponse> = None;
     loop {
-        let info: InfoResponse = client.get_json("/info").await?;
+        let info: InfoResponse = client.get_info().await?;
         let all_granted = info
             .adapters
             .first()
@@ -185,5 +206,146 @@ fn print_request_error(name: &str, err: &WireError) {
         if let Some(reason) = details.get("reason").and_then(|v| v.as_str()) {
             eprintln!("    os reason: {reason}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use porthole_core::ErrorCode;
+    use porthole_protocol::info::{AdapterInfo, SystemPermissionStatus};
+    use std::sync::Mutex;
+
+    // ClientError isn't Clone, so the fake stores WireError (which is Clone)
+    // and reconstructs ClientError::Api on demand.
+    struct FakeClient {
+        info_sequence: Mutex<Vec<InfoResponse>>,
+        prompt_results: Mutex<Vec<Result<SystemPermissionPromptOutcome, WireError>>>,
+    }
+
+    #[async_trait]
+    impl OnboardClient for FakeClient {
+        async fn get_info(&self) -> Result<InfoResponse, ClientError> {
+            let mut q = self.info_sequence.lock().unwrap();
+            Ok(if q.len() > 1 { q.remove(0) } else { q[0].clone() })
+        }
+        async fn request_prompt(
+            &self,
+            _name: &str,
+        ) -> Result<SystemPermissionPromptOutcome, ClientError> {
+            let mut q = self.prompt_results.lock().unwrap();
+            let item = if q.len() > 1 { q.remove(0) } else { q[0].clone() };
+            item.map_err(ClientError::Api)
+        }
+    }
+
+    fn info_with(perms: Vec<(&str, bool)>) -> InfoResponse {
+        InfoResponse {
+            daemon_version: "test".into(),
+            uptime_seconds: 0,
+            adapters: vec![AdapterInfo {
+                name: "fake".into(),
+                loaded: true,
+                capabilities: vec!["system_permission_prompt".into()],
+                system_permissions: perms
+                    .into_iter()
+                    .map(|(n, g)| SystemPermissionStatus {
+                        name: n.into(),
+                        granted: g,
+                        purpose: String::new(),
+                    })
+                    .collect(),
+            }],
+        }
+    }
+
+    fn outcome(name: &str, granted_after: bool, prompt_triggered: bool, requires_restart: bool) -> SystemPermissionPromptOutcome {
+        SystemPermissionPromptOutcome {
+            permission: name.into(),
+            granted_before: false,
+            granted_after,
+            prompt_triggered,
+            requires_daemon_restart: requires_restart,
+            notes: String::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn all_granted_at_start_exits_zero() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![info_with(vec![("accessibility", true), ("screen_recording", true)])]),
+            prompt_results: Mutex::new(vec![]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn ax_transition_to_granted_exits_two() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![
+                info_with(vec![("accessibility", false), ("screen_recording", true)]),
+                info_with(vec![("accessibility", true), ("screen_recording", true)]),
+            ]),
+            prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        assert_eq!(res.exit_code, 2);
+    }
+
+    #[tokio::test]
+    async fn screen_recording_transition_exits_zero() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![
+                info_with(vec![("screen_recording", false)]),
+                info_with(vec![("screen_recording", true)]),
+            ]),
+            prompt_results: Mutex::new(vec![Ok(outcome("screen_recording", false, true, false))]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        assert_eq!(res.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn still_ungranted_after_poll_exits_one() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
+            prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        assert_eq!(res.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn no_wait_exits_three_without_polling() {
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
+            prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: true }).await.unwrap();
+        assert_eq!(res.exit_code, 3);
+    }
+
+    #[tokio::test]
+    async fn request_error_forces_exit_one_even_if_info_shows_granted() {
+        let wire = WireError {
+            code: ErrorCode::SystemPermissionRequestFailed,
+            message: "bundle missing".into(),
+            details: Some(serde_json::json!({
+                "permission": "accessibility",
+                "reason": "not in bundle",
+                "settings_path": "Settings → ...",
+                "binary_path": "/x"
+            })),
+        };
+        let client = FakeClient {
+            info_sequence: Mutex::new(vec![
+                info_with(vec![("accessibility", false)]),
+                info_with(vec![("accessibility", true)]),
+            ]),
+            prompt_results: Mutex::new(vec![Err(wire)]),
+        };
+        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        assert_eq!(res.exit_code, 1);
     }
 }
