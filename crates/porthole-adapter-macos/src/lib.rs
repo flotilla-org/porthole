@@ -10,7 +10,7 @@ use porthole_core::input::{ClickSpec, KeyEvent, ScrollSpec};
 use porthole_core::permission::SystemPermissionStatus;
 use porthole_core::surface::SurfaceInfo;
 use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use porthole_core::PortholeError;
+use porthole_core::{ErrorCode, PortholeError};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod artifact;
@@ -140,13 +140,44 @@ impl Adapter for MacOsAdapter {
 
     async fn request_system_permission_prompt(
         &self,
-        _name: &str,
+        name: &str,
     ) -> Result<porthole_core::permission::SystemPermissionPromptOutcome, PortholeError> {
-        // Implemented in Task 10.
-        Err(PortholeError::new(
-            porthole_core::ErrorCode::SystemPermissionRequestFailed,
-            "not yet implemented",
-        ))
+        use porthole_core::permission::SystemPermissionPromptOutcome;
+
+        // Name validation against our supported set. InvalidArgument carries
+        // the supported list in details.
+        let granted_before = permissions::is_granted(name)?;
+        let was_prompted_before = self.was_prompted(name);
+
+        if !granted_before {
+            // Attempt to open the OS prompt.
+            if let Err(reason) = permissions::try_trigger_prompt(name) {
+                let body = porthole_protocol::system_permission::SystemPermissionRequestFailedBody {
+                    permission: name.to_string(),
+                    reason,
+                    settings_path: permissions::settings_path_for(name).to_string(),
+                    binary_path: permissions::daemon_binary_path(),
+                };
+                return Err(
+                    PortholeError::new(ErrorCode::SystemPermissionRequestFailed, "prompt rejected by OS")
+                        .with_details(serde_json::to_value(body).unwrap_or_default()),
+                );
+            }
+            self.set_prompted(name);
+        }
+
+        let granted_after = permissions::is_granted(name)?;
+        let prompt_triggered = !granted_before && !was_prompted_before;
+        let requires_daemon_restart = permissions::requires_daemon_restart(name);
+
+        Ok(SystemPermissionPromptOutcome {
+            permission: name.to_string(),
+            granted_before,
+            granted_after,
+            prompt_triggered,
+            requires_daemon_restart,
+            notes: permissions::notes_for(name, requires_daemon_restart),
+        })
     }
 
     async fn search(
@@ -209,6 +240,7 @@ impl Adapter for MacOsAdapter {
             "placement",
             "replace",
             "auto_dismiss",
+            "system_permission_prompt",
         ]
     }
 }
