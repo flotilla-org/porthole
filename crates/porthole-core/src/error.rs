@@ -50,11 +50,17 @@ impl fmt::Display for ErrorCode {
 pub struct PortholeError {
     pub code: ErrorCode,
     pub message: String,
+    pub details: Option<serde_json::Value>,
 }
 
 impl PortholeError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self { code, message: message.into(), details: None }
+    }
+
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
     }
 
     pub fn surface_not_found(id: &str) -> Self {
@@ -91,5 +97,20 @@ mod tests {
     #[test]
     fn launch_returned_existing_display_is_snake_case() {
         assert_eq!(ErrorCode::LaunchReturnedExisting.to_string(), "launch_returned_existing");
+    }
+
+    #[test]
+    fn with_details_attaches_json_object() {
+        let err = PortholeError::new(ErrorCode::PermissionNeeded, "accessibility needed")
+            .with_details(serde_json::json!({ "permission": "accessibility" }));
+        assert_eq!(err.code, ErrorCode::PermissionNeeded);
+        let details = err.details.expect("details set");
+        assert_eq!(details["permission"], "accessibility");
+    }
+
+    #[test]
+    fn default_constructor_leaves_details_none() {
+        let err = PortholeError::new(ErrorCode::SurfaceDead, "gone");
+        assert!(err.details.is_none());
     }
 }
