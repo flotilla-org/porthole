@@ -111,6 +111,17 @@ impl Adapter for MacOsAdapter {
         permissions::system_permissions().await
     }
 
+    async fn request_system_permission_prompt(
+        &self,
+        _name: &str,
+    ) -> Result<porthole_core::permission::SystemPermissionPromptOutcome, PortholeError> {
+        // Implemented in Task 10.
+        Err(PortholeError::new(
+            porthole_core::ErrorCode::SystemPermissionRequestFailed,
+            "not yet implemented",
+        ))
+    }
+
     async fn search(
         &self,
         query: &porthole_core::SearchQuery,

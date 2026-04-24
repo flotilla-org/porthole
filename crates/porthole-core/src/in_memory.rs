@@ -10,12 +10,12 @@ use crate::adapter::{
 use crate::attention::{AttentionInfo, CursorPos};
 use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::SystemPermissionStatus;
+use crate::permission::{SystemPermissionPromptOutcome, SystemPermissionStatus};
 use crate::placement::GeometrySnapshot;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
 use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use crate::PortholeError;
+use crate::{ErrorCode, PortholeError};
 
 #[derive(Clone, Default)]
 pub struct InMemoryAdapter {
@@ -314,6 +314,16 @@ impl Adapter for InMemoryAdapter {
         s.next_system_permissions.take().unwrap_or(Ok(vec![]))
     }
 
+    async fn request_system_permission_prompt(
+        &self,
+        _name: &str,
+    ) -> Result<SystemPermissionPromptOutcome, PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "in-memory adapter does not support system permission prompts",
+        ))
+    }
+
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
         let mut s = self.script.lock().await;
         s.search_calls.push(query.clone());
@@ -410,7 +420,6 @@ mod tests {
 
     use super::*;
     use crate::adapter::RequireConfidence;
-    use crate::ErrorCode;
 
     #[tokio::test]
     async fn launch_records_call_and_returns_default_outcome() {
@@ -554,5 +563,27 @@ mod tests {
         assert!(got.is_some());
         let calls = adapter.window_alive_calls().await;
         assert_eq!(calls, vec![(42, 7)]);
+    }
+}
+
+#[cfg(test)]
+mod system_permission_prompt_tests {
+    use super::*;
+    use crate::adapter::Adapter;
+
+    #[tokio::test]
+    async fn in_memory_returns_adapter_unsupported() {
+        let adapter = InMemoryAdapter::new();
+        let err = adapter
+            .request_system_permission_prompt("accessibility")
+            .await
+            .expect_err("should error");
+        assert_eq!(err.code, ErrorCode::AdapterUnsupported);
+    }
+
+    #[test]
+    fn in_memory_does_not_advertise_system_permission_prompt_capability() {
+        let adapter = InMemoryAdapter::new();
+        assert!(!adapter.capabilities().contains(&"system_permission_prompt"));
     }
 }
