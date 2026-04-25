@@ -54,10 +54,10 @@ pub(crate) struct SupportedPermission {
 }
 
 /// Single source of truth for the macOS adapter's supported permissions.
-/// Adding a permission means: extend this slice, add an `AtomicBool` to the
-/// `MacOsAdapter::prompted` array length expression (the array sizes itself
-/// from this constant), and add an `ensure_*_granted` facade in this module
-/// for call-site readability.
+/// Adding a permission: extend this slice and add an `ensure_*_granted`
+/// facade in this module for call-site readability. The
+/// `MacOsAdapter::prompted` array sizes itself from this constant — no
+/// manual update needed there.
 pub(crate) const SUPPORTED_PERMISSIONS: &[SupportedPermission] = &[
     SupportedPermission {
         name: "accessibility",
