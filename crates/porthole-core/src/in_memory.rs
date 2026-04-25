@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -20,6 +21,9 @@ use crate::{ErrorCode, PortholeError};
 #[derive(Clone, Default)]
 pub struct InMemoryAdapter {
     script: Arc<Mutex<Script>>,
+    /// Held outside the async Mutex so the sync `capabilities()` method can
+    /// read it without blocking_lock acrobatics.
+    advertise_system_permission_prompt: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -41,6 +45,9 @@ struct Script {
     next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
     next_place_surface_result: Option<Result<(), PortholeError>>,
     next_snapshot_geometry: Option<Result<GeometrySnapshot, PortholeError>>,
+    next_request_system_permission_prompt:
+        Option<Result<SystemPermissionPromptOutcome, PortholeError>>,
+    next_ensure_system_permission: Option<Result<(), PortholeError>>,
     launch_artifact_calls: Vec<ArtifactLaunchSpec>,
     place_surface_calls: Vec<(SurfaceId, Rect)>,
     snapshot_geometry_calls: Vec<SurfaceId>,
@@ -119,6 +126,23 @@ impl InMemoryAdapter {
     }
     pub async fn set_next_snapshot_geometry(&self, v: Result<GeometrySnapshot, PortholeError>) {
         self.script.lock().await.next_snapshot_geometry = Some(v);
+    }
+    pub async fn set_next_request_system_permission_prompt(
+        &self,
+        v: Result<SystemPermissionPromptOutcome, PortholeError>,
+    ) {
+        self.script.lock().await.next_request_system_permission_prompt = Some(v);
+    }
+    pub async fn set_next_ensure_system_permission(&self, v: Result<(), PortholeError>) {
+        self.script.lock().await.next_ensure_system_permission = Some(v);
+    }
+    /// Toggle whether `capabilities()` advertises `"system_permission_prompt"`.
+    /// Off by default — the in-memory adapter cannot really open OS prompts,
+    /// so it correctly returns `capability_missing` for the route. Tests that
+    /// want to script the post-capability-check path opt in here.
+    pub fn set_system_permission_prompt_capability(&self, advertised: bool) {
+        self.advertise_system_permission_prompt
+            .store(advertised, Ordering::SeqCst);
     }
 
     // Recorders:
@@ -318,14 +342,18 @@ impl Adapter for InMemoryAdapter {
         &self,
         _name: &str,
     ) -> Result<SystemPermissionPromptOutcome, PortholeError> {
-        Err(PortholeError::new(
-            ErrorCode::AdapterUnsupported,
-            "in-memory adapter does not support system permission prompts",
-        ))
+        let mut s = self.script.lock().await;
+        s.next_request_system_permission_prompt.take().unwrap_or_else(|| {
+            Err(PortholeError::new(
+                ErrorCode::AdapterUnsupported,
+                "in-memory adapter does not support system permission prompts",
+            ))
+        })
     }
 
     async fn ensure_system_permission(&self, _name: &str) -> Result<(), PortholeError> {
-        Ok(())
+        let mut s = self.script.lock().await;
+        s.next_ensure_system_permission.take().unwrap_or(Ok(()))
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
@@ -373,7 +401,7 @@ impl Adapter for InMemoryAdapter {
         // The in-memory adapter scripts outcomes for most verbs and returns
         // defaults otherwise. It does NOT resolve OS-level focus, so
         // `attention_focused_surface` is excluded.
-        vec![
+        let mut caps = vec![
             "launch_process",
             "screenshot",
             "input_key",
@@ -394,7 +422,11 @@ impl Adapter for InMemoryAdapter {
             "placement",
             "replace",
             "auto_dismiss",
-        ]
+        ];
+        if self.advertise_system_permission_prompt.load(Ordering::SeqCst) {
+            caps.push("system_permission_prompt");
+        }
+        caps
     }
 }
 
