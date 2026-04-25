@@ -1,12 +1,12 @@
-use axum::extract::{Path, State};
-use axum::Json;
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use porthole_core::surface::SurfaceId;
 use porthole_protocol::screenshot::{Rect, ScreenshotRequest, ScreenshotResponse};
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 pub async fn post_screenshot(
     State(state): State<AppState>,
@@ -30,5 +30,10 @@ pub async fn post_screenshot(
 }
 
 fn to_rect(r: porthole_core::adapter::Rect) -> Rect {
-    Rect { x: r.x, y: r.y, w: r.w, h: r.h }
+    Rect {
+        x: r.x,
+        y: r.y,
+        w: r.w,
+        h: r.h,
+    }
 }

@@ -1,22 +1,23 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::adapter::{
-    Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect,
-    Screenshot,
+use crate::{
+    ErrorCode, PortholeError,
+    adapter::{Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot},
+    attention::{AttentionInfo, CursorPos},
+    display::{DisplayId, DisplayInfo, Rect as DisplayRect},
+    input::{ClickSpec, KeyEvent, ScrollSpec},
+    permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
+    placement::GeometrySnapshot,
+    search::{Candidate, SearchQuery},
+    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+    wait::{WaitCondition, WaitOutcome, WaitTimeout},
 };
-use crate::attention::{AttentionInfo, CursorPos};
-use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
-use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::{SystemPermissionPromptOutcome, SystemPermissionStatus};
-use crate::placement::GeometrySnapshot;
-use crate::search::{Candidate, SearchQuery};
-use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use crate::{ErrorCode, PortholeError};
 
 #[derive(Clone, Default)]
 pub struct InMemoryAdapter {
@@ -45,8 +46,7 @@ struct Script {
     next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
     next_place_surface_result: Option<Result<(), PortholeError>>,
     next_snapshot_geometry: Option<Result<GeometrySnapshot, PortholeError>>,
-    next_request_system_permission_prompt:
-        Option<Result<SystemPermissionPromptOutcome, PortholeError>>,
+    next_request_system_permission_prompt: Option<Result<SystemPermissionPromptOutcome, PortholeError>>,
     next_ensure_system_permission: Option<Result<(), PortholeError>>,
     launch_artifact_calls: Vec<ArtifactLaunchSpec>,
     place_surface_calls: Vec<(SurfaceId, Rect)>,
@@ -127,10 +127,7 @@ impl InMemoryAdapter {
     pub async fn set_next_snapshot_geometry(&self, v: Result<GeometrySnapshot, PortholeError>) {
         self.script.lock().await.next_snapshot_geometry = Some(v);
     }
-    pub async fn set_next_request_system_permission_prompt(
-        &self,
-        v: Result<SystemPermissionPromptOutcome, PortholeError>,
-    ) {
+    pub async fn set_next_request_system_permission_prompt(&self, v: Result<SystemPermissionPromptOutcome, PortholeError>) {
         self.script.lock().await.next_request_system_permission_prompt = Some(v);
     }
     pub async fn set_next_ensure_system_permission(&self, v: Result<(), PortholeError>) {
@@ -141,8 +138,7 @@ impl InMemoryAdapter {
     /// so it correctly returns `capability_missing` for the route. Tests that
     /// want to script the post-capability-check path opt in here.
     pub fn set_system_permission_prompt_capability(&self, advertised: bool) {
-        self.advertise_system_permission_prompt
-            .store(advertised, Ordering::SeqCst);
+        self.advertise_system_permission_prompt.store(advertised, Ordering::SeqCst);
     }
 
     // Recorders:
@@ -222,7 +218,11 @@ impl InMemoryAdapter {
             focused_surface_id: None,
             focused_app_name: None,
             focused_display_id: None,
-            cursor: CursorPos { x: 0.0, y: 0.0, display_id: None },
+            cursor: CursorPos {
+                x: 0.0,
+                y: 0.0,
+                display_id: None,
+            },
             recently_active_surface_ids: vec![],
         }
     }
@@ -230,7 +230,12 @@ impl InMemoryAdapter {
     pub fn default_displays() -> Vec<DisplayInfo> {
         vec![DisplayInfo {
             id: DisplayId::new("in-mem-display-0"),
-            bounds: DisplayRect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 },
+            bounds: DisplayRect {
+                x: 0.0,
+                y: 0.0,
+                w: 1920.0,
+                h: 1080.0,
+            },
             scale: 1.0,
             primary: true,
             focused: true,
@@ -247,7 +252,9 @@ impl Adapter for InMemoryAdapter {
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
         let mut s = self.script.lock().await;
         s.launch_calls.push(spec.clone());
-        s.next_launch_outcome.take().unwrap_or_else(|| Ok(Self::make_default_launch_outcome(4242)))
+        s.next_launch_outcome
+            .take()
+            .unwrap_or_else(|| Ok(Self::make_default_launch_outcome(4242)))
     }
 
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
@@ -256,7 +263,12 @@ impl Adapter for InMemoryAdapter {
         s.next_screenshot.take().unwrap_or_else(|| {
             Ok(Screenshot {
                 png_bytes: minimal_png(),
-                window_bounds_points: Rect { x: 0.0, y: 0.0, w: 800.0, h: 600.0 },
+                window_bounds_points: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
                 content_bounds_points: None,
                 scale: 2.0,
                 captured_at_unix_ms: 0,
@@ -338,10 +350,7 @@ impl Adapter for InMemoryAdapter {
         s.next_system_permissions.take().unwrap_or(Ok(vec![]))
     }
 
-    async fn request_system_permission_prompt(
-        &self,
-        _name: &str,
-    ) -> Result<SystemPermissionPromptOutcome, PortholeError> {
+    async fn request_system_permission_prompt(&self, _name: &str) -> Result<SystemPermissionPromptOutcome, PortholeError> {
         let mut s = self.script.lock().await;
         s.next_request_system_permission_prompt.take().unwrap_or_else(|| {
             Err(PortholeError::new(
@@ -362,11 +371,7 @@ impl Adapter for InMemoryAdapter {
         s.next_search_result.take().unwrap_or_else(|| Ok(vec![]))
     }
 
-    async fn window_alive(
-        &self,
-        pid: u32,
-        cg_window_id: u32,
-    ) -> Result<Option<SurfaceInfo>, PortholeError> {
+    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError> {
         let mut s = self.script.lock().await;
         s.window_alive_calls.push((pid, cg_window_id));
         s.next_window_alive_result.take().unwrap_or(Ok(None))
@@ -392,7 +397,12 @@ impl Adapter for InMemoryAdapter {
         s.next_snapshot_geometry.take().unwrap_or_else(|| {
             Ok(GeometrySnapshot {
                 display_id: DisplayId::new("in-mem-display-0"),
-                display_local: Rect { x: 0.0, y: 0.0, w: 800.0, h: 600.0 },
+                display_local: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
             })
         })
     }
@@ -442,10 +452,10 @@ fn wait_condition_tag(c: &WaitCondition) -> &'static str {
 
 fn minimal_png() -> Vec<u8> {
     const BYTES: &[u8] = &[
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
-        0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49,
-        0x44, 0x41, 0x54, 0x78, 0x9c, 0x62, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00,
-        0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62,
+        0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
     ];
     BYTES.to_vec()
 }
@@ -485,7 +495,9 @@ mod tests {
     #[tokio::test]
     async fn scripted_error_is_surfaced() {
         let adapter = InMemoryAdapter::new();
-        adapter.set_next_key_result(Err(PortholeError::new(ErrorCode::SystemPermissionNeeded, "no ax"))).await;
+        adapter
+            .set_next_key_result(Err(PortholeError::new(ErrorCode::SystemPermissionNeeded, "no ax")))
+            .await;
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
         let err = adapter.key(&outcome.surface, &[]).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::SystemPermissionNeeded);
@@ -496,7 +508,13 @@ mod tests {
         let adapter = InMemoryAdapter::new();
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
         adapter
-            .key(&outcome.surface, &[KeyEvent { key: "Enter".into(), modifiers: vec![] }])
+            .key(
+                &outcome.surface,
+                &[KeyEvent {
+                    key: "Enter".into(),
+                    modifiers: vec![],
+                }],
+            )
             .await
             .unwrap();
         let calls = adapter.key_calls().await;
@@ -545,7 +563,10 @@ mod tests {
         };
         adapter.set_next_search_result(Ok(vec![candidate.clone()])).await;
         let result = adapter
-            .search(&SearchQuery { app_name: Some("TestApp".into()), ..Default::default() })
+            .search(&SearchQuery {
+                app_name: Some("TestApp".into()),
+                ..Default::default()
+            })
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
@@ -575,7 +596,12 @@ mod tests {
     async fn place_surface_records_call() {
         let adapter = InMemoryAdapter::new();
         let info = SurfaceInfo::window(SurfaceId::new(), 1);
-        let rect = crate::display::Rect { x: 10.0, y: 20.0, w: 300.0, h: 400.0 };
+        let rect = crate::display::Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 300.0,
+            h: 400.0,
+        };
         adapter.place_surface(&info, rect).await.unwrap();
         let calls: Vec<(SurfaceId, Rect)> = adapter.place_surface_calls().await;
         assert_eq!(calls.len(), 1);

@@ -7,8 +7,10 @@
 
 #![cfg(target_os = "macos")]
 
-use core_foundation::base::TCFType;
-use core_foundation::string::{CFString, CFStringRef};
+use core_foundation::{
+    base::TCFType,
+    string::{CFString, CFStringRef},
+};
 
 pub type AxError = i32;
 pub const AX_ERROR_SUCCESS: AxError = 0;
@@ -19,25 +21,13 @@ pub type AxElementRef = *const std::ffi::c_void;
 
 unsafe extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> AxElementRef;
-    fn AXUIElementCopyAttributeValue(
-        element: AxElementRef,
-        attribute: CFStringRef,
-        value: *mut *const std::ffi::c_void,
-    ) -> AxError;
+    fn AXUIElementCopyAttributeValue(element: AxElementRef, attribute: CFStringRef, value: *mut *const std::ffi::c_void) -> AxError;
     fn AXUIElementPerformAction(element: AxElementRef, action: CFStringRef) -> AxError;
     fn _AXUIElementGetWindow(element: AxElementRef, out: *mut u32) -> AxError;
     fn CFRelease(ptr: *const std::ffi::c_void);
     /// Private AXValue helper — extracts a CGPoint or CGSize from an AXValueRef.
-    pub(crate) fn AXValueGetValue(
-        value: *const std::ffi::c_void,
-        the_type: i32,
-        value_ptr: *mut std::ffi::c_void,
-    ) -> u8;
-    fn AXUIElementSetAttributeValue(
-        element: AxElementRef,
-        attribute: CFStringRef,
-        value: *const std::ffi::c_void,
-    ) -> AxError;
+    pub(crate) fn AXValueGetValue(value: *const std::ffi::c_void, the_type: i32, value_ptr: *mut std::ffi::c_void) -> u8;
+    fn AXUIElementSetAttributeValue(element: AxElementRef, attribute: CFStringRef, value: *const std::ffi::c_void) -> AxError;
     fn AXValueCreate(the_type: i32, value_ptr: *const std::ffi::c_void) -> *const std::ffi::c_void;
 }
 
@@ -63,11 +53,7 @@ impl AxElement {
     /// Returns `None` if the underlying FFI returns null.
     pub fn for_application(pid: i32) -> Option<Self> {
         let ptr = unsafe { AXUIElementCreateApplication(pid) };
-        if ptr.is_null() {
-            None
-        } else {
-            Some(Self { ptr })
-        }
+        if ptr.is_null() { None } else { Some(Self { ptr }) }
     }
 
     /// Wrap a raw retained AXElement pointer. The caller guarantees the
@@ -99,14 +85,12 @@ impl AxElement {
     pub fn copy_attribute_raw(&self, attribute: &str) -> Option<*const std::ffi::c_void> {
         let attr_str = CFString::new(attribute);
         let mut out: *const std::ffi::c_void = std::ptr::null();
-        let err = unsafe {
-            AXUIElementCopyAttributeValue(
-                self.ptr,
-                attr_str.as_concrete_TypeRef() as CFStringRef,
-                &mut out,
-            )
-        };
-        if err == AX_ERROR_SUCCESS && !out.is_null() { Some(out) } else { None }
+        let err = unsafe { AXUIElementCopyAttributeValue(self.ptr, attr_str.as_concrete_TypeRef() as CFStringRef, &mut out) };
+        if err == AX_ERROR_SUCCESS && !out.is_null() {
+            Some(out)
+        } else {
+            None
+        }
     }
 
     /// Look up the CGWindowID for this AX element via the private
@@ -124,17 +108,12 @@ impl AxElement {
         use core_graphics::geometry::CGPoint;
         let pt = CGPoint::new(x, y);
         unsafe {
-            let value =
-                AXValueCreate(AX_VALUE_CG_POINT, &pt as *const _ as *const std::ffi::c_void);
+            let value = AXValueCreate(AX_VALUE_CG_POINT, &pt as *const _ as *const std::ffi::c_void);
             if value.is_null() {
                 return -1;
             }
             let attr = CFString::new("AXPosition");
-            let err = AXUIElementSetAttributeValue(
-                self.ptr,
-                attr.as_concrete_TypeRef() as CFStringRef,
-                value,
-            );
+            let err = AXUIElementSetAttributeValue(self.ptr, attr.as_concrete_TypeRef() as CFStringRef, value);
             CFRelease(value);
             err
         }
@@ -146,17 +125,12 @@ impl AxElement {
         use core_graphics::geometry::CGSize;
         let sz = CGSize::new(w, h);
         unsafe {
-            let value =
-                AXValueCreate(AX_VALUE_CG_SIZE, &sz as *const _ as *const std::ffi::c_void);
+            let value = AXValueCreate(AX_VALUE_CG_SIZE, &sz as *const _ as *const std::ffi::c_void);
             if value.is_null() {
                 return -1;
             }
             let attr = CFString::new("AXSize");
-            let err = AXUIElementSetAttributeValue(
-                self.ptr,
-                attr.as_concrete_TypeRef() as CFStringRef,
-                value,
-            );
+            let err = AXUIElementSetAttributeValue(self.ptr, attr.as_concrete_TypeRef() as CFStringRef, value);
             CFRelease(value);
             err
         }
@@ -168,13 +142,7 @@ impl AxElement {
         use core_graphics::geometry::CGPoint;
         let raw = self.copy_attribute_raw("AXPosition")?;
         let mut pt = CGPoint::new(0.0, 0.0);
-        let ok = unsafe {
-            AXValueGetValue(
-                raw,
-                AX_VALUE_CG_POINT,
-                &mut pt as *mut _ as *mut std::ffi::c_void,
-            )
-        };
+        let ok = unsafe { AXValueGetValue(raw, AX_VALUE_CG_POINT, &mut pt as *mut _ as *mut std::ffi::c_void) };
         unsafe { cf_release(raw) };
         if ok != 0 { Some((pt.x, pt.y)) } else { None }
     }
@@ -185,13 +153,7 @@ impl AxElement {
         use core_graphics::geometry::CGSize;
         let raw = self.copy_attribute_raw("AXSize")?;
         let mut sz = CGSize::new(0.0, 0.0);
-        let ok = unsafe {
-            AXValueGetValue(
-                raw,
-                AX_VALUE_CG_SIZE,
-                &mut sz as *mut _ as *mut std::ffi::c_void,
-            )
-        };
+        let ok = unsafe { AXValueGetValue(raw, AX_VALUE_CG_SIZE, &mut sz as *mut _ as *mut std::ffi::c_void) };
         unsafe { cf_release(raw) };
         if ok != 0 { Some((sz.width, sz.height)) } else { None }
     }
@@ -248,20 +210,15 @@ pub(crate) unsafe fn ax_get_window_id_borrowed(ptr: AxElementRef) -> Option<u32>
 ///
 /// # Safety
 /// `ptr` must be a valid, live AXUIElementRef. It is not consumed or released.
-pub(crate) unsafe fn copy_attribute_borrowed(
-    ptr: AxElementRef,
-    attribute: &str,
-) -> Option<*const std::ffi::c_void> {
+pub(crate) unsafe fn copy_attribute_borrowed(ptr: AxElementRef, attribute: &str) -> Option<*const std::ffi::c_void> {
     let attr_str = CFString::new(attribute);
     let mut out: *const std::ffi::c_void = std::ptr::null();
-    let err = unsafe {
-        AXUIElementCopyAttributeValue(
-            ptr,
-            attr_str.as_concrete_TypeRef() as CFStringRef,
-            &mut out,
-        )
-    };
-    if err == AX_ERROR_SUCCESS && !out.is_null() { Some(out) } else { None }
+    let err = unsafe { AXUIElementCopyAttributeValue(ptr, attr_str.as_concrete_TypeRef() as CFStringRef, &mut out) };
+    if err == AX_ERROR_SUCCESS && !out.is_null() {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// Perform an AX action on a *borrowed* (unowned) `AxElementRef`.

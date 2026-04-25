@@ -1,19 +1,24 @@
 #![cfg(target_os = "macos")]
 
-use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
-use porthole_core::adapter::{ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome};
-use porthole_core::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use porthole_core::{ErrorCode, PortholeError};
-use tokio::process::Command;
-use tokio::time::sleep;
+use porthole_core::{
+    ErrorCode, PortholeError,
+    adapter::{ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome},
+    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+};
+use tokio::{process::Command, time::sleep};
 
-use crate::ax::AxElement;
-use crate::close_focus::with_ax_window_by_cg_id;
-use crate::enumerate::{list_windows, WindowRecord};
-use crate::MacOsAdapter;
-use crate::permissions::ensure_accessibility_granted;
+use crate::{
+    MacOsAdapter,
+    ax::AxElement,
+    close_focus::with_ax_window_by_cg_id,
+    enumerate::{WindowRecord, list_windows},
+    permissions::ensure_accessibility_granted,
+};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(150);
 
@@ -42,9 +47,7 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
     let path_str = spec
         .path
         .to_str()
-        .ok_or_else(|| {
-            PortholeError::new(ErrorCode::InvalidArgument, "path is not valid UTF-8")
-        })?
+        .ok_or_else(|| PortholeError::new(ErrorCode::InvalidArgument, "path is not valid UTF-8"))?
         .to_string();
     let file_url = format!("file://{path_str}");
 
@@ -57,24 +60,16 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
 
     // Record the frontmost window of the handler app before `open`, for
     // FrontmostChanged correlation (plausible tier, spec §4.3).
-    let before_frontmost = handler_app.as_deref().and_then(|app| {
-        before
-            .iter()
-            .find(|w| w.app_name.as_deref() == Some(app))
-            .map(|w| w.cg_window_id)
-    });
+    let before_frontmost = handler_app
+        .as_deref()
+        .and_then(|app| before.iter().find(|w| w.app_name.as_deref() == Some(app)).map(|w| w.cg_window_id));
 
     // Invoke `open <path>`.
     let status = Command::new("/usr/bin/open")
         .arg(&path_str)
         .status()
         .await
-        .map_err(|e| {
-            PortholeError::new(
-                ErrorCode::CapabilityMissing,
-                format!("failed to spawn `open`: {e}"),
-            )
-        })?;
+        .map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("failed to spawn `open`: {e}")))?;
     if !status.success() {
         return Err(PortholeError::new(
             ErrorCode::LaunchCorrelationFailed,
@@ -86,9 +81,7 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
     let deadline = Instant::now() + spec.timeout;
     loop {
         // DocumentMatch attempt.
-        if let Some((record, preexisting)) =
-            find_window_by_document(&file_url, &before_ids).await?
-        {
+        if let Some((record, preexisting)) = find_window_by_document(&file_url, &before_ids).await? {
             return Ok(LaunchOutcome {
                 surface: make_surface(&record),
                 confidence: Confidence::Strong,
@@ -112,10 +105,7 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
             .find(|w| w.app_name.as_deref() == Some(app.as_str()))
             .map(|w| w.cg_window_id);
         if current_frontmost != before_frontmost {
-            if let Some(w) = after
-                .into_iter()
-                .find(|w| Some(w.cg_window_id) == current_frontmost)
-            {
+            if let Some(w) = after.into_iter().find(|w| Some(w.cg_window_id) == current_frontmost) {
                 return Ok(LaunchOutcome {
                     surface: make_surface(&w),
                     confidence: Confidence::Plausible,
@@ -132,11 +122,7 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
     let new_windows: Vec<_> = after
         .into_iter()
         .filter(|w| !before_ids.contains(&w.cg_window_id))
-        .filter(|w| {
-            handler_app
-                .as_deref()
-                .is_none_or(|app| w.app_name.as_deref() == Some(app))
-        })
+        .filter(|w| handler_app.as_deref().is_none_or(|app| w.app_name.as_deref() == Some(app)))
         .collect();
     if let Some(w) = new_windows.into_iter().next() {
         return Ok(LaunchOutcome {
@@ -153,10 +139,7 @@ pub async fn launch_artifact(adapter: &MacOsAdapter, spec: &ArtifactLaunchSpec) 
     ))
 }
 
-async fn find_window_by_document(
-    target_url: &str,
-    before_ids: &HashSet<u32>,
-) -> Result<Option<(WindowRecord, bool)>, PortholeError> {
+async fn find_window_by_document(target_url: &str, before_ids: &HashSet<u32>) -> Result<Option<(WindowRecord, bool)>, PortholeError> {
     let windows = list_windows()?;
     for w in windows {
         let pid = w.owner_pid;
@@ -188,9 +171,7 @@ fn ax_document_for(raw: crate::ax::AxElementRef) -> Option<String> {
             let ptr = elem.copy_attribute_raw("AXDocument")?;
             // AXDocument returns a CFStringRef (retained via copy rule).
             // wrap_under_create_rule takes ownership: drop releases exactly once.
-            let cfs = core_foundation::string::CFString::wrap_under_create_rule(
-                ptr as core_foundation::string::CFStringRef,
-            );
+            let cfs = core_foundation::string::CFString::wrap_under_create_rule(ptr as core_foundation::string::CFStringRef);
             Some(cfs.to_string())
             // cfs drops here, releasing ptr. Do NOT call cf_release on ptr.
         })

@@ -1,12 +1,13 @@
-use axum::extract::{Path, State};
-use axum::Json;
+use axum::{
+    Json,
+    extract::{Path, State},
+};
 use porthole_core::surface::SurfaceId;
 use porthole_protocol::input::{
     ClickRequest, ClickResponse, KeyRequest, KeyResponse, ScrollRequest, ScrollResponse, TextRequest, TextResponse,
 };
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 pub async fn post_key(
     State(state): State<AppState>,
@@ -16,7 +17,10 @@ pub async fn post_key(
     let surface_id = SurfaceId::from(id);
     let count = req.events.len();
     state.input.key(&surface_id, &req.events).await?;
-    Ok(Json(KeyResponse { surface_id: surface_id.to_string(), events_sent: count }))
+    Ok(Json(KeyResponse {
+        surface_id: surface_id.to_string(),
+        events_sent: count,
+    }))
 }
 
 pub async fn post_text(
@@ -27,7 +31,10 @@ pub async fn post_text(
     let surface_id = SurfaceId::from(id);
     let chars = req.text.chars().count();
     state.input.text(&surface_id, &req.text).await?;
-    Ok(Json(TextResponse { surface_id: surface_id.to_string(), chars_sent: chars }))
+    Ok(Json(TextResponse {
+        surface_id: surface_id.to_string(),
+        chars_sent: chars,
+    }))
 }
 
 pub async fn post_click(
@@ -38,7 +45,9 @@ pub async fn post_click(
     let surface_id = SurfaceId::from(id);
     let spec = (&req).into();
     state.input.click(&surface_id, &spec).await?;
-    Ok(Json(ClickResponse { surface_id: surface_id.to_string() }))
+    Ok(Json(ClickResponse {
+        surface_id: surface_id.to_string(),
+    }))
 }
 
 pub async fn post_scroll(
@@ -49,5 +58,7 @@ pub async fn post_scroll(
     let surface_id = SurfaceId::from(id);
     let spec = (&req).into();
     state.input.scroll(&surface_id, &spec).await?;
-    Ok(Json(ScrollResponse { surface_id: surface_id.to_string() }))
+    Ok(Json(ScrollResponse {
+        surface_id: surface_id.to_string(),
+    }))
 }

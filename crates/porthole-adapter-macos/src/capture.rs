@@ -1,11 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use porthole_core::adapter::{Rect, Screenshot};
-use porthole_core::surface::SurfaceInfo;
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{
+    ErrorCode, PortholeError,
+    adapter::{Rect, Screenshot},
+    surface::SurfaceInfo,
+};
 
-use crate::MacOsAdapter;
-use crate::permissions::ensure_screen_recording_granted;
+use crate::{MacOsAdapter, permissions::ensure_screen_recording_granted};
 
 pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
@@ -17,15 +18,15 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
 
     #[cfg(target_os = "macos")]
     {
-        use core_graphics::geometry::{CGPoint, CGRect, CGSize};
-        use core_graphics::window::{
-            create_image, kCGWindowImageBoundsIgnoreFraming, kCGWindowImageDefault,
-            kCGWindowListOptionIncludingWindow,
+        use core_graphics::{
+            geometry::{CGPoint, CGRect, CGSize},
+            window::{create_image, kCGWindowImageBoundsIgnoreFraming, kCGWindowImageDefault, kCGWindowListOptionIncludingWindow},
         };
 
-        let pid = surface.pid.ok_or_else(|| {
-            PortholeError::new(ErrorCode::CapabilityMissing, "surface has no pid; cannot locate CGWindowID")
-        })? as i32;
+        let pid = surface
+            .pid
+            .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "surface has no pid; cannot locate CGWindowID"))?
+            as i32;
 
         // Resolve geometry first (before holding any non-Send CG types across an await).
         // Look up the backing scale for the display the window is on.
@@ -33,7 +34,9 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
         let snap = crate::snapshot::snapshot_geometry(adapter, surface).await;
         let (pre_snap, pre_scale) = match snap {
             Ok(ref s) => {
-                let cg_id: u32 = s.display_id.as_str()
+                let cg_id: u32 = s
+                    .display_id
+                    .as_str()
                     .strip_prefix("disp_")
                     .and_then(|x| x.parse().ok())
                     .unwrap_or(0);
@@ -44,10 +47,7 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
                 };
                 (Some(s.display_local), scale)
             }
-            Err(e) if matches!(
-                e.code,
-                ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed
-            ) => {
+            Err(e) if matches!(e.code, ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed) => {
                 return Err(e);
             }
             Err(_) => (None, 1.0),
@@ -102,8 +102,7 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
 
         let mut png_bytes = Vec::new();
         {
-            use image::codecs::png::PngEncoder;
-            use image::{ColorType, ImageEncoder};
+            use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
             let encoder = PngEncoder::new(&mut png_bytes);
             encoder
                 .write_image(&rgba, width, height, ColorType::Rgba8.into())
@@ -114,10 +113,16 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
             Some(bounds) => (bounds, pre_scale),
             None => {
                 // snapshot_geometry failed; fall back to pixel dimensions with scale 1.
-                tracing::warn!(
-                    "snapshot_geometry failed during screenshot; reporting pixel bounds with scale 1"
-                );
-                (Rect { x: 0.0, y: 0.0, w: width as f64, h: height as f64 }, 1.0)
+                tracing::warn!("snapshot_geometry failed during screenshot; reporting pixel bounds with scale 1");
+                (
+                    Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: width as f64,
+                        h: height as f64,
+                    },
+                    1.0,
+                )
             }
         };
 
@@ -145,6 +150,9 @@ fn locate_cg_window_id(pid: i32, title: Option<&str>) -> Result<u32, PortholeErr
     }
     match matching.first() {
         Some(w) => Ok(w.cg_window_id),
-        None => Err(PortholeError::new(ErrorCode::SurfaceDead, format!("no live window found for pid {pid}"))),
+        None => Err(PortholeError::new(
+            ErrorCode::SurfaceDead,
+            format!("no live window found for pid {pid}"),
+        )),
     }
 }

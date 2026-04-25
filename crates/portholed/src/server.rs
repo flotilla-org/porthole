@@ -1,25 +1,21 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use axum::routing::{get, post};
-use axum::Router;
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use porthole_core::adapter::Adapter;
 use tokio::net::UnixListener;
 use tracing::info;
 
-use crate::routes::{
-    attach as attach_route,
-    attention as attention_route,
-    close_focus as close_focus_route,
-    info as info_route,
-    input as input_route,
-    launches as launches_route,
-    replace as replace_route,
-    screenshot as screenshot_route,
-    system_permissions as system_permissions_route,
-    wait as wait_route,
+use crate::{
+    routes::{
+        attach as attach_route, attention as attention_route, close_focus as close_focus_route, info as info_route, input as input_route,
+        launches as launches_route, replace as replace_route, screenshot as screenshot_route,
+        system_permissions as system_permissions_route, wait as wait_route,
+    },
+    state::AppState,
 };
-use crate::state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -38,10 +34,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/replace", post(replace_route::post_replace))
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
-        .route(
-            "/system-permissions/request",
-            post(system_permissions_route::post_request),
-        )
+        .route("/system-permissions/request", post(system_permissions_route::post_request))
         .with_state(state)
 }
 
@@ -62,11 +55,11 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
 mod tests {
     use std::sync::Arc;
 
-    use axum::body::to_bytes;
-    use axum::body::Body;
-    use axum::http::{Method, Request, StatusCode};
-    use porthole_core::in_memory::InMemoryAdapter;
-    use porthole_core::surface::SurfaceInfo;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Method, Request, StatusCode},
+    };
+    use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
     use tower::ServiceExt;
 
     use super::*;
@@ -186,7 +179,11 @@ mod tests {
     async fn get_attention_returns_default() {
         let adapter = Arc::new(InMemoryAdapter::new());
         let router = build_router(AppState::new(adapter));
-        let req = Request::builder().method(Method::GET).uri("/attention").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/attention")
+            .body(Body::empty())
+            .unwrap();
         let res = router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
@@ -237,8 +234,10 @@ mod tests {
 
     #[tokio::test]
     async fn post_track_mints_handle_and_idempotent_reuse() {
-        use porthole_core::search::encode_ref;
-        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+        use porthole_core::{
+            search::encode_ref,
+            surface::{SurfaceId, SurfaceInfo},
+        };
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let router = build_router(AppState::new(adapter.clone()));
@@ -281,10 +280,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_replace_inherits_snapshot_when_no_placement() {
-        use porthole_core::display::DisplayId;
-        use porthole_core::display::Rect;
-        use porthole_core::placement::GeometrySnapshot;
-        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+        use porthole_core::{
+            display::{DisplayId, Rect},
+            placement::GeometrySnapshot,
+            surface::{SurfaceId, SurfaceInfo},
+        };
 
         let adapter = Arc::new(InMemoryAdapter::new());
         // Seed an alive handle with cg_window_id.
@@ -297,7 +297,12 @@ mod tests {
         adapter
             .set_next_snapshot_geometry(Ok(GeometrySnapshot {
                 display_id: DisplayId::new("in-mem-display-0"),
-                display_local: Rect { x: 10.0, y: 20.0, w: 500.0, h: 400.0 },
+                display_local: Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    w: 500.0,
+                    h: 400.0,
+                },
             }))
             .await;
 
@@ -447,8 +452,10 @@ mod tests {
 
     #[tokio::test]
     async fn post_replace_launch_failure_after_close_returns_old_handle_alive_false() {
-        use porthole_core::in_memory::InMemoryAdapter;
-        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+        use porthole_core::{
+            in_memory::InMemoryAdapter,
+            surface::{SurfaceId, SurfaceInfo},
+        };
 
         let adapter = Arc::new(InMemoryAdapter::new());
         // Alive handle to replace.

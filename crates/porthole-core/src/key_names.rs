@@ -3,8 +3,7 @@
 //! Agent-facing callers pass these strings on the wire. The adapter
 //! implementation maps them to platform-native keycodes.
 
-use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::{collections::HashSet, sync::OnceLock};
 
 /// Returns the full set of supported key names.
 pub fn supported() -> &'static HashSet<&'static str> {
@@ -26,11 +25,30 @@ pub fn supported() -> &'static HashSet<&'static str> {
         }
         // Named keys
         for name in [
-            "Enter", "Escape", "Space", "Tab", "Backspace", "Delete",
-            "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-            "Home", "End", "PageUp", "PageDown",
-            "Minus", "Equal", "Comma", "Period", "Slash",
-            "Semicolon", "Quote", "Backquote", "BracketLeft", "BracketRight",
+            "Enter",
+            "Escape",
+            "Space",
+            "Tab",
+            "Backspace",
+            "Delete",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+            "Minus",
+            "Equal",
+            "Comma",
+            "Period",
+            "Slash",
+            "Semicolon",
+            "Quote",
+            "Backquote",
+            "BracketLeft",
+            "BracketRight",
             "Backslash",
         ] {
             s.insert(name);

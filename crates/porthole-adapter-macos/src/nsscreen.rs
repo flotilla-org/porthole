@@ -31,8 +31,7 @@ pub fn backing_scale_factor_for(display_id: u32) -> f64 {
             let value = device_description.objectForKey(&*screen_number_key);
             let Some(value) = value else { continue };
             // Cast AnyObject → NSNumber to read the numeric display ID.
-            let number: objc2::rc::Retained<NSNumber> =
-                objc2::rc::Retained::cast(value);
+            let number: objc2::rc::Retained<NSNumber> = objc2::rc::Retained::cast(value);
             let this_id = number.unsignedIntValue();
             if this_id == display_id {
                 return screen.backingScaleFactor();

@@ -1,11 +1,7 @@
 #![cfg(target_os = "macos")]
 
-use core_foundation::base::TCFType;
-use core_foundation::boolean::CFBoolean;
-use core_foundation::dictionary::CFDictionary;
-use core_foundation::string::CFString;
-use porthole_core::permission::SystemPermissionStatus;
-use porthole_core::{ErrorCode, PortholeError};
+use core_foundation::{base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString};
+use porthole_core::{ErrorCode, PortholeError, permission::SystemPermissionStatus};
 
 unsafe extern "C" {
     fn AXIsProcessTrusted() -> u8;
@@ -85,11 +81,8 @@ pub(crate) fn lookup(name: &str) -> Option<&'static SupportedPermission> {
 
 pub(crate) fn unknown_name_error(name: &str) -> PortholeError {
     let supported: Vec<&str> = SUPPORTED_PERMISSIONS.iter().map(|p| p.name).collect();
-    PortholeError::new(
-        ErrorCode::InvalidArgument,
-        format!("unknown system permission: {name}"),
-    )
-    .with_details(serde_json::json!({ "supported_names": supported }))
+    PortholeError::new(ErrorCode::InvalidArgument, format!("unknown system permission: {name}"))
+        .with_details(serde_json::json!({ "supported_names": supported }))
 }
 
 pub async fn system_permissions() -> Result<Vec<SystemPermissionStatus>, PortholeError> {
@@ -160,20 +153,17 @@ pub(crate) fn try_trigger_prompt(name: &str) -> Result<(), String> {
         })
         .is_some();
     if !is_bundle {
-        return Err(
-            "process is not running inside a .app bundle; TCC will not open a prompt. \
+        return Err("process is not running inside a .app bundle; TCC will not open a prompt. \
              Build via scripts/dev-bundle.sh and launch from the bundle."
-                .to_string(),
-        );
+            .to_string());
     }
     (p.request_prompt)();
     Ok(())
 }
 
+use porthole_protocol::system_permission::{Remediation, SystemPermissionNeededBody, SystemPermissionRequestFailedBody};
+
 use crate::MacOsAdapter;
-use porthole_protocol::system_permission::{
-    Remediation, SystemPermissionNeededBody, SystemPermissionRequestFailedBody,
-};
 
 fn build_needed_body(name: &str) -> SystemPermissionNeededBody {
     let requires_restart = requires_daemon_restart(name);
@@ -222,37 +212,33 @@ pub(crate) fn ensure_granted(adapter: &MacOsAdapter, name: &str) -> Result<(), P
             }
             Err(reason) => {
                 let body = build_request_failed_body(name, reason);
-                return Err(PortholeError::new(
-                    ErrorCode::SystemPermissionRequestFailed,
-                    format!("cannot open prompt for {name}"),
-                )
-                .with_details(serde_json::to_value(body).unwrap_or_default()));
+                return Err(
+                    PortholeError::new(ErrorCode::SystemPermissionRequestFailed, format!("cannot open prompt for {name}"))
+                        .with_details(serde_json::to_value(body).unwrap_or_default()),
+                );
             }
         }
     }
 
     let body = build_needed_body(name);
-    Err(PortholeError::new(
-        ErrorCode::SystemPermissionNeeded,
-        format!("{name} permission required"),
+    Err(
+        PortholeError::new(ErrorCode::SystemPermissionNeeded, format!("{name} permission required"))
+            .with_details(serde_json::to_value(body).unwrap_or_default()),
     )
-    .with_details(serde_json::to_value(body).unwrap_or_default()))
 }
 
 #[cfg(test)]
 mod tests {
+    use porthole_core::adapter::Adapter;
+
     use super::*;
     use crate::MacOsAdapter;
-    use porthole_core::adapter::Adapter;
 
     #[tokio::test]
     #[ignore]
     async fn request_system_permission_prompt_accessibility_returns_outcome() {
         let adapter = MacOsAdapter::new();
-        let outcome = adapter
-            .request_system_permission_prompt("accessibility")
-            .await
-            .expect("no-panic");
+        let outcome = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
         assert_eq!(outcome.permission, "accessibility");
         assert_eq!(outcome.granted_before, ax_is_trusted_live());
         assert!(outcome.requires_daemon_restart);
@@ -266,14 +252,8 @@ mod tests {
             eprintln!("accessibility already granted; test skipped");
             return;
         }
-        let first = adapter
-            .request_system_permission_prompt("accessibility")
-            .await
-            .expect("no-panic");
-        let second = adapter
-            .request_system_permission_prompt("accessibility")
-            .await
-            .expect("no-panic");
+        let first = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
+        let second = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
         assert!(first.prompt_triggered, "first call should trigger prompt");
         assert!(!second.prompt_triggered, "second call should not re-trigger");
     }

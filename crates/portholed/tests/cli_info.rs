@@ -1,8 +1,7 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use portholed::server::serve;
 use porthole_core::in_memory::InMemoryAdapter;
+use portholed::server::serve;
 
 #[tokio::test]
 async fn daemon_serves_info_over_uds() {

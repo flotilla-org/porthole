@@ -1,10 +1,8 @@
-use axum::extract::State;
-use axum::Json;
+use axum::{Json, extract::State};
 use porthole_core::attention::AttentionInfo;
 use porthole_protocol::attention::DisplaysResponse;
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 pub async fn get_attention(State(state): State<AppState>) -> Result<Json<AttentionInfo>, ApiError> {
     let mut info = state.adapter.attention().await?;

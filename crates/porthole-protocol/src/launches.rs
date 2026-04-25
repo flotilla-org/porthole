@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
+pub use porthole_core::{
+    display::Rect as PlacementRect,
+    placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec},
+};
 use serde::{Deserialize, Serialize};
 
 use crate::SurfaceId;
-
-pub use porthole_core::display::Rect as PlacementRect;
-pub use porthole_core::placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LaunchRequest {

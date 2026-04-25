@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::display::DisplayId;
-use crate::surface::SurfaceId;
+use crate::{display::DisplayId, surface::SurfaceId};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AttentionInfo {
@@ -29,7 +28,11 @@ mod tests {
             focused_surface_id: Some(SurfaceId::from("surf_1")),
             focused_app_name: Some("com.example.app".into()),
             focused_display_id: Some(DisplayId::new("disp_1")),
-            cursor: CursorPos { x: 100.0, y: 200.0, display_id: Some(DisplayId::new("disp_1")) },
+            cursor: CursorPos {
+                x: 100.0,
+                y: 200.0,
+                display_id: Some(DisplayId::new("disp_1")),
+            },
             recently_active_surface_ids: vec![SurfaceId::from("surf_1"), SurfaceId::from("surf_2")],
         };
         let json = serde_json::to_string(&a).unwrap();
@@ -43,7 +46,11 @@ mod tests {
             focused_surface_id: None,
             focused_app_name: None,
             focused_display_id: Some(DisplayId::new("disp_2")),
-            cursor: CursorPos { x: 50.0, y: 75.0, display_id: Some(DisplayId::new("disp_2")) },
+            cursor: CursorPos {
+                x: 50.0,
+                y: 75.0,
+                display_id: Some(DisplayId::new("disp_2")),
+            },
             recently_active_surface_ids: vec![],
         };
         let json = serde_json::to_string(&a).unwrap();
@@ -56,7 +63,11 @@ mod tests {
             focused_surface_id: None,
             focused_app_name: None,
             focused_display_id: None,
-            cursor: CursorPos { x: 0.0, y: 0.0, display_id: None },
+            cursor: CursorPos {
+                x: 0.0,
+                y: 0.0,
+                display_id: None,
+            },
             recently_active_surface_ids: vec![],
         };
         let json = serde_json::to_string(&a).unwrap();

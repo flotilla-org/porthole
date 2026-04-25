@@ -1,18 +1,19 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use porthole::client::DaemonClient;
-use porthole::commands::launch::LaunchArgs;
-use porthole::commands::screenshot::ScreenshotArgs;
-use porthole::runtime::socket_path;
-use porthole_core::display::Rect;
-use porthole_core::input::{ClickButton, Modifier};
-use porthole_core::placement::{Anchor, DisplayTarget, PlacementSpec};
-use porthole_core::wait::WaitCondition;
-use porthole::commands::{
-    attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd,
-    key as key_cmd, launch as launch_cmd, replace as replace_cmd, scroll as scroll_cmd,
-    text as text_cmd, wait as wait_cmd,
+use porthole::{
+    client::DaemonClient,
+    commands::{
+        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, key as key_cmd, launch as launch_cmd,
+        launch::LaunchArgs, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, text as text_cmd, wait as wait_cmd,
+    },
+    runtime::socket_path,
+};
+use porthole_core::{
+    display::Rect,
+    input::{ClickButton, Modifier},
+    placement::{Anchor, DisplayTarget, PlacementSpec},
+    wait::WaitCondition,
 };
 use porthole_protocol::launches::WireConfidence;
 
@@ -327,19 +328,11 @@ impl From<AnchorArg> for Anchor {
 /// Validates that geometry flags are either all provided or all absent.
 /// A partial set (e.g. three of four flags) produces a clear error rather than
 /// silently discarding the partial input.
-fn require_full_geometry(
-    x: Option<f64>,
-    y: Option<f64>,
-    w: Option<f64>,
-    h: Option<f64>,
-) -> Result<Option<Rect>, String> {
+fn require_full_geometry(x: Option<f64>, y: Option<f64>, w: Option<f64>, h: Option<f64>) -> Result<Option<Rect>, String> {
     match (x, y, w, h) {
         (None, None, None, None) => Ok(None),
         (Some(x), Some(y), Some(w), Some(h)) => Ok(Some(Rect { x, y, w, h })),
-        _ => Err(
-            "partial geometry: must specify all of --geom-x, --geom-y, --geom-w, --geom-h together"
-                .into(),
-        ),
+        _ => Err("partial geometry: must specify all of --geom-x, --geom-y, --geom-w, --geom-h together".into()),
     }
 }
 
@@ -442,9 +435,7 @@ async fn main() -> std::process::ExitCode {
                 LaunchKindArg::Process => {
                     let parsed_env: Vec<(String, String)> = env
                         .into_iter()
-                        .filter_map(|s| {
-                            s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
-                        })
+                        .filter_map(|s| s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
                         .collect();
                     launch_cmd::LaunchKindArg::Process {
                         app,
@@ -466,7 +457,11 @@ async fn main() -> std::process::ExitCode {
                 }
             };
             let placement = if on_display.is_some() || geometry.is_some() || anchor.is_some() {
-                Some(PlacementSpec { on_display, geometry, anchor: anchor.map(Anchor::from) })
+                Some(PlacementSpec {
+                    on_display,
+                    geometry,
+                    anchor: anchor.map(Anchor::from),
+                })
             } else {
                 None
             };
@@ -511,22 +506,18 @@ async fn main() -> std::process::ExitCode {
                 LaunchKindArg::Process => {
                     let parsed_env: std::collections::BTreeMap<String, String> = env
                         .into_iter()
-                        .filter_map(|s| {
-                            s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string()))
-                        })
+                        .filter_map(|s| s.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
                         .collect();
-                    porthole_protocol::launches::LaunchKind::Process(
-                        porthole_protocol::launches::ProcessLaunch {
-                            app,
-                            args,
-                            cwd,
-                            env: parsed_env,
-                        },
-                    )
+                    porthole_protocol::launches::LaunchKind::Process(porthole_protocol::launches::ProcessLaunch {
+                        app,
+                        args,
+                        cwd,
+                        env: parsed_env,
+                    })
                 }
-                LaunchKindArg::Artifact => porthole_protocol::launches::LaunchKind::Artifact(
-                    porthole_protocol::launches::ArtifactLaunch { path: app },
-                ),
+                LaunchKindArg::Artifact => {
+                    porthole_protocol::launches::LaunchKind::Artifact(porthole_protocol::launches::ArtifactLaunch { path: app })
+                }
             };
 
             let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h) {
@@ -541,7 +532,11 @@ async fn main() -> std::process::ExitCode {
                 // inherits geometry from the old surface.
                 None
             } else if on_display.is_some() || geometry.is_some() || anchor.is_some() {
-                Some(PlacementSpec { on_display, geometry, anchor: anchor.map(Anchor::from) })
+                Some(PlacementSpec {
+                    on_display,
+                    geometry,
+                    anchor: anchor.map(Anchor::from),
+                })
             } else {
                 // No flags and no --inherit-placement: OS default (empty placement block).
                 Some(PlacementSpec::default())
@@ -561,11 +556,20 @@ async fn main() -> std::process::ExitCode {
         Command::Screenshot { surface_id, out, session } => {
             porthole::commands::screenshot::run(
                 &client,
-                ScreenshotArgs { surface_id, output: out, session },
+                ScreenshotArgs {
+                    surface_id,
+                    output: out,
+                    session,
+                },
             )
             .await
         }
-        Command::Key { surface_id, key, modifiers, session } => {
+        Command::Key {
+            surface_id,
+            key,
+            modifiers,
+            session,
+        } => {
             let args = key_cmd::KeyArgs {
                 surface_id,
                 key,
@@ -574,10 +578,16 @@ async fn main() -> std::process::ExitCode {
             };
             key_cmd::run(&client, args).await
         }
-        Command::Text { surface_id, text, session } => {
-            text_cmd::run(&client, text_cmd::TextArgs { surface_id, text, session }).await
-        }
-        Command::Click { surface_id, x, y, button, count, modifiers, session } => {
+        Command::Text { surface_id, text, session } => text_cmd::run(&client, text_cmd::TextArgs { surface_id, text, session }).await,
+        Command::Click {
+            surface_id,
+            x,
+            y,
+            button,
+            count,
+            modifiers,
+            session,
+        } => {
             click_cmd::run(
                 &client,
                 click_cmd::ClickArgs {
@@ -592,35 +602,69 @@ async fn main() -> std::process::ExitCode {
             )
             .await
         }
-        Command::Scroll { surface_id, x, y, delta_x, delta_y, session } => {
+        Command::Scroll {
+            surface_id,
+            x,
+            y,
+            delta_x,
+            delta_y,
+            session,
+        } => {
             scroll_cmd::run(
                 &client,
-                scroll_cmd::ScrollArgs { surface_id, x, y, delta_x, delta_y, session },
+                scroll_cmd::ScrollArgs {
+                    surface_id,
+                    x,
+                    y,
+                    delta_x,
+                    delta_y,
+                    session,
+                },
             )
             .await
         }
-        Command::Wait { surface_id, condition, pattern, window_ms, threshold_pct, timeout_ms, session } => {
+        Command::Wait {
+            surface_id,
+            condition,
+            pattern,
+            window_ms,
+            threshold_pct,
+            timeout_ms,
+            session,
+        } => {
             let cond = match condition {
                 ConditionArg::Stable => WaitCondition::Stable { window_ms, threshold_pct },
                 ConditionArg::Dirty => WaitCondition::Dirty { threshold_pct },
                 ConditionArg::Exists => WaitCondition::Exists,
                 ConditionArg::Gone => WaitCondition::Gone,
-                ConditionArg::TitleMatches => {
-                    WaitCondition::TitleMatches { pattern: pattern.unwrap_or_default() }
-                }
+                ConditionArg::TitleMatches => WaitCondition::TitleMatches {
+                    pattern: pattern.unwrap_or_default(),
+                },
             };
-            wait_cmd::run(&client, wait_cmd::WaitArgs { surface_id, condition: cond, timeout_ms, session })
-                .await
+            wait_cmd::run(
+                &client,
+                wait_cmd::WaitArgs {
+                    surface_id,
+                    condition: cond,
+                    timeout_ms,
+                    session,
+                },
+            )
+            .await
         }
-        Command::Close { surface_id, session } => {
-            close_cmd::run(&client, surface_id, session).await
-        }
-        Command::Focus { surface_id, session } => {
-            focus_cmd::run(&client, surface_id, session).await
-        }
+        Command::Close { surface_id, session } => close_cmd::run(&client, surface_id, session).await,
+        Command::Focus { surface_id, session } => focus_cmd::run(&client, surface_id, session).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
-        Command::Search { app_name, title_pattern, pids, cg_window_ids, frontmost, session, json } => {
+        Command::Search {
+            app_name,
+            title_pattern,
+            pids,
+            cg_window_ids,
+            frontmost,
+            session,
+            json,
+        } => {
             use porthole::commands::search as search_cmd;
             search_cmd::run(
                 &client,

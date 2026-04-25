@@ -1,10 +1,11 @@
 #![cfg(target_os = "macos")]
 
-use porthole_core::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use porthole_core::PortholeError;
+use porthole_core::{
+    PortholeError,
+    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+};
 
-use crate::MacOsAdapter;
-use crate::permissions::ensure_screen_recording_granted;
+use crate::{MacOsAdapter, permissions::ensure_screen_recording_granted};
 
 /// Enumerates all windows (including off-screen, minimized, and other-Space)
 /// and returns a fresh SurfaceInfo if a window with the given
@@ -15,16 +16,16 @@ use crate::permissions::ensure_screen_recording_granted;
 /// minimize / Space-switch cycles.
 pub async fn window_alive(adapter: &MacOsAdapter, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
-    use core_foundation::base::TCFType;
-    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-    use core_foundation::number::CFNumber;
-    use core_foundation::string::CFString;
-    use core_graphics::window::{
-        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements,
-        kCGWindowListOptionAll, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
-        kCGWindowOwnerPID,
+    use core_foundation::{
+        base::{CFType, TCFType},
+        dictionary::{CFDictionary, CFDictionaryRef},
+        number::CFNumber,
+        string::CFString,
     };
-    use core_foundation::base::CFType;
+    use core_graphics::window::{
+        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements, kCGWindowListOptionAll, kCGWindowName,
+        kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
+    };
 
     let opts = kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements;
     let arr = match copy_window_info(opts, kCGNullWindowID) {
@@ -36,8 +37,7 @@ pub async fn window_alive(adapter: &MacOsAdapter, pid: u32, cg_window_id: u32) -
     for i in 0..count {
         // Safety: i is within [0, count), and the elements are CFDictionary<CFString, CFType>.
         let raw_ptr: *const std::ffi::c_void = unsafe { *arr.get_unchecked(i) };
-        let dict: CFDictionary<CFString, CFType> =
-            unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
+        let dict: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
 
         let layer_key = unsafe { CFString::wrap_under_get_rule(kCGWindowLayer) };
         let layer = dict

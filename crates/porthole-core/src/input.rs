@@ -57,7 +57,10 @@ mod tests {
 
     #[test]
     fn key_event_roundtrip() {
-        let ev = KeyEvent { key: "KeyA".into(), modifiers: vec![Modifier::Cmd] };
+        let ev = KeyEvent {
+            key: "KeyA".into(),
+            modifiers: vec![Modifier::Cmd],
+        };
         let json = serde_json::to_string(&ev).unwrap();
         let back: KeyEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ev);
@@ -65,7 +68,13 @@ mod tests {
 
     #[test]
     fn click_button_default_is_left() {
-        let click = ClickSpec { x: 0.0, y: 0.0, button: ClickButton::default(), count: 1, modifiers: vec![] };
+        let click = ClickSpec {
+            x: 0.0,
+            y: 0.0,
+            button: ClickButton::default(),
+            count: 1,
+            modifiers: vec![],
+        };
         assert_eq!(click.button, ClickButton::Left);
     }
 

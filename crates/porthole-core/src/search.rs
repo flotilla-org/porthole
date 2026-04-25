@@ -1,5 +1,4 @@
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 
 use crate::{ErrorCode, PortholeError};
@@ -44,7 +43,11 @@ struct RefPayload {
 
 /// Encode (pid, cg_window_id) into a self-describing opaque ref.
 pub fn encode_ref(pid: u32, cg_window_id: u32) -> String {
-    let payload = RefPayload { pid, cg_window_id, v: REF_SCHEMA_VERSION };
+    let payload = RefPayload {
+        pid,
+        cg_window_id,
+        v: REF_SCHEMA_VERSION,
+    };
     let json = serde_json::to_vec(&payload).expect("RefPayload is JSON-serialisable");
     format!("{REF_PREFIX}{}", URL_SAFE_NO_PAD.encode(json))
 }
@@ -53,15 +56,14 @@ pub fn encode_ref(pid: u32, cg_window_id: u32) -> String {
 /// on any structural failure (wrong prefix, bad base64, bad JSON, unknown
 /// schema version).
 pub fn decode_ref(r: &str) -> Result<(u32, u32), PortholeError> {
-    let body = r.strip_prefix(REF_PREFIX).ok_or_else(|| {
-        PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref missing '{REF_PREFIX}' prefix"))
-    })?;
+    let body = r
+        .strip_prefix(REF_PREFIX)
+        .ok_or_else(|| PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref missing '{REF_PREFIX}' prefix")))?;
     let bytes = URL_SAFE_NO_PAD
         .decode(body)
         .map_err(|e| PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref base64 decode failed: {e}")))?;
-    let payload: RefPayload = serde_json::from_slice(&bytes).map_err(|e| {
-        PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref JSON decode failed: {e}"))
-    })?;
+    let payload: RefPayload = serde_json::from_slice(&bytes)
+        .map_err(|e| PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref JSON decode failed: {e}")))?;
     if payload.v != REF_SCHEMA_VERSION {
         return Err(PortholeError::new(
             ErrorCode::CandidateRefUnknown,

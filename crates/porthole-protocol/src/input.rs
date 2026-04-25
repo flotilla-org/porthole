@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 use porthole_core::input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct KeyRequest {
@@ -77,7 +76,12 @@ pub struct ScrollRequest {
 
 impl From<&ScrollRequest> for ScrollSpec {
     fn from(r: &ScrollRequest) -> Self {
-        ScrollSpec { x: r.x, y: r.y, delta_x: r.delta_x, delta_y: r.delta_y }
+        ScrollSpec {
+            x: r.x,
+            y: r.y,
+            delta_x: r.delta_x,
+            delta_y: r.delta_y,
+        }
     }
 }
 

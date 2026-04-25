@@ -1,17 +1,18 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-use async_trait::async_trait;
-use porthole_core::adapter::{
-    Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot,
-};
-use porthole_core::attention::AttentionInfo;
-use porthole_core::display::DisplayInfo;
-use porthole_core::input::{ClickSpec, KeyEvent, ScrollSpec};
-use porthole_core::permission::SystemPermissionStatus;
-use porthole_core::surface::SurfaceInfo;
-use porthole_core::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use porthole_core::{ErrorCode, PortholeError};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use async_trait::async_trait;
+use porthole_core::{
+    ErrorCode, PortholeError,
+    adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot},
+    attention::AttentionInfo,
+    display::DisplayInfo,
+    input::{ClickSpec, KeyEvent, ScrollSpec},
+    permission::SystemPermissionStatus,
+    surface::SurfaceInfo,
+    wait::{WaitCondition, WaitOutcome, WaitTimeout},
+};
 
 pub mod artifact;
 pub mod attention;
@@ -187,18 +188,11 @@ impl Adapter for MacOsAdapter {
         })
     }
 
-    async fn search(
-        &self,
-        query: &porthole_core::SearchQuery,
-    ) -> Result<Vec<porthole_core::Candidate>, porthole_core::PortholeError> {
+    async fn search(&self, query: &porthole_core::SearchQuery) -> Result<Vec<porthole_core::Candidate>, porthole_core::PortholeError> {
         search::search(self, query).await
     }
 
-    async fn window_alive(
-        &self,
-        pid: u32,
-        cg_window_id: u32,
-    ) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
         window_alive::window_alive(self, pid, cg_window_id).await
     }
 

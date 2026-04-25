@@ -1,15 +1,18 @@
 use std::time::{Duration, Instant};
 
-use porthole_core::adapter::{Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec};
-use porthole_core::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-use porthole_core::{ErrorCode, PortholeError};
-use tokio::process::Command;
-use tokio::time::sleep;
+use porthole_core::{
+    ErrorCode, PortholeError,
+    adapter::{Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec},
+    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+};
+use tokio::{process::Command, time::sleep};
 
-use crate::correlation::{new_launch_tag, PORTHOLE_LAUNCH_TAG_ENV};
-use crate::enumerate::list_windows;
-use crate::MacOsAdapter;
-use crate::permissions::ensure_accessibility_granted;
+use crate::{
+    MacOsAdapter,
+    correlation::{PORTHOLE_LAUNCH_TAG_ENV, new_launch_tag},
+    enumerate::list_windows,
+    permissions::ensure_accessibility_granted,
+};
 
 pub async fn launch_process(adapter: &MacOsAdapter, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
     #[cfg(not(target_os = "macos"))]
@@ -74,7 +77,8 @@ fn build_and_spawn(spec: &ProcessLaunchSpec, tag: &str) -> Result<tokio::process
         cmd.current_dir(cwd);
     }
     cmd.kill_on_drop(true);
-    cmd.spawn().map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("failed to spawn open: {e}")))
+    cmd.spawn()
+        .map_err(|e| PortholeError::new(ErrorCode::CapabilityMissing, format!("failed to spawn open: {e}")))
 }
 
 #[cfg(target_os = "macos")]
@@ -90,7 +94,10 @@ async fn find_window_with_tag(tag: &str) -> Result<Option<crate::enumerate::Wind
 
 #[cfg(target_os = "macos")]
 async fn pid_has_env(pid: i32, key: &str, expected: &str) -> bool {
-    let out = Command::new("/bin/ps").args(["eww", "-o", "command=", "-p", &pid.to_string()]).output().await;
+    let out = Command::new("/bin/ps")
+        .args(["eww", "-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .await;
     let Ok(out) = out else { return false };
     let text = String::from_utf8_lossy(&out.stdout);
     let needle = format!("{key}={expected}");
@@ -118,7 +125,10 @@ mod tests {
         // If accessibility is not granted, we may get SystemPermissionNeeded instead.
         assert!(matches!(
             err.code,
-            ErrorCode::LaunchCorrelationFailed | ErrorCode::CapabilityMissing | ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed
+            ErrorCode::LaunchCorrelationFailed
+                | ErrorCode::CapabilityMissing
+                | ErrorCode::SystemPermissionNeeded
+                | ErrorCode::SystemPermissionRequestFailed
         ));
     }
 }

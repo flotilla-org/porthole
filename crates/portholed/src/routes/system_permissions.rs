@@ -1,11 +1,9 @@
-use axum::extract::State;
-use axum::Json;
+use axum::{Json, extract::State};
 use porthole_core::{ErrorCode, PortholeError};
 use porthole_protocol::system_permission::SystemPermissionPromptOutcome;
 use serde::Deserialize;
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 #[derive(Deserialize)]
 pub struct RequestBody {
@@ -27,32 +25,26 @@ pub async fn post_request(
         )));
     }
 
-    let core_outcome = state
-        .adapter
-        .request_system_permission_prompt(&body.name)
-        .await?;
+    let core_outcome = state.adapter.request_system_permission_prompt(&body.name).await?;
     Ok(Json(core_outcome.into()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::body::{to_bytes, Body};
-    use axum::http::{Method, Request, StatusCode};
-    use porthole_core::in_memory::InMemoryAdapter;
-    use porthole_core::permission::SystemPermissionPromptOutcome as CoreOutcome;
-    use porthole_protocol::error::WireError;
-    use porthole_protocol::system_permission::SystemPermissionRequestFailedBody;
     use std::sync::Arc;
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Method, Request, StatusCode},
+    };
+    use porthole_core::{in_memory::InMemoryAdapter, permission::SystemPermissionPromptOutcome as CoreOutcome};
+    use porthole_protocol::{error::WireError, system_permission::SystemPermissionRequestFailedBody};
     use tower::ServiceExt;
 
+    use super::*;
     use crate::server::build_router;
 
-    async fn post_json_with(
-        adapter: Arc<InMemoryAdapter>,
-        uri: &str,
-        body: serde_json::Value,
-    ) -> (StatusCode, serde_json::Value) {
+    async fn post_json_with(adapter: Arc<InMemoryAdapter>, uri: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
         let router = build_router(AppState::new(adapter));
         let req = Request::builder()
             .method(Method::POST)
@@ -73,11 +65,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_memory_adapter_returns_capability_missing() {
-        let (status, body) = post_json(
-            "/system-permissions/request",
-            serde_json::json!({ "name": "accessibility" }),
-        )
-        .await;
+        let (status, body) = post_json("/system-permissions/request", serde_json::json!({ "name": "accessibility" })).await;
         assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
         let err: WireError = serde_json::from_value(body).unwrap();
         assert_eq!(err.code, ErrorCode::CapabilityMissing);
@@ -141,8 +129,7 @@ mod tests {
         let err: WireError = serde_json::from_value(body).unwrap();
         assert_eq!(err.code, ErrorCode::SystemPermissionRequestFailed);
         let details = err.details.expect("details present");
-        let parsed: SystemPermissionRequestFailedBody =
-            serde_json::from_value(details).expect("details deserialise");
+        let parsed: SystemPermissionRequestFailedBody = serde_json::from_value(details).expect("details deserialise");
         assert_eq!(parsed, failed);
     }
 }

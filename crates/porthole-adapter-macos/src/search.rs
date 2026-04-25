@@ -1,25 +1,31 @@
 #![cfg(target_os = "macos")]
 
-use porthole_core::search::{encode_ref, Candidate, SearchQuery};
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{
+    ErrorCode, PortholeError,
+    search::{Candidate, SearchQuery, encode_ref},
+};
 use regex::Regex;
 
-use crate::enumerate::{list_windows, WindowRecord};
-use crate::MacOsAdapter;
-use crate::permissions::ensure_screen_recording_granted;
+use crate::{
+    MacOsAdapter,
+    enumerate::{WindowRecord, list_windows},
+    permissions::ensure_screen_recording_granted,
+};
 
 pub async fn search(adapter: &MacOsAdapter, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
     let title_regex = match &query.title_pattern {
-        Some(p) => Some(Regex::new(p).map_err(|e| {
-            PortholeError::new(ErrorCode::InvalidArgument, format!("invalid title_pattern regex: {e}"))
-        })?),
+        Some(p) => {
+            Some(Regex::new(p).map_err(|e| PortholeError::new(ErrorCode::InvalidArgument, format!("invalid title_pattern regex: {e}")))?)
+        }
         None => None,
     };
 
     let windows = list_windows()?;
-    let mut matches: Vec<WindowRecord> =
-        windows.into_iter().filter(|w| matches_query(w, query, title_regex.as_ref())).collect();
+    let mut matches: Vec<WindowRecord> = windows
+        .into_iter()
+        .filter(|w| matches_query(w, query, title_regex.as_ref()))
+        .collect();
 
     if matches!(query.frontmost, Some(true)) && !matches.is_empty() {
         // list_windows returns on-screen windows in roughly Z-order
@@ -87,16 +93,25 @@ mod tests {
     #[test]
     fn app_name_filter_is_exact() {
         let w = rec(1, 42, Some("Ghostty"), None);
-        let q = SearchQuery { app_name: Some("Ghostty".into()), ..Default::default() };
+        let q = SearchQuery {
+            app_name: Some("Ghostty".into()),
+            ..Default::default()
+        };
         assert!(matches_query(&w, &q, None));
-        let q = SearchQuery { app_name: Some("ghostty".into()), ..Default::default() };
+        let q = SearchQuery {
+            app_name: Some("ghostty".into()),
+            ..Default::default()
+        };
         assert!(!matches_query(&w, &q, None));
     }
 
     #[test]
     fn pids_filter_is_or_within_list() {
         let w = rec(77, 42, None, None);
-        let q = SearchQuery { pids: vec![10, 77, 99], ..Default::default() };
+        let q = SearchQuery {
+            pids: vec![10, 77, 99],
+            ..Default::default()
+        };
         assert!(matches_query(&w, &q, None));
     }
 

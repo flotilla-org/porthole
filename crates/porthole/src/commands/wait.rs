@@ -11,8 +11,15 @@ pub struct WaitArgs {
 }
 
 pub async fn run(client: &DaemonClient, args: WaitArgs) -> Result<(), ClientError> {
-    let req = WaitRequest { condition: args.condition, timeout_ms: args.timeout_ms, session: args.session };
+    let req = WaitRequest {
+        condition: args.condition,
+        timeout_ms: args.timeout_ms,
+        session: args.session,
+    };
     let res: WaitResponse = client.post_json(&format!("/surfaces/{}/wait", args.surface_id), &req).await?;
-    println!("waited {}ms for condition '{}' on surface {}", res.elapsed_ms, res.condition, res.surface_id);
+    println!(
+        "waited {}ms for condition '{}' on surface {}",
+        res.elapsed_ms, res.condition, res.surface_id
+    );
     Ok(())
 }

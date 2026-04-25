@@ -12,7 +12,10 @@ pub struct KeyArgs {
 
 pub async fn run(client: &DaemonClient, args: KeyArgs) -> Result<(), ClientError> {
     let req = KeyRequest {
-        events: vec![KeyEvent { key: args.key, modifiers: args.modifiers }],
+        events: vec![KeyEvent {
+            key: args.key,
+            modifiers: args.modifiers,
+        }],
         session: args.session,
     };
     let res: KeyResponse = client.post_json(&format!("/surfaces/{}/key", args.surface_id), &req).await?;

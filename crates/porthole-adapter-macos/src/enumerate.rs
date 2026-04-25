@@ -10,14 +10,15 @@ pub struct WindowRecord {
 
 #[cfg(target_os = "macos")]
 pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
-    use core_foundation::base::{CFType, TCFType};
-    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-    use core_foundation::number::CFNumber;
-    use core_foundation::string::CFString;
+    use core_foundation::{
+        base::{CFType, TCFType},
+        dictionary::{CFDictionary, CFDictionaryRef},
+        number::CFNumber,
+        string::CFString,
+    };
     use core_graphics::window::{
-        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements,
-        kCGWindowListOptionOnScreenOnly, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
-        kCGWindowOwnerPID,
+        copy_window_info, kCGNullWindowID, kCGWindowLayer, kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
+        kCGWindowName, kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
     };
 
     let opts = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
@@ -37,8 +38,7 @@ pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
     for i in 0..count {
         // Safety: i is within [0, count), and the elements are CFDictionary<CFString, CFType>.
         let raw_ptr: *const std::ffi::c_void = unsafe { *arr.get_unchecked(i) };
-        let dict: CFDictionary<CFString, CFType> =
-            unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
+        let dict: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
 
         let layer_key = unsafe { CFString::wrap_under_get_rule(kCGWindowLayer) };
         let layer = dict
@@ -77,7 +77,12 @@ pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
             .and_then(|v| v.downcast::<CFString>())
             .map(|s| s.to_string());
 
-        out.push(WindowRecord { cg_window_id, owner_pid, title, app_name });
+        out.push(WindowRecord {
+            cg_window_id,
+            owner_pid,
+            title,
+            app_name,
+        });
     }
 
     if out.is_empty() {

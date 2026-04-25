@@ -1,9 +1,10 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use porthole_core::display::{DisplayId, Rect};
-use porthole_core::in_memory::InMemoryAdapter;
-use porthole_core::placement::GeometrySnapshot;
+use porthole_core::{
+    display::{DisplayId, Rect},
+    in_memory::InMemoryAdapter,
+    placement::GeometrySnapshot,
+};
 use portholed::server::serve;
 
 #[tokio::test]
@@ -16,7 +17,12 @@ async fn artifact_launch_place_replace_autodismiss_over_uds() {
     adapter
         .set_next_snapshot_geometry(Ok(GeometrySnapshot {
             display_id: DisplayId::new("in-mem-display-0"),
-            display_local: Rect { x: 30.0, y: 40.0, w: 500.0, h: 400.0 },
+            display_local: Rect {
+                x: 30.0,
+                y: 40.0,
+                w: 500.0,
+                h: 400.0,
+            },
         }))
         .await;
 
@@ -25,7 +31,9 @@ async fn artifact_launch_place_replace_autodismiss_over_uds() {
     let server_task = tokio::spawn(async move { serve(adapter_for_serve, socket_for_serve).await });
 
     for _ in 0..200 {
-        if socket.exists() { break; }
+        if socket.exists() {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(socket.exists(), "socket did not appear");
@@ -46,10 +54,7 @@ async fn artifact_launch_place_replace_autodismiss_over_uds() {
         )
         .await
         .expect("launch");
-    assert_eq!(
-        launch.placement,
-        porthole_core::placement::PlacementOutcome::Applied
-    );
+    assert_eq!(launch.placement, porthole_core::placement::PlacementOutcome::Applied);
 
     // 2. Replace with omitted placement → inheritance.
     let replace: porthole_protocol::launches::LaunchResponse = client
@@ -61,10 +66,7 @@ async fn artifact_launch_place_replace_autodismiss_over_uds() {
         )
         .await
         .expect("replace");
-    assert_eq!(
-        replace.placement,
-        porthole_core::placement::PlacementOutcome::Applied
-    );
+    assert_eq!(replace.placement, porthole_core::placement::PlacementOutcome::Applied);
     assert_ne!(replace.surface_id, launch.surface_id, "replace should mint a fresh id");
 
     // 3. URL artifact rejected.

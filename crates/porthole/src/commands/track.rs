@@ -9,11 +9,13 @@ pub struct TrackArgs {
 }
 
 pub async fn run(client: &DaemonClient, args: TrackArgs) -> Result<(), ClientError> {
-    let req = TrackRequest { ref_: args.ref_, session: args.session };
+    let req = TrackRequest {
+        ref_: args.ref_,
+        session: args.session,
+    };
     let res: TrackResponse = client.post_json("/surfaces/track", &req).await?;
     if args.json {
-        let text = serde_json::to_string_pretty(&res)
-            .map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
+        let text = serde_json::to_string_pretty(&res).map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
         println!("{text}");
     } else {
         println!("surface_id: {}", res.surface_id);

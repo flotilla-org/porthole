@@ -1,13 +1,14 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use crate::adapter::{Adapter, LaunchOutcome, LaunchSpec, ProcessLaunchSpec, Rect};
 #[cfg(test)]
 use crate::adapter::ArtifactLaunchSpec;
-use crate::handle::HandleStore;
-use crate::placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec};
-use crate::surface::{SurfaceId, SurfaceInfo};
-use crate::{ErrorCode, PortholeError};
+use crate::{
+    ErrorCode, PortholeError,
+    adapter::{Adapter, LaunchOutcome, LaunchSpec, ProcessLaunchSpec, Rect},
+    handle::HandleStore,
+    placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec},
+    surface::{SurfaceId, SurfaceInfo},
+};
 
 pub struct LaunchPipeline {
     adapter: Arc<dyn Adapter>,
@@ -19,11 +20,7 @@ impl LaunchPipeline {
         Self { adapter, handles }
     }
 
-    pub async fn launch(
-        &self,
-        spec: &LaunchSpec,
-        placement: Option<&PlacementSpec>,
-    ) -> Result<LaunchPipelineOutcome, LaunchPipelineError> {
+    pub async fn launch(&self, spec: &LaunchSpec, placement: Option<&PlacementSpec>) -> Result<LaunchPipelineOutcome, LaunchPipelineError> {
         // 0. Pre-flight: validate user-supplied placement spec.
         if let Some(p) = placement {
             validate_placement(p, &self.adapter).await.map_err(LaunchPipelineError::Porthole)?;
@@ -49,10 +46,7 @@ impl LaunchPipeline {
 
         // 3. Fresh-surface gate.
         if spec.require_fresh_surface() && outcome.surface_was_preexisting {
-            let ref_ = crate::search::encode_ref(
-                outcome.surface.pid.unwrap_or(0),
-                outcome.surface.cg_window_id.unwrap_or(0),
-            );
+            let ref_ = crate::search::encode_ref(outcome.surface.pid.unwrap_or(0), outcome.surface.cg_window_id.unwrap_or(0));
             return Err(LaunchPipelineError::ReturnedExisting(ExistingSurfaceInfo {
                 ref_,
                 app_name: outcome.surface.app_name.clone(),
@@ -65,7 +59,10 @@ impl LaunchPipeline {
         // 4. Insert or reuse the handle — prevents duplicate SurfaceIds for the
         //    same cg_window_id when an attach or prior launch already tracked it.
         let (stored, _reused) = self.handles.track_or_get(outcome.surface.clone()).await;
-        let outcome = LaunchOutcome { surface: stored, ..outcome };
+        let outcome = LaunchOutcome {
+            surface: stored,
+            ..outcome
+        };
 
         // 5. Resolve + apply placement.
         let placement_outcome = if outcome.surface_was_preexisting {
@@ -78,15 +75,16 @@ impl LaunchPipeline {
             self.apply_placement(&outcome.surface, placement).await
         };
 
-        Ok(LaunchPipelineOutcome { outcome, placement: placement_outcome })
+        Ok(LaunchPipelineOutcome {
+            outcome,
+            placement: placement_outcome,
+        })
     }
 
-    async fn apply_placement(
-        &self,
-        surface: &SurfaceInfo,
-        placement: Option<&PlacementSpec>,
-    ) -> PlacementOutcome {
-        let Some(p) = placement else { return PlacementOutcome::NotRequested; };
+    async fn apply_placement(&self, surface: &SurfaceInfo, placement: Option<&PlacementSpec>) -> PlacementOutcome {
+        let Some(p) = placement else {
+            return PlacementOutcome::NotRequested;
+        };
         if p.is_effectively_empty() {
             return PlacementOutcome::NotRequested;
         }
@@ -148,10 +146,7 @@ impl From<PortholeError> for LaunchPipelineError {
 /// Fails with `invalid_argument` when display ids don't resolve. Runtime
 /// AX failures during actual apply are NOT in scope — those become
 /// PlacementOutcome::Failed.
-async fn validate_placement(
-    spec: &PlacementSpec,
-    adapter: &Arc<dyn Adapter>,
-) -> Result<(), PortholeError> {
+async fn validate_placement(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>) -> Result<(), PortholeError> {
     if spec.is_effectively_empty() {
         return Ok(());
     }
@@ -162,11 +157,7 @@ async fn validate_placement(
             let known: Vec<String> = displays.iter().map(|d| d.id.as_str().to_string()).collect();
             return Err(PortholeError::new(
                 ErrorCode::InvalidArgument,
-                format!(
-                    "unknown on_display id '{}'; known ids: [{}]",
-                    id.as_str(),
-                    known.join(", ")
-                ),
+                format!("unknown on_display id '{}'; known ids: [{}]", id.as_str(), known.join(", ")),
             ));
         }
     }
@@ -200,11 +191,7 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
             // By the time we get here, validate_placement has already confirmed the id exists.
             // This fallback handles the rare race where displays change between validation and apply.
             .unwrap_or_else(|| displays[0].clone()),
-        Some(DisplayTarget::Primary) => displays
-            .iter()
-            .find(|d| d.primary)
-            .cloned()
-            .unwrap_or_else(|| displays[0].clone()),
+        Some(DisplayTarget::Primary) => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
         Some(DisplayTarget::Focused) => {
             let attn = attn_opt.as_ref().unwrap();
             match &attn.focused_display_id {
@@ -250,7 +237,12 @@ async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>
 
     // 2. Compute geometry on that display.
     let global = if let Some(local) = &spec.geometry {
-        Rect { x: target.bounds.x + local.x, y: target.bounds.y + local.y, w: local.w, h: local.h }
+        Rect {
+            x: target.bounds.x + local.x,
+            y: target.bounds.y + local.y,
+            w: local.w,
+            h: local.h,
+        }
     } else {
         // No explicit geometry — synthesise a conservative default.
         let w = (target.bounds.w * 0.7).min(1400.0);
@@ -297,9 +289,11 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::adapter::{Confidence, Correlation, RequireConfidence};
-    use crate::in_memory::InMemoryAdapter;
-    use crate::surface::SurfaceState;
+    use crate::{
+        adapter::{Confidence, Correlation, RequireConfidence},
+        in_memory::InMemoryAdapter,
+        surface::SurfaceState,
+    };
 
     fn spec(required: RequireConfidence) -> ProcessLaunchSpec {
         ProcessLaunchSpec {
@@ -410,7 +404,12 @@ mod tests {
         let spec = LaunchSpec::Process(spec_minimal(RequireConfidence::Strong));
         let placement = PlacementSpec {
             on_display: Some(DisplayTarget::Primary),
-            geometry: Some(Rect { x: 10.0, y: 20.0, w: 800.0, h: 600.0 }),
+            geometry: Some(Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 800.0,
+                h: 600.0,
+            }),
             anchor: None,
         };
         let result = pipeline.launch(&spec, Some(&placement)).await.unwrap();
@@ -430,7 +429,12 @@ mod tests {
 
         let placement = PlacementSpec {
             on_display: Some(DisplayTarget::Primary),
-            geometry: Some(Rect { x: 0.0, y: 0.0, w: 500.0, h: 500.0 }),
+            geometry: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 500.0,
+                h: 500.0,
+            }),
             anchor: None,
         };
         let spec = LaunchSpec::Process(spec_minimal(RequireConfidence::Strong));
@@ -443,16 +447,18 @@ mod tests {
     async fn placement_failure_reported_as_outcome_not_error() {
         let adapter = Arc::new(InMemoryAdapter::new());
         adapter
-            .set_next_place_surface_result(Err(PortholeError::new(
-                ErrorCode::CapabilityMissing,
-                "window refused resize",
-            )))
+            .set_next_place_surface_result(Err(PortholeError::new(ErrorCode::CapabilityMissing, "window refused resize")))
             .await;
         let handles = HandleStore::new();
         let pipeline = LaunchPipeline::new(adapter.clone(), handles);
         let placement = PlacementSpec {
             on_display: Some(DisplayTarget::Primary),
-            geometry: Some(Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 }),
+            geometry: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 200.0,
+            }),
             anchor: None,
         };
         let spec = LaunchSpec::Process(spec_minimal(RequireConfidence::Strong));
@@ -471,8 +477,7 @@ mod tests {
         let id = info.id.clone();
         handles.insert(info).await;
 
-        let _handle =
-            schedule_auto_dismiss(adapter.clone(), handles.clone(), id.clone(), Duration::from_millis(20));
+        let _handle = schedule_auto_dismiss(adapter.clone(), handles.clone(), id.clone(), Duration::from_millis(20));
         tokio::time::sleep(Duration::from_millis(60)).await;
 
         // Expect adapter.close was called once and handle is dead.
@@ -554,15 +559,22 @@ mod tests {
 
     #[tokio::test]
     async fn cursor_anchor_centers_at_cursor_position() {
-        use crate::attention::{AttentionInfo, CursorPos};
-        use crate::display::{DisplayId, DisplayInfo, Rect as DRect};
+        use crate::{
+            attention::{AttentionInfo, CursorPos},
+            display::{DisplayId, DisplayInfo, Rect as DRect},
+        };
 
         let adapter = Arc::new(InMemoryAdapter::new());
         // Script displays: one 1920x1080 primary.
         adapter
             .set_next_displays(Ok(vec![DisplayInfo {
                 id: DisplayId::new("in-mem-display-0"),
-                bounds: DRect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 },
+                bounds: DRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1920.0,
+                    h: 1080.0,
+                },
                 scale: 1.0,
                 primary: true,
                 focused: true,
@@ -574,7 +586,11 @@ mod tests {
                 focused_surface_id: None,
                 focused_app_name: None,
                 focused_display_id: Some(DisplayId::new("in-mem-display-0")),
-                cursor: CursorPos { x: 1000.0, y: 500.0, display_id: Some(DisplayId::new("in-mem-display-0")) },
+                cursor: CursorPos {
+                    x: 1000.0,
+                    y: 500.0,
+                    display_id: Some(DisplayId::new("in-mem-display-0")),
+                },
                 recently_active_surface_ids: vec![],
             }))
             .await;

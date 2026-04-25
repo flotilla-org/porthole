@@ -1,8 +1,6 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use porthole_core::in_memory::InMemoryAdapter;
-use porthole_core::surface::SurfaceInfo;
+use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
 use portholed::server::serve;
 
 #[tokio::test]
@@ -16,7 +14,9 @@ async fn cli_through_daemon_key_text_click_wait_close() {
     let server_task = tokio::spawn(async move { serve(adapter_for_serve, socket_for_serve).await });
 
     for _ in 0..200 {
-        if socket.exists() { break; }
+        if socket.exists() {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(socket.exists(), "socket did not appear");
