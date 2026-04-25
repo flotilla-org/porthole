@@ -43,21 +43,64 @@ fn sr_request_prompt() -> bool {
     unsafe { CGRequestScreenCaptureAccess() != 0 }
 }
 
+pub(crate) struct SupportedPermission {
+    pub name: &'static str,
+    pub purpose: &'static str,
+    pub settings_path: &'static str,
+    pub notes_base: &'static str,
+    pub restart_required: bool,
+    pub live_check: fn() -> bool,
+    pub request_prompt: fn() -> bool,
+}
+
+/// Single source of truth for the macOS adapter's supported permissions.
+/// Adding a permission: extend this slice and add an `ensure_*_granted`
+/// facade in this module for call-site readability. The
+/// `MacOsAdapter::prompted` array sizes itself from this constant — no
+/// manual update needed there.
+pub(crate) const SUPPORTED_PERMISSIONS: &[SupportedPermission] = &[
+    SupportedPermission {
+        name: "accessibility",
+        purpose: "input injection and some wait conditions",
+        settings_path: "System Settings → Privacy & Security → Accessibility",
+        notes_base: "Open System Settings → Privacy & Security → Accessibility and enable porthole.",
+        restart_required: true,
+        live_check: ax_is_trusted_live,
+        request_prompt: ax_request_prompt,
+    },
+    SupportedPermission {
+        name: "screen_recording",
+        purpose: "window screenshot capture and frame-diff waits",
+        settings_path: "System Settings → Privacy & Security → Screen Recording",
+        notes_base: "Open System Settings → Privacy & Security → Screen Recording and enable porthole.",
+        restart_required: false,
+        live_check: sr_is_granted_live,
+        request_prompt: sr_request_prompt,
+    },
+];
+
+pub(crate) fn lookup(name: &str) -> Option<&'static SupportedPermission> {
+    SUPPORTED_PERMISSIONS.iter().find(|p| p.name == name)
+}
+
+pub(crate) fn unknown_name_error(name: &str) -> PortholeError {
+    let supported: Vec<&str> = SUPPORTED_PERMISSIONS.iter().map(|p| p.name).collect();
+    PortholeError::new(
+        ErrorCode::InvalidArgument,
+        format!("unknown system permission: {name}"),
+    )
+    .with_details(serde_json::json!({ "supported_names": supported }))
+}
+
 pub async fn system_permissions() -> Result<Vec<SystemPermissionStatus>, PortholeError> {
-    let ax = ax_is_trusted_live();
-    let scr = sr_is_granted_live();
-    Ok(vec![
-        SystemPermissionStatus {
-            name: "accessibility".into(),
-            granted: ax,
-            purpose: "input injection and some wait conditions".into(),
-        },
-        SystemPermissionStatus {
-            name: "screen_recording".into(),
-            granted: scr,
-            purpose: "window screenshot capture and frame-diff waits".into(),
-        },
-    ])
+    Ok(SUPPORTED_PERMISSIONS
+        .iter()
+        .map(|p| SystemPermissionStatus {
+            name: p.name.into(),
+            granted: (p.live_check)(),
+            purpose: p.purpose.into(),
+        })
+        .collect())
 }
 
 /// Resolves the daemon's binary path for display in remediation blocks.
@@ -68,43 +111,36 @@ pub fn daemon_binary_path() -> String {
         .unwrap_or_else(|_| "<unknown>".to_string())
 }
 
-/// Human-readable Settings path for a named permission.
+/// Human-readable Settings path for a named permission. Falls back to a
+/// generic Privacy & Security entry for unknown names.
 pub fn settings_path_for(name: &str) -> &'static str {
-    match name {
-        "accessibility" => "System Settings → Privacy & Security → Accessibility",
-        "screen_recording" => "System Settings → Privacy & Security → Screen Recording",
-        _ => "System Settings → Privacy & Security",
-    }
+    lookup(name)
+        .map(|p| p.settings_path)
+        .unwrap_or("System Settings → Privacy & Security")
 }
 
-pub fn notes_for(name: &str, requires_restart: bool) -> String {
-    let base = match name {
-        "accessibility" => "Open System Settings → Privacy & Security → Accessibility and enable porthole.",
-        "screen_recording" => "Open System Settings → Privacy & Security → Screen Recording and enable porthole.",
-        _ => "Open System Settings → Privacy & Security and enable porthole.",
+pub fn notes_for(name: &str) -> String {
+    let Some(p) = lookup(name) else {
+        return "Open System Settings → Privacy & Security and enable porthole.".to_string();
     };
-    if requires_restart {
-        format!("{base} After granting, restart the daemon so the AX runtime initialises with the new trust state.")
+    if p.restart_required {
+        format!(
+            "{} After granting, restart the daemon so the AX runtime initialises with the new trust state.",
+            p.notes_base
+        )
     } else {
-        base.to_string()
+        p.notes_base.to_string()
     }
 }
 
 pub fn requires_daemon_restart(name: &str) -> bool {
-    matches!(name, "accessibility")
+    lookup(name).map(|p| p.restart_required).unwrap_or(false)
 }
 
 pub(crate) fn is_granted(name: &str) -> Result<bool, PortholeError> {
-    match name {
-        "accessibility" => Ok(ax_is_trusted_live()),
-        "screen_recording" => Ok(sr_is_granted_live()),
-        _ => Err(PortholeError::new(
-            ErrorCode::InvalidArgument,
-            format!("unknown system permission: {name}"),
-        )
-        .with_details(serde_json::json!({
-            "supported_names": ["accessibility", "screen_recording"]
-        }))),
+    match lookup(name) {
+        Some(p) => Ok((p.live_check)()),
+        None => Err(unknown_name_error(name)),
     }
 }
 
@@ -112,6 +148,9 @@ pub(crate) fn is_granted(name: &str) -> Result<bool, PortholeError> {
 /// `Err(reason)` if the process is not running in a bundle context where
 /// TCC would actually open a dialog.
 pub(crate) fn try_trigger_prompt(name: &str) -> Result<(), String> {
+    let Some(p) = lookup(name) else {
+        return Err(format!("unknown system permission: {name}"));
+    };
     let is_bundle = std::env::current_exe()
         .ok()
         .and_then(|p| {
@@ -127,17 +166,8 @@ pub(crate) fn try_trigger_prompt(name: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
-    match name {
-        "accessibility" => {
-            ax_request_prompt();
-            Ok(())
-        }
-        "screen_recording" => {
-            sr_request_prompt();
-            Ok(())
-        }
-        _ => Err(format!("unknown system permission: {name}")),
-    }
+    (p.request_prompt)();
+    Ok(())
 }
 
 use crate::MacOsAdapter;
@@ -179,7 +209,7 @@ pub fn ensure_screen_recording_granted(adapter: &MacOsAdapter) -> Result<(), Por
     ensure_granted(adapter, "screen_recording")
 }
 
-fn ensure_granted(adapter: &MacOsAdapter, name: &str) -> Result<(), PortholeError> {
+pub(crate) fn ensure_granted(adapter: &MacOsAdapter, name: &str) -> Result<(), PortholeError> {
     if is_granted(name)? {
         return Ok(());
     }

@@ -36,35 +36,39 @@ pub mod wait;
 pub mod window_alive;
 
 pub struct MacOsAdapter {
-    ax_prompted: AtomicBool,
-    sr_prompted: AtomicBool,
+    /// One AtomicBool per entry in `permissions::SUPPORTED_PERMISSIONS`,
+    /// matched by position. Tracks whether the OS prompt API has been called
+    /// for that permission this daemon session.
+    prompted: [AtomicBool; permissions::SUPPORTED_PERMISSIONS.len()],
 }
 
 impl MacOsAdapter {
     pub fn new() -> Self {
         Self {
-            ax_prompted: AtomicBool::new(false),
-            sr_prompted: AtomicBool::new(false),
+            prompted: std::array::from_fn(|_| AtomicBool::new(false)),
         }
+    }
+
+    fn prompted_index(name: &str) -> Option<usize> {
+        permissions::SUPPORTED_PERMISSIONS.iter().position(|p| p.name == name)
     }
 
     /// For preflight / request paths: mark a permission as having had its
     /// prompt API called. Returns the *previous* value (true if already
-    /// prompted, false on first call).
+    /// prompted, false on first call). Unknown names return true (caller's
+    /// problem — they should reject before calling).
     pub fn set_prompted(&self, name: &str) -> bool {
-        match name {
-            "accessibility" => self.ax_prompted.swap(true, Ordering::SeqCst),
-            "screen_recording" => self.sr_prompted.swap(true, Ordering::SeqCst),
-            _ => true, // unknown name: don't track, caller's problem
+        match Self::prompted_index(name) {
+            Some(i) => self.prompted[i].swap(true, Ordering::SeqCst),
+            None => true,
         }
     }
 
     /// Check without modifying.
     pub fn was_prompted(&self, name: &str) -> bool {
-        match name {
-            "accessibility" => self.ax_prompted.load(Ordering::SeqCst),
-            "screen_recording" => self.sr_prompted.load(Ordering::SeqCst),
-            _ => true,
+        match Self::prompted_index(name) {
+            Some(i) => self.prompted[i].load(Ordering::SeqCst),
+            None => true,
         }
     }
 }
@@ -139,16 +143,10 @@ impl Adapter for MacOsAdapter {
     }
 
     async fn ensure_system_permission(&self, name: &str) -> Result<(), PortholeError> {
-        match name {
-            "accessibility" => permissions::ensure_accessibility_granted(self),
-            "screen_recording" => permissions::ensure_screen_recording_granted(self),
-            _ => Err(PortholeError::new(
-                ErrorCode::InvalidArgument,
-                format!("unknown system permission: {name}"),
-            )
-            .with_details(serde_json::json!({
-                "supported_names": ["accessibility", "screen_recording"]
-            }))),
+        if permissions::lookup(name).is_some() {
+            permissions::ensure_granted(self, name)
+        } else {
+            Err(permissions::unknown_name_error(name))
         }
     }
 
@@ -185,7 +183,7 @@ impl Adapter for MacOsAdapter {
             granted_after,
             prompt_triggered,
             requires_daemon_restart,
-            notes: permissions::notes_for(name, requires_daemon_restart),
+            notes: permissions::notes_for(name),
         })
     }
 
