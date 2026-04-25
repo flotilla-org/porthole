@@ -1,3 +1,4 @@
+use porthole_core::permission::SystemPermissionPromptOutcome as CoreOutcome;
 use serde::{Deserialize, Serialize};
 
 /// Response body for `POST /system-permissions/request`.
@@ -9,6 +10,27 @@ pub struct SystemPermissionPromptOutcome {
     pub prompt_triggered: bool,
     pub requires_daemon_restart: bool,
     pub notes: String,
+}
+
+impl From<CoreOutcome> for SystemPermissionPromptOutcome {
+    fn from(o: CoreOutcome) -> Self {
+        let CoreOutcome {
+            permission,
+            granted_before,
+            granted_after,
+            prompt_triggered,
+            requires_daemon_restart,
+            notes,
+        } = o;
+        Self {
+            permission,
+            granted_before,
+            granted_after,
+            prompt_triggered,
+            requires_daemon_restart,
+            notes,
+        }
+    }
 }
 
 /// Body for `system_permission_needed`. Serialises into `WireError::details`.
@@ -39,6 +61,25 @@ pub struct SystemPermissionRequestFailedBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_outcome_from_core_preserves_all_fields() {
+        let core = CoreOutcome {
+            permission: "accessibility".into(),
+            granted_before: true,
+            granted_after: false,
+            prompt_triggered: true,
+            requires_daemon_restart: true,
+            notes: "n".into(),
+        };
+        let wire: SystemPermissionPromptOutcome = core.clone().into();
+        assert_eq!(wire.permission, core.permission);
+        assert_eq!(wire.granted_before, core.granted_before);
+        assert_eq!(wire.granted_after, core.granted_after);
+        assert_eq!(wire.prompt_triggered, core.prompt_triggered);
+        assert_eq!(wire.requires_daemon_restart, core.requires_daemon_restart);
+        assert_eq!(wire.notes, core.notes);
+    }
 
     #[test]
     fn prompt_outcome_roundtrip() {

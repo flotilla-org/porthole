@@ -31,17 +31,7 @@ pub async fn post_request(
         .adapter
         .request_system_permission_prompt(&body.name)
         .await?;
-
-    // Convert core type → wire type (identical fields; we re-shape to keep
-    // the protocol crate as the single source of the wire types).
-    Ok(Json(SystemPermissionPromptOutcome {
-        permission: core_outcome.permission,
-        granted_before: core_outcome.granted_before,
-        granted_after: core_outcome.granted_after,
-        prompt_triggered: core_outcome.prompt_triggered,
-        requires_daemon_restart: core_outcome.requires_daemon_restart,
-        notes: core_outcome.notes,
-    }))
+    Ok(Json(core_outcome.into()))
 }
 
 #[cfg(test)]
