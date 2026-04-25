@@ -10,12 +10,12 @@ use crate::adapter::{
 use crate::attention::{AttentionInfo, CursorPos};
 use crate::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::PermissionStatus;
+use crate::permission::{SystemPermissionPromptOutcome, SystemPermissionStatus};
 use crate::placement::GeometrySnapshot;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
 use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use crate::PortholeError;
+use crate::{ErrorCode, PortholeError};
 
 #[derive(Clone, Default)]
 pub struct InMemoryAdapter {
@@ -35,7 +35,7 @@ struct Script {
     next_wait_result: Option<Result<WaitOutcome, WaitTimeout>>,
     next_attention: Option<Result<AttentionInfo, PortholeError>>,
     next_displays: Option<Result<Vec<DisplayInfo>, PortholeError>>,
-    next_permissions: Option<Result<Vec<PermissionStatus>, PortholeError>>,
+    next_system_permissions: Option<Result<Vec<SystemPermissionStatus>, PortholeError>>,
     next_search_result: Option<Result<Vec<Candidate>, PortholeError>>,
     next_window_alive_result: Option<Result<Option<SurfaceInfo>, PortholeError>>,
     next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
@@ -58,7 +58,7 @@ struct Script {
     wait_calls: Vec<(SurfaceId, WaitCondition)>,
     attention_calls: usize,
     displays_calls: usize,
-    permissions_calls: usize,
+    system_permissions_calls: usize,
 }
 
 impl InMemoryAdapter {
@@ -102,8 +102,8 @@ impl InMemoryAdapter {
     pub async fn set_next_displays(&self, v: Result<Vec<DisplayInfo>, PortholeError>) {
         self.script.lock().await.next_displays = Some(v);
     }
-    pub async fn set_next_permissions(&self, v: Result<Vec<PermissionStatus>, PortholeError>) {
-        self.script.lock().await.next_permissions = Some(v);
+    pub async fn set_next_system_permissions(&self, v: Result<Vec<SystemPermissionStatus>, PortholeError>) {
+        self.script.lock().await.next_system_permissions = Some(v);
     }
     pub async fn set_next_search_result(&self, v: Result<Vec<Candidate>, PortholeError>) {
         self.script.lock().await.next_search_result = Some(v);
@@ -155,8 +155,8 @@ impl InMemoryAdapter {
     pub async fn displays_calls(&self) -> usize {
         self.script.lock().await.displays_calls
     }
-    pub async fn permissions_calls(&self) -> usize {
-        self.script.lock().await.permissions_calls
+    pub async fn system_permissions_calls(&self) -> usize {
+        self.script.lock().await.system_permissions_calls
     }
     pub async fn search_calls(&self) -> Vec<SearchQuery> {
         self.script.lock().await.search_calls.clone()
@@ -308,10 +308,24 @@ impl Adapter for InMemoryAdapter {
         s.next_displays.take().unwrap_or_else(|| Ok(Self::default_displays()))
     }
 
-    async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError> {
+    async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError> {
         let mut s = self.script.lock().await;
-        s.permissions_calls += 1;
-        s.next_permissions.take().unwrap_or(Ok(vec![]))
+        s.system_permissions_calls += 1;
+        s.next_system_permissions.take().unwrap_or(Ok(vec![]))
+    }
+
+    async fn request_system_permission_prompt(
+        &self,
+        _name: &str,
+    ) -> Result<SystemPermissionPromptOutcome, PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "in-memory adapter does not support system permission prompts",
+        ))
+    }
+
+    async fn ensure_system_permission(&self, _name: &str) -> Result<(), PortholeError> {
+        Ok(())
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError> {
@@ -410,7 +424,6 @@ mod tests {
 
     use super::*;
     use crate::adapter::RequireConfidence;
-    use crate::ErrorCode;
 
     #[tokio::test]
     async fn launch_records_call_and_returns_default_outcome() {
@@ -440,10 +453,10 @@ mod tests {
     #[tokio::test]
     async fn scripted_error_is_surfaced() {
         let adapter = InMemoryAdapter::new();
-        adapter.set_next_key_result(Err(PortholeError::new(ErrorCode::PermissionNeeded, "no ax"))).await;
+        adapter.set_next_key_result(Err(PortholeError::new(ErrorCode::SystemPermissionNeeded, "no ax"))).await;
         let outcome = InMemoryAdapter::make_default_launch_outcome(1);
         let err = adapter.key(&outcome.surface, &[]).await.unwrap_err();
-        assert_eq!(err.code, ErrorCode::PermissionNeeded);
+        assert_eq!(err.code, ErrorCode::SystemPermissionNeeded);
     }
 
     #[tokio::test]
@@ -554,5 +567,27 @@ mod tests {
         assert!(got.is_some());
         let calls = adapter.window_alive_calls().await;
         assert_eq!(calls, vec![(42, 7)]);
+    }
+}
+
+#[cfg(test)]
+mod system_permission_prompt_tests {
+    use super::*;
+    use crate::adapter::Adapter;
+
+    #[tokio::test]
+    async fn in_memory_returns_adapter_unsupported() {
+        let adapter = InMemoryAdapter::new();
+        let err = adapter
+            .request_system_permission_prompt("accessibility")
+            .await
+            .expect_err("should error");
+        assert_eq!(err.code, ErrorCode::AdapterUnsupported);
+    }
+
+    #[test]
+    fn in_memory_does_not_advertise_system_permission_prompt_capability() {
+        let adapter = InMemoryAdapter::new();
+        assert!(!adapter.capabilities().contains(&"system_permission_prompt"));
     }
 }

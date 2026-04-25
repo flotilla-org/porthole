@@ -3,6 +3,9 @@
 use porthole_core::surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
 use porthole_core::PortholeError;
 
+use crate::MacOsAdapter;
+use crate::permissions::ensure_screen_recording_granted;
+
 /// Enumerates all windows (including off-screen, minimized, and other-Space)
 /// and returns a fresh SurfaceInfo if a window with the given
 /// (pid, cg_window_id) exists.
@@ -10,7 +13,8 @@ use porthole_core::PortholeError;
 /// Unlike `list_windows()` which uses `kCGWindowListOptionOnScreenOnly`, this
 /// uses a broader option set so tracked handles remain valid through hide /
 /// minimize / Space-switch cycles.
-pub async fn window_alive(pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError> {
+pub async fn window_alive(adapter: &MacOsAdapter, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError> {
+    ensure_screen_recording_granted(adapter)?;
     use core_foundation::base::TCFType;
     use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
     use core_foundation::number::CFNumber;

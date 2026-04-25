@@ -23,7 +23,7 @@ pub use attention::{AttentionInfo, CursorPos};
 pub use display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 pub use error::{ErrorCode, PortholeError};
 pub use input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
-pub use permission::PermissionStatus;
+pub use permission::SystemPermissionStatus;
 pub use placement::{Anchor, DisplayTarget, GeometrySnapshot, PlacementOutcome, PlacementSpec};
 pub use search::{Candidate, SearchQuery};
 pub use surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};

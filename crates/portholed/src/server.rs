@@ -16,6 +16,7 @@ use crate::routes::{
     launches as launches_route,
     replace as replace_route,
     screenshot as screenshot_route,
+    system_permissions as system_permissions_route,
     wait as wait_route,
 };
 use crate::state::AppState;
@@ -37,6 +38,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/replace", post(replace_route::post_replace))
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
+        .route(
+            "/system-permissions/request",
+            post(system_permissions_route::post_request),
+        )
         .with_state(state)
 }
 
@@ -404,7 +409,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_replace_preserves_permission_needed_from_close() {
+    async fn post_replace_preserves_system_permission_needed_from_close() {
         use porthole_core::surface::{SurfaceId, SurfaceInfo};
 
         let adapter = Arc::new(InMemoryAdapter::new());
@@ -416,7 +421,7 @@ mod tests {
 
         adapter
             .set_next_close_result(Err(porthole_core::PortholeError::new(
-                porthole_core::ErrorCode::PermissionNeeded,
+                porthole_core::ErrorCode::SystemPermissionNeeded,
                 "AX denied",
             )))
             .await;
@@ -431,12 +436,12 @@ mod tests {
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
-        assert_eq!(err.code, porthole_core::ErrorCode::PermissionNeeded);
+        assert_eq!(err.code, porthole_core::ErrorCode::SystemPermissionNeeded);
         let details = err.details.expect("details populated");
         assert_eq!(
             details.get("old_handle_alive").and_then(|v| v.as_bool()),
             Some(true),
-            "permission_needed on close means surface is likely still alive"
+            "system_permission_needed on close means surface is likely still alive"
         );
     }
 

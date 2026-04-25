@@ -9,13 +9,13 @@ use porthole_core::PortholeError;
 pub(crate) fn cursor_position() -> Result<(f64, f64), PortholeError> {
     let src = CGEventSource::new(CGEventSourceStateID::HIDSystemState).map_err(|_| {
         PortholeError::new(
-            porthole_core::ErrorCode::PermissionNeeded,
+            porthole_core::ErrorCode::SystemPermissionNeeded,
             "cursor_position: event source failed",
         )
     })?;
     let ev = CGEvent::new(src).map_err(|_| {
         PortholeError::new(
-            porthole_core::ErrorCode::PermissionNeeded,
+            porthole_core::ErrorCode::SystemPermissionNeeded,
             "cursor_position: event create failed",
         )
     })?;

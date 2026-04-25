@@ -6,7 +6,7 @@ use crate::attention::AttentionInfo;
 use crate::display::DisplayInfo;
 pub use crate::display::Rect;
 use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::PermissionStatus;
+use crate::permission::{SystemPermissionPromptOutcome, SystemPermissionStatus};
 use crate::placement::GeometrySnapshot;
 use crate::search::{Candidate, SearchQuery};
 use crate::surface::SurfaceInfo;
@@ -150,7 +150,27 @@ pub trait Adapter: Send + Sync {
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
-    async fn permissions(&self) -> Result<Vec<PermissionStatus>, PortholeError>;
+    async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError>;
+
+    /// Trigger the OS prompt for the named system permission. Returns a structured
+    /// result with the grant state before/after and any restart requirement.
+    /// Calling this for a permission that's already granted is a no-op that
+    /// still returns the current state.
+    ///
+    /// `name` is a string matching one of the names the adapter advertises via
+    /// `system_permissions()`. Unknown names return an `InvalidArgument` error
+    /// with the supported names in details.
+    async fn request_system_permission_prompt(
+        &self,
+        name: &str,
+    ) -> Result<SystemPermissionPromptOutcome, PortholeError>;
+
+    /// Preflight: verify the named system permission is granted. If not, the
+    /// adapter may attempt to trigger an OS prompt as a side effect, then
+    /// returns `Err(PortholeError)` with code `system_permission_needed` or
+    /// `system_permission_request_failed`. Adapters that don't gate on
+    /// OS permissions return `Ok(())`.
+    async fn ensure_system_permission(&self, name: &str) -> Result<(), PortholeError>;
 
     /// Enumerate candidate surfaces matching the query. Empty matches
     /// return `Ok(vec![])`, not an error.

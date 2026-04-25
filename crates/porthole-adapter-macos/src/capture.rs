@@ -4,7 +4,11 @@ use porthole_core::adapter::{Rect, Screenshot};
 use porthole_core::surface::SurfaceInfo;
 use porthole_core::{ErrorCode, PortholeError};
 
-pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
+use crate::MacOsAdapter;
+use crate::permissions::ensure_screen_recording_granted;
+
+pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
+    ensure_screen_recording_granted(adapter)?;
     #[cfg(not(target_os = "macos"))]
     {
         let _ = surface;
@@ -26,9 +30,9 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
         // Resolve geometry first (before holding any non-Send CG types across an await).
         // Look up the backing scale for the display the window is on.
         // The macOS display ID encoding is "disp_<cgid>".
-        let snap = crate::snapshot::snapshot_geometry(surface).await;
-        let (pre_snap, pre_scale) = match &snap {
-            Ok(s) => {
+        let snap = crate::snapshot::snapshot_geometry(adapter, surface).await;
+        let (pre_snap, pre_scale) = match snap {
+            Ok(ref s) => {
                 let cg_id: u32 = s.display_id.as_str()
                     .strip_prefix("disp_")
                     .and_then(|x| x.parse().ok())
@@ -39,6 +43,12 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
                     1.0
                 };
                 (Some(s.display_local), scale)
+            }
+            Err(e) if matches!(
+                e.code,
+                ErrorCode::SystemPermissionNeeded | ErrorCode::SystemPermissionRequestFailed
+            ) => {
+                return Err(e);
             }
             Err(_) => (None, 1.0),
         };
@@ -63,7 +73,7 @@ pub async fn screenshot(surface: &SurfaceInfo) -> Result<Screenshot, PortholeErr
             Some(img) => img,
             None => {
                 return Err(PortholeError::new(
-                    ErrorCode::PermissionNeeded,
+                    ErrorCode::SystemPermissionNeeded,
                     "CGWindowListCreateImage returned null — likely missing Screen Recording permission",
                 ));
             }

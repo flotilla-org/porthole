@@ -45,11 +45,21 @@ impl From<LaunchPipelineError> for ApiError {
 impl From<ReplacePipelineError> for ApiError {
     fn from(err: ReplacePipelineError) -> Self {
         match err {
-            ReplacePipelineError::Porthole { error, old_handle_alive } => Self(WireError {
-                code: error.code,
-                message: error.message,
-                details: serde_json::to_value(serde_json::json!({ "old_handle_alive": old_handle_alive })).ok(),
-            }),
+            ReplacePipelineError::Porthole { error, old_handle_alive } => {
+                let mut wire: WireError = error.into();
+                let merged = match wire.details.take() {
+                    Some(serde_json::Value::Object(mut map)) => {
+                        map.insert(
+                            "old_handle_alive".into(),
+                            serde_json::Value::Bool(old_handle_alive),
+                        );
+                        serde_json::Value::Object(map)
+                    }
+                    _ => serde_json::json!({ "old_handle_alive": old_handle_alive }),
+                };
+                wire.details = Some(merged);
+                Self(wire)
+            }
             ReplacePipelineError::ReturnedExisting { info, old_handle_alive } => {
                 let mut wire = existing_to_wire(info);
                 if let Some(details) = wire.details.as_mut().and_then(|v| v.as_object_mut()) {
@@ -81,7 +91,8 @@ impl IntoResponse for ApiError {
         let status = match self.0.code {
             ErrorCode::SurfaceNotFound => StatusCode::NOT_FOUND,
             ErrorCode::SurfaceDead => StatusCode::GONE,
-            ErrorCode::PermissionNeeded => StatusCode::FORBIDDEN,
+            ErrorCode::SystemPermissionNeeded => StatusCode::FORBIDDEN,
+            ErrorCode::SystemPermissionRequestFailed => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::LaunchCorrelationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::LaunchCorrelationAmbiguous => StatusCode::CONFLICT,
             ErrorCode::LaunchTimeout => StatusCode::GATEWAY_TIMEOUT,
@@ -129,6 +140,16 @@ mod tests {
     }
 
     #[test]
+    fn porthole_error_with_details_propagates_to_wire() {
+        let err = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax needed")
+            .with_details(serde_json::json!({ "permission": "accessibility" }));
+        let wire: porthole_protocol::error::WireError = err.into();
+        assert_eq!(wire.code, ErrorCode::SystemPermissionNeeded);
+        let details = wire.details.expect("details propagated");
+        assert_eq!(details["permission"], "accessibility");
+    }
+
+    #[test]
     fn wire_error_details_skipped_when_none() {
         let w = WireError { code: ErrorCode::SurfaceDead, message: "gone".into(), details: None };
         let json = serde_json::to_string(&w).unwrap();
@@ -141,5 +162,35 @@ mod tests {
         let api_err = ApiError::from(err);
         let response = api_err.into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn replace_porthole_merges_old_handle_alive_into_existing_details() {
+        use porthole_core::replace_pipeline::ReplacePipelineError;
+        let wrapped = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax")
+            .with_details(serde_json::json!({
+                "permission": "accessibility",
+                "remediation": { "cli_command": "porthole onboard" }
+            }));
+        let api_err = ApiError::from(ReplacePipelineError::Porthole {
+            error: wrapped,
+            old_handle_alive: true,
+        });
+        let details = api_err.0.details.expect("details merged");
+        assert_eq!(details["old_handle_alive"], true);
+        assert_eq!(details["permission"], "accessibility");
+        assert_eq!(details["remediation"]["cli_command"], "porthole onboard");
+    }
+
+    #[test]
+    fn replace_porthole_populates_details_when_wrapped_has_none() {
+        use porthole_core::replace_pipeline::ReplacePipelineError;
+        let wrapped = PortholeError::new(ErrorCode::SurfaceDead, "gone");
+        let api_err = ApiError::from(ReplacePipelineError::Porthole {
+            error: wrapped,
+            old_handle_alive: false,
+        });
+        let details = api_err.0.details.expect("details populated");
+        assert_eq!(details["old_handle_alive"], false);
     }
 }

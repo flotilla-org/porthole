@@ -6,12 +6,15 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::{ErrorCode, PortholeError};
 
 use crate::ax::{AxElement, AxElementRef, AXValueGetValue};
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 // AXValue type tags for CGPoint and CGSize.
 const K_AX_VALUE_CG_POINT_TYPE: i32 = 1;
 const K_AX_VALUE_CG_SIZE_TYPE: i32 = 2;
 
-pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
+pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let pid = surface.pid.ok_or_else(|| {
         PortholeError::new(ErrorCode::CapabilityMissing, "focus: surface has no pid")
     })? as i32;
@@ -37,7 +40,8 @@ pub async fn focus(surface: &SurfaceInfo) -> Result<(), PortholeError> {
     Ok(())
 }
 
-pub async fn close(surface: &SurfaceInfo) -> Result<(), PortholeError> {
+pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     use crate::enumerate::list_windows;
     use tokio::time::sleep;
 
@@ -69,19 +73,20 @@ pub async fn close(surface: &SurfaceInfo) -> Result<(), PortholeError> {
 
     if !via_close_button {
         // Fallback: focus + Cmd+W via input path.
-        focus(surface).await?;
+        // accessibility was already preflighted at the top of close().
+        focus(adapter, surface).await?;
         let src = core_graphics::event_source::CGEventSource::new(
             core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
         )
-        .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "close fallback: event source failed"))?;
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "close fallback: event source failed"))?;
         let code_w: u16 = 0x0D;
         let flags = core_graphics::event::CGEventFlags::CGEventFlagCommand;
         let down = core_graphics::event::CGEvent::new_keyboard_event(src.clone(), code_w, true)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "close fallback: down event failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "close fallback: down event failed"))?;
         down.set_flags(flags);
         down.post(core_graphics::event::CGEventTapLocation::HID);
         let up = core_graphics::event::CGEvent::new_keyboard_event(src, code_w, false)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "close fallback: up event failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "close fallback: up event failed"))?;
         up.set_flags(flags);
         up.post(core_graphics::event::CGEventTapLocation::HID);
     }
@@ -168,10 +173,10 @@ where
     F: FnOnce(AxElementRef) -> Result<R, PortholeError>,
 {
     let app = AxElement::for_application(pid).ok_or_else(|| {
-        PortholeError::new(ErrorCode::PermissionNeeded, "AXUIElementCreateApplication returned null")
+        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null")
     })?;
     let windows_ptr = app.copy_attribute_raw("AXWindows").ok_or_else(|| {
-        PortholeError::new(ErrorCode::PermissionNeeded, "AXWindows read failed")
+        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed")
     })?;
     // windows_ptr is a retained CFArrayRef; we hold it alive until after the closure.
     let arr = windows_ptr as CFArrayRef;
@@ -202,10 +207,10 @@ where
     F: FnOnce(AxElementRef) -> Result<R, PortholeError>,
 {
     let app = AxElement::for_application(pid).ok_or_else(|| {
-        PortholeError::new(ErrorCode::PermissionNeeded, "AXUIElementCreateApplication returned null")
+        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null")
     })?;
     let windows_ptr = app.copy_attribute_raw("AXWindows").ok_or_else(|| {
-        PortholeError::new(ErrorCode::PermissionNeeded, "AXWindows read failed")
+        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed")
     })?;
     let arr = windows_ptr as CFArrayRef;
     let count = unsafe { CFArrayGetCount(arr) };

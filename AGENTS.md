@@ -7,7 +7,7 @@ Repo-specific guidance for agents working in porthole. Short and load-bearing �
 Porthole's macOS adapter depends on Accessibility and Screen Recording permissions. When a task hits a permission-dependent call and the permission isn't granted:
 
 - **Do not** invent a code-level workaround — no mock layer, no feature flag to skip the call, no refactor-to-avoid, no "I'll just return empty for now." These always make the system worse.
-- **Do** stop with status `BLOCKED`, state which permission is missing, and wait for the user to grant it (via `porthole request-permission <name>` once that ships, or manually in System Settings → Privacy & Security).
+- **Do** stop with status `BLOCKED`, state which permission is missing, and wait for the user to grant it (via `porthole onboard` or manually in System Settings → Privacy & Security).
 - Resume exactly where you left off after the user confirms the grant.
 
 Waiting is cheaper than invention. The permission dependency is deliberate — porthole's job is desktop orchestration and you cannot do that without the permissions the OS reserves for that purpose. Architectural retreats to "not need the permission" are almost always a mistake.

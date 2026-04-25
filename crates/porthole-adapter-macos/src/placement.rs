@@ -5,10 +5,13 @@ use porthole_core::surface::SurfaceInfo;
 use porthole_core::{ErrorCode, PortholeError};
 
 use crate::ax::AxElement;
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 /// Apply a global screen-coordinate rectangle to the tracked surface via
 /// AX `AXPosition` + `AXSize` writes.
-pub async fn place_surface(surface: &SurfaceInfo, rect: Rect) -> Result<(), PortholeError> {
+pub async fn place_surface(adapter: &MacOsAdapter, surface: &SurfaceInfo, rect: Rect) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let pid = surface
         .pid
         .ok_or_else(|| {

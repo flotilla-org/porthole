@@ -13,11 +13,11 @@ pub struct AdapterInfo {
     pub loaded: bool,
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub permissions: Vec<PermissionStatus>,
+    pub system_permissions: Vec<SystemPermissionStatus>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PermissionStatus {
+pub struct SystemPermissionStatus {
     pub name: String,
     pub granted: bool,
     pub purpose: String,

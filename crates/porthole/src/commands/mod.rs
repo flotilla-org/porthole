@@ -7,6 +7,7 @@ pub mod focus;
 pub mod info;
 pub mod key;
 pub mod launch;
+pub mod onboard;
 pub mod replace;
 pub mod screenshot;
 pub mod scroll;

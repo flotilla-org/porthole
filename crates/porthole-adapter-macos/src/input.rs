@@ -12,10 +12,12 @@ use porthole_core::{ErrorCode, PortholeError};
 
 use crate::close_focus;
 use crate::key_codes::key_code;
+use crate::MacOsAdapter;
+use crate::permissions::ensure_accessibility_granted;
 
 fn event_source() -> Result<CGEventSource, PortholeError> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "failed to create CGEventSource"))
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "failed to create CGEventSource"))
 }
 
 fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
@@ -31,8 +33,9 @@ fn flags_for(modifiers: &[Modifier]) -> CGEventFlags {
     flags
 }
 
-pub async fn key(surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
-    close_focus::focus(surface).await?;
+pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
     for ev in events {
         let code = key_code(&ev.key).ok_or_else(|| {
@@ -41,38 +44,40 @@ pub async fn key(surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), Porth
         let flags = flags_for(&ev.modifiers);
 
         let down = CGEvent::new_keyboard_event(source.clone(), code, true)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "key down event create failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "key down event create failed"))?;
         down.set_flags(flags);
         down.post(CGEventTapLocation::HID);
 
         let up = CGEvent::new_keyboard_event(source.clone(), code, false)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "key up event create failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "key up event create failed"))?;
         up.set_flags(flags);
         up.post(CGEventTapLocation::HID);
     }
     Ok(())
 }
 
-pub async fn text(surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
-    close_focus::focus(surface).await?;
+pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
 
     let units: Vec<u16> = text.encode_utf16().collect();
     let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
-        .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "text event create failed"))?;
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text event create failed"))?;
     down.set_string_from_utf16_unchecked(&units);
     down.post(CGEventTapLocation::HID);
 
     let up = CGEvent::new_keyboard_event(source, 0, false)
-        .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "text up event create failed"))?;
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text up event create failed"))?;
     up.set_string_from_utf16_unchecked(&units);
     up.post(CGEventTapLocation::HID);
     Ok(())
 }
 
-pub async fn click(surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+pub async fn click(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
-    close_focus::focus(surface).await?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
     let flags = flags_for(&spec.modifiers);
     let (down_ty, up_ty, button) = match spec.button {
@@ -83,13 +88,13 @@ pub async fn click(surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), Portho
     let pos = CGPoint::new(screen_x, screen_y);
     for n in 1..=spec.count as i64 {
         let down = CGEvent::new_mouse_event(source.clone(), down_ty, pos, button)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "mouse down create failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "mouse down create failed"))?;
         down.set_flags(flags);
         down.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, n);
         down.post(CGEventTapLocation::HID);
 
         let up = CGEvent::new_mouse_event(source.clone(), up_ty, pos, button)
-            .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "mouse up create failed"))?;
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "mouse up create failed"))?;
         up.set_flags(flags);
         up.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, n);
         up.post(CGEventTapLocation::HID);
@@ -97,12 +102,13 @@ pub async fn click(surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), Portho
     Ok(())
 }
 
-pub async fn scroll(surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
     // Scroll events on macOS are positioned at the mouse cursor, so we move
     // the cursor to the window-local point first. This is a visible side
     // effect; acceptable for v0.x.
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
-    close_focus::focus(surface).await?;
+    close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
 
     // Move cursor.
@@ -112,7 +118,7 @@ pub async fn scroll(surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), Port
         CGPoint::new(screen_x, screen_y),
         CGMouseButton::Left,
     )
-    .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "cursor move failed"))?;
+    .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "cursor move failed"))?;
     move_ev.post(CGEventTapLocation::HID);
 
     let scroll_ev = CGEvent::new_scroll_event(
@@ -123,7 +129,7 @@ pub async fn scroll(surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), Port
         spec.delta_x as i32,
         0,
     )
-    .map_err(|_| PortholeError::new(ErrorCode::PermissionNeeded, "scroll event create failed"))?;
+    .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "scroll event create failed"))?;
     scroll_ev.post(CGEventTapLocation::HID);
     Ok(())
 }
