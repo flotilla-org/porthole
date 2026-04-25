@@ -10,9 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-03-12
+          components: rustfmt
+      - run: cargo +nightly-2026-03-12 fmt --check
+
   clippy:
     name: Clippy
     runs-on: macos-latest
+    needs: fmt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -33,6 +45,7 @@ jobs:
   test:
     name: Test
     runs-on: macos-latest
+    needs: fmt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

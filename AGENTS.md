@@ -14,13 +14,16 @@ Waiting is cheaper than invention. The permission dependency is deliberate — p
 
 ## CI gates
 
-Before claiming a change is done, these three must all be clean:
+Before claiming a change is done, these four must all be clean:
 
 ```
 cargo build --workspace --locked
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo +nightly-2026-03-12 fmt --check
 ```
+
+The fmt check uses a pinned nightly so output is reproducible across machines and CI. To apply: `cargo +nightly-2026-03-12 fmt`.
 
 `cargo test` runs only non-ignored tests. `#[ignore]`-gated integration tests need a real macOS desktop with permissions and are verified manually, not in CI.
 
