@@ -5,6 +5,7 @@ pub mod errors;
 pub mod info;
 pub mod input;
 pub mod launches;
+pub mod place;
 pub mod replace;
 pub mod screenshot;
 pub mod system_permissions;

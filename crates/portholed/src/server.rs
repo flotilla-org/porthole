@@ -11,7 +11,7 @@ use tracing::info;
 use crate::{
     routes::{
         attach as attach_route, attention as attention_route, close_focus as close_focus_route, info as info_route, input as input_route,
-        launches as launches_route, replace as replace_route, screenshot as screenshot_route,
+        launches as launches_route, place as place_route, replace as replace_route, screenshot as screenshot_route,
         system_permissions as system_permissions_route, wait as wait_route,
     },
     state::AppState,
@@ -31,6 +31,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/click", post(input_route::post_click))
         .route("/surfaces/{id}/scroll", post(input_route::post_scroll))
         .route("/surfaces/{id}/wait", post(wait_route::post_wait))
+        .route("/surfaces/{id}/place", post(place_route::post_place))
         .route("/surfaces/{id}/replace", post(replace_route::post_replace))
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
