@@ -97,7 +97,7 @@ pub async fn system_permissions() -> Result<Vec<SystemPermissionStatus>, Porthol
 }
 
 /// Resolves the daemon's binary path for display in remediation blocks.
-/// In dev builds this is the path inside `Portholed.app`.
+/// In dev builds this is the path inside `Porthole.app`.
 pub fn daemon_binary_path() -> String {
     std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
