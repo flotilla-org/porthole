@@ -35,6 +35,7 @@ Porthole is pre-release. Wire contracts, error shapes, and public types can chan
 
 ## Where to look
 
+- `docs/roadmap.md` — phase plan and what's next
 - `docs/superpowers/specs/` — design specs, one per slice
 - `docs/superpowers/plans/` — implementation plans derived from the specs
 - `README.md` — agent-first usage guide with curl and CLI examples
