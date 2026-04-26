@@ -2,16 +2,15 @@
 
 use std::time::{Duration, Instant};
 
-use porthole_core::surface::SurfaceInfo;
-use porthole_core::wait::{LastObserved, WaitCondition, WaitOutcome, WaitTimeout, WAIT_SAMPLE_INTERVAL};
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{
+    ErrorCode, PortholeError,
+    surface::SurfaceInfo,
+    wait::{LastObserved, WAIT_SAMPLE_INTERVAL, WaitCondition, WaitOutcome, WaitTimeout},
+};
 use regex::Regex;
 use tokio::time::sleep;
 
-use crate::capture;
-use crate::enumerate::list_windows;
-use crate::frame_diff::Fingerprint;
-use crate::MacOsAdapter;
+use crate::{MacOsAdapter, capture, enumerate::list_windows, frame_diff::Fingerprint};
 
 pub async fn wait(
     adapter: &MacOsAdapter,
@@ -48,15 +47,10 @@ pub async fn wait(
             sleep(WAIT_SAMPLE_INTERVAL).await;
         },
         WaitCondition::TitleMatches { pattern } => {
-            let re = Regex::new(pattern).map_err(|e| {
-                timeout_from_err(
-                    start,
-                    PortholeError::new(ErrorCode::InvalidArgument, format!("bad regex: {e}")),
-                )
-            })?;
+            let re = Regex::new(pattern)
+                .map_err(|e| timeout_from_err(start, PortholeError::new(ErrorCode::InvalidArgument, format!("bad regex: {e}"))))?;
             loop {
-                let title =
-                    current_title(surface).map_err(|e| timeout_from_err(start, e))?;
+                let title = current_title(surface).map_err(|e| timeout_from_err(start, e))?;
                 if let Some(t) = &title {
                     if re.is_match(t) {
                         return Ok(outcome("title_matches", start));
@@ -72,9 +66,7 @@ pub async fn wait(
             }
         }
         WaitCondition::Stable { window_ms, threshold_pct } => {
-            let mut last_fp = sample_fingerprint(adapter, surface)
-                .await
-                .map_err(|e| timeout_from_err(start, e))?;
+            let mut last_fp = sample_fingerprint(adapter, surface).await.map_err(|e| timeout_from_err(start, e))?;
             let mut last_change_at = Instant::now();
             let mut last_change_pct: f64 = 0.0;
             loop {
@@ -88,9 +80,7 @@ pub async fn wait(
                     });
                 }
                 sleep(WAIT_SAMPLE_INTERVAL).await;
-                let fp = sample_fingerprint(adapter, surface)
-                    .await
-                    .map_err(|e| timeout_from_err(start, e))?;
+                let fp = sample_fingerprint(adapter, surface).await.map_err(|e| timeout_from_err(start, e))?;
                 let diff = fp.diff_pct(&last_fp);
                 if diff > *threshold_pct {
                     last_change_at = Instant::now();
@@ -103,9 +93,7 @@ pub async fn wait(
             }
         }
         WaitCondition::Dirty { threshold_pct } => {
-            let initial = sample_fingerprint(adapter, surface)
-                .await
-                .map_err(|e| timeout_from_err(start, e))?;
+            let initial = sample_fingerprint(adapter, surface).await.map_err(|e| timeout_from_err(start, e))?;
             let mut last_pct: f64 = 0.0;
             loop {
                 if Instant::now() >= deadline {
@@ -118,9 +106,7 @@ pub async fn wait(
                     });
                 }
                 sleep(WAIT_SAMPLE_INTERVAL).await;
-                let fp = sample_fingerprint(adapter, surface)
-                    .await
-                    .map_err(|e| timeout_from_err(start, e))?;
+                let fp = sample_fingerprint(adapter, surface).await.map_err(|e| timeout_from_err(start, e))?;
                 let diff = fp.diff_pct(&initial);
                 last_pct = diff;
                 if diff > *threshold_pct {
@@ -146,7 +132,10 @@ fn timeout_from_err(start: Instant, err: PortholeError) -> WaitTimeout {
 }
 
 fn outcome(condition: &str, start: Instant) -> WaitOutcome {
-    WaitOutcome { condition: condition.to_string(), elapsed_ms: start.elapsed().as_millis() as u64 }
+    WaitOutcome {
+        condition: condition.to_string(),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    }
 }
 
 fn surface_is_alive(surface: &SurfaceInfo) -> Result<bool, PortholeError> {
@@ -158,7 +147,9 @@ fn surface_is_alive(surface: &SurfaceInfo) -> Result<bool, PortholeError> {
     if let Some(cg_id) = surface.cg_window_id {
         Ok(windows.iter().any(|w| w.cg_window_id == cg_id))
     } else {
-        Ok(windows.iter().any(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title)))
+        Ok(windows
+            .iter()
+            .any(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title)))
     }
 }
 

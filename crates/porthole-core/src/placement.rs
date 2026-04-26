@@ -84,7 +84,10 @@ mod tests {
 
     #[test]
     fn placement_spec_with_any_field_not_empty() {
-        let p = PlacementSpec { on_display: Some(DisplayTarget::Primary), ..Default::default() };
+        let p = PlacementSpec {
+            on_display: Some(DisplayTarget::Primary),
+            ..Default::default()
+        };
         assert!(!p.is_effectively_empty());
     }
 
@@ -94,7 +97,9 @@ mod tests {
         let s = serde_json::to_string(&o).unwrap();
         assert_eq!(s, r#"{"type":"applied"}"#);
 
-        let o = PlacementOutcome::Failed { reason: "AX denied".into() };
+        let o = PlacementOutcome::Failed {
+            reason: "AX denied".into(),
+        };
         let s = serde_json::to_string(&o).unwrap();
         assert_eq!(s, r#"{"type":"failed","reason":"AX denied"}"#);
     }

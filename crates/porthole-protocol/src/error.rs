@@ -14,7 +14,11 @@ pub struct WireError {
 
 impl From<porthole_core::PortholeError> for WireError {
     fn from(err: porthole_core::PortholeError) -> Self {
-        Self { code: err.code, message: err.message, details: err.details }
+        Self {
+            code: err.code,
+            message: err.message,
+            details: err.details,
+        }
     }
 }
 

@@ -1,13 +1,9 @@
-use std::sync::Arc;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
-use porthole_core::adapter::Adapter;
-use porthole_core::attach_pipeline::AttachPipeline;
-use porthole_core::handle::HandleStore;
-use porthole_core::input_pipeline::InputPipeline;
-use porthole_core::launch::LaunchPipeline;
-use porthole_core::replace_pipeline::ReplacePipeline;
-use porthole_core::wait_pipeline::WaitPipeline;
+use porthole_core::{
+    adapter::Adapter, attach_pipeline::AttachPipeline, handle::HandleStore, input_pipeline::InputPipeline, launch::LaunchPipeline,
+    replace_pipeline::ReplacePipeline, wait_pipeline::WaitPipeline,
+};
 
 #[derive(Clone)]
 pub struct AppState {

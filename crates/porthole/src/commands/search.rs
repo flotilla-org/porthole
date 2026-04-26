@@ -21,11 +21,13 @@ pub async fn run(client: &DaemonClient, args: SearchArgs) -> Result<(), ClientEr
         cg_window_ids: args.cg_window_ids,
         frontmost: args.frontmost,
     };
-    let req = SearchRequest { query, session: args.session };
+    let req = SearchRequest {
+        query,
+        session: args.session,
+    };
     let res: SearchResponse = client.post_json("/surfaces/search", &req).await?;
     if args.json {
-        let text = serde_json::to_string_pretty(&res.candidates)
-            .map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
+        let text = serde_json::to_string_pretty(&res.candidates).map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
         println!("{text}");
     } else {
         for c in &res.candidates {

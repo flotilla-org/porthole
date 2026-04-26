@@ -1,21 +1,13 @@
-use std::collections::BTreeMap;
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
-use axum::extract::State;
-use axum::Json;
+use axum::{Json, extract::State};
 use porthole_core::adapter::{ArtifactLaunchSpec, LaunchSpec, ProcessLaunchSpec, RequireConfidence};
-use porthole_protocol::launches::{
-    ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, WireConfidence, WireCorrelation,
-};
+use porthole_protocol::launches::{ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, WireConfidence, WireCorrelation};
 use uuid::Uuid;
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
-pub async fn post_launches(
-    State(state): State<AppState>,
-    Json(req): Json<LaunchRequest>,
-) -> Result<Json<LaunchResponse>, ApiError> {
+pub async fn post_launches(State(state): State<AppState>, Json(req): Json<LaunchRequest>) -> Result<Json<LaunchResponse>, ApiError> {
     // Validate auto_dismiss_after_ms before building spec.
     if req.auto_dismiss_after_ms == Some(0) {
         return Err(ApiError::from(porthole_core::PortholeError::new(
@@ -66,10 +58,7 @@ pub(crate) fn request_to_launch_spec(req: &LaunchRequest) -> Result<LaunchSpec, 
             require_fresh_surface: require_fresh,
         })),
         LaunchKind::Artifact(ArtifactLaunch { path }) => {
-            if path.starts_with("http://")
-                || path.starts_with("https://")
-                || path.starts_with("file://")
-            {
+            if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
                 return Err(ApiError::from(porthole_core::PortholeError::new(
                     porthole_core::ErrorCode::InvalidArgument,
                     "URL paths are not supported in this slice (defer to browser-CDP)",

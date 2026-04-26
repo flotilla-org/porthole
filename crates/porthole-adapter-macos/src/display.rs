@@ -1,12 +1,17 @@
 #![cfg(target_os = "macos")]
 
 use core_graphics::display::CGDisplay;
-use porthole_core::display::{DisplayId, DisplayInfo, Rect as DisplayRect};
-use porthole_core::PortholeError;
+use porthole_core::{
+    PortholeError,
+    display::{DisplayId, DisplayInfo, Rect as DisplayRect},
+};
 
 pub async fn displays() -> Result<Vec<DisplayInfo>, PortholeError> {
     let ids = CGDisplay::active_displays().map_err(|e| {
-        PortholeError::new(porthole_core::ErrorCode::CapabilityMissing, format!("active_displays failed: {e:?}"))
+        PortholeError::new(
+            porthole_core::ErrorCode::CapabilityMissing,
+            format!("active_displays failed: {e:?}"),
+        )
     })?;
     let main_id = CGDisplay::main().id;
 

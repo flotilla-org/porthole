@@ -27,7 +27,9 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
     println!("focused_display_id: {}", fmt_display_id(&info.focused_display_id));
     println!(
         "cursor: ({:.1}, {:.1}) display_id={}",
-        info.cursor.x, info.cursor.y, fmt_display_id(&info.cursor.display_id),
+        info.cursor.x,
+        info.cursor.y,
+        fmt_display_id(&info.cursor.display_id),
     );
     if info.recently_active_surface_ids.is_empty() {
         println!("recently_active: (none)");

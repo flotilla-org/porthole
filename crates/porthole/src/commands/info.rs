@@ -22,10 +22,7 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
                 } else {
                     "  (will trigger the OS prompt)"
                 };
-                println!(
-                    "  system permission {}: MISSING ({})",
-                    perm.name, perm.purpose
-                );
+                println!("  system permission {}: MISSING ({})", perm.name, perm.purpose);
                 println!("    fix: porthole onboard{restart_hint}");
             }
         }

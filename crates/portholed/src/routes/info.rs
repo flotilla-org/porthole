@@ -1,10 +1,8 @@
-use axum::extract::State;
-use axum::Json;
+use axum::{Json, extract::State};
 use porthole_core::permission::SystemPermissionStatus as CoreSystemPermission;
 use porthole_protocol::info::{AdapterInfo, InfoResponse, SystemPermissionStatus};
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 pub async fn get_info(State(state): State<AppState>) -> Result<Json<InfoResponse>, ApiError> {
     let perms = state.adapter.system_permissions().await.unwrap_or_default();
@@ -21,5 +19,9 @@ pub async fn get_info(State(state): State<AppState>) -> Result<Json<InfoResponse
 }
 
 fn to_wire_permission(p: CoreSystemPermission) -> SystemPermissionStatus {
-    SystemPermissionStatus { name: p.name, granted: p.granted, purpose: p.purpose }
+    SystemPermissionStatus {
+        name: p.name,
+        granted: p.granted,
+        purpose: p.purpose,
+    }
 }

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use crate::adapter::Adapter;
-use crate::handle::HandleStore;
-use crate::search::{decode_ref, Candidate, SearchQuery};
-use crate::surface::SurfaceInfo;
-use crate::{ErrorCode, PortholeError};
+use crate::{
+    ErrorCode, PortholeError,
+    adapter::Adapter,
+    handle::HandleStore,
+    search::{Candidate, SearchQuery, decode_ref},
+    surface::SurfaceInfo,
+};
 
 pub struct AttachPipeline {
     adapter: Arc<dyn Adapter>,
@@ -36,27 +38,24 @@ impl AttachPipeline {
 
     pub async fn track(&self, r: &str) -> Result<TrackedOutcome, PortholeError> {
         let (pid, cg) = decode_ref(r)?;
-        let info = self
-            .adapter
-            .window_alive(pid, cg)
-            .await?
-            .ok_or_else(|| {
-                PortholeError::new(
-                    ErrorCode::SurfaceDead,
-                    format!("window with cg_window_id {cg} (pid {pid}) is no longer alive"),
-                )
-            })?;
+        let info = self.adapter.window_alive(pid, cg).await?.ok_or_else(|| {
+            PortholeError::new(
+                ErrorCode::SurfaceDead,
+                format!("window with cg_window_id {cg} (pid {pid}) is no longer alive"),
+            )
+        })?;
         let (surface, reused) = self.handles.track_or_get(info).await;
-        Ok(TrackedOutcome { surface, reused_existing_handle: reused })
+        Ok(TrackedOutcome {
+            surface,
+            reused_existing_handle: reused,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::in_memory::InMemoryAdapter;
-    use crate::search::encode_ref;
-    use crate::surface::SurfaceId;
+    use crate::{in_memory::InMemoryAdapter, search::encode_ref, surface::SurfaceId};
 
     fn surface_with_cg(pid: u32, cg: u32) -> SurfaceInfo {
         let mut info = SurfaceInfo::window(SurfaceId::new(), pid);
@@ -97,9 +96,7 @@ mod tests {
     #[tokio::test]
     async fn track_reuses_existing_alive_handle() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        adapter
-            .set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7))))
-            .await;
+        adapter.set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7)))).await;
         let handles = HandleStore::new();
         let pipeline = AttachPipeline::new(adapter.clone(), handles.clone());
         let r = encode_ref(1, 7);
@@ -107,9 +104,7 @@ mod tests {
 
         // Second call — adapter returns a different SurfaceInfo (fresh id),
         // but track_or_get should return the first one.
-        adapter
-            .set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7))))
-            .await;
+        adapter.set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7)))).await;
         let second = pipeline.track(&r).await.unwrap();
         assert!(second.reused_existing_handle);
         assert_eq!(second.surface.id, first.surface.id);
@@ -119,7 +114,10 @@ mod tests {
     async fn search_rejects_invalid_regex() {
         let pipeline = AttachPipeline::new(Arc::new(InMemoryAdapter::new()), HandleStore::new());
         let err = pipeline
-            .search(&SearchQuery { title_pattern: Some("[invalid".into()), ..Default::default() })
+            .search(&SearchQuery {
+                title_pattern: Some("[invalid".into()),
+                ..Default::default()
+            })
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidArgument);

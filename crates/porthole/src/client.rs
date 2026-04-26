@@ -6,8 +6,7 @@ use hyper::{Method, Request};
 use hyper_util::client::legacy::Client;
 use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use porthole_protocol::error::WireError;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 
 pub struct DaemonClient {
     socket: std::path::PathBuf,
@@ -28,11 +27,7 @@ impl DaemonClient {
         self.send_and_parse(req).await
     }
 
-    pub async fn post_json<B: Serialize, T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T, ClientError> {
+    pub async fn post_json<B: Serialize, T: DeserializeOwned>(&self, path: &str, body: &B) -> Result<T, ClientError> {
         let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
         let body_bytes = serde_json::to_vec(body)?;
         let req = Request::builder()
@@ -43,10 +38,7 @@ impl DaemonClient {
         self.send_and_parse(req).await
     }
 
-    async fn send_and_parse<T: DeserializeOwned>(
-        &self,
-        req: Request<Full<Bytes>>,
-    ) -> Result<T, ClientError> {
+    async fn send_and_parse<T: DeserializeOwned>(&self, req: Request<Full<Bytes>>) -> Result<T, ClientError> {
         let res = self.http.request(req).await?;
         let status = res.status();
         let body = res.into_body().collect().await?.to_bytes();

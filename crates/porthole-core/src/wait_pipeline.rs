@@ -1,16 +1,16 @@
-use std::sync::Arc;
-use std::time::Duration;
-
-use regex::Regex;
-
-use crate::adapter::Adapter;
-use crate::handle::HandleStore;
-use crate::surface::SurfaceId;
-use crate::wait::{LastObserved, WaitCondition, WaitOutcome};
-use crate::{ErrorCode, PortholeError};
+use std::{sync::Arc, time::Duration};
 
 // Alias for clarity in preflight match arms.
 use WaitCondition as Wc;
+use regex::Regex;
+
+use crate::{
+    ErrorCode, PortholeError,
+    adapter::Adapter,
+    handle::HandleStore,
+    surface::SurfaceId,
+    wait::{LastObserved, WaitCondition, WaitOutcome},
+};
 
 pub struct WaitPipeline {
     adapter: Arc<dyn Adapter>,
@@ -95,8 +95,7 @@ fn validate_condition(condition: &WaitCondition) -> Result<(), WaitPipelineError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::in_memory::InMemoryAdapter;
-    use crate::surface::SurfaceInfo;
+    use crate::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
 
     async fn setup() -> (Arc<InMemoryAdapter>, HandleStore, SurfaceId) {
         let adapter = Arc::new(InMemoryAdapter::new());
@@ -122,7 +121,9 @@ mod tests {
         let err = pipeline
             .wait(
                 &id,
-                &WaitCondition::TitleMatches { pattern: "[invalid".to_string() },
+                &WaitCondition::TitleMatches {
+                    pattern: "[invalid".to_string(),
+                },
                 Duration::from_secs(1),
             )
             .await;
@@ -147,14 +148,24 @@ mod tests {
             .await;
         let pipeline = WaitPipeline::new(adapter, handles);
         let err = pipeline
-            .wait(&id, &WaitCondition::Stable { window_ms: 1500, threshold_pct: 1.0 }, Duration::from_secs(5))
+            .wait(
+                &id,
+                &WaitCondition::Stable {
+                    window_ms: 1500,
+                    threshold_pct: 1.0,
+                },
+                Duration::from_secs(5),
+            )
             .await
             .unwrap_err();
         match err {
             WaitPipelineError::Timeout(info) => {
                 assert_eq!(info.elapsed_ms, 100);
                 match info.last_observed {
-                    LastObserved::FrameChange { last_change_ms_ago, last_change_pct } => {
+                    LastObserved::FrameChange {
+                        last_change_ms_ago,
+                        last_change_pct,
+                    } => {
                         assert_eq!(last_change_ms_ago, 500);
                         assert!((last_change_pct - 0.3).abs() < 1e-9);
                     }
@@ -170,11 +181,7 @@ mod tests {
         let (adapter, handles, id) = setup().await;
         let pipeline = WaitPipeline::new(adapter, handles);
         let err = pipeline
-            .wait(
-                &id,
-                &WaitCondition::Dirty { threshold_pct: -1.0 },
-                Duration::from_secs(1),
-            )
+            .wait(&id, &WaitCondition::Dirty { threshold_pct: -1.0 }, Duration::from_secs(1))
             .await;
         match err {
             Err(WaitPipelineError::Porthole(e)) => assert_eq!(e.code, ErrorCode::InvalidArgument),

@@ -1,13 +1,19 @@
 use std::time::Duration;
 
-use axum::extract::{Path, State};
-use axum::Json;
+use axum::{
+    Json,
+    extract::{Path, State},
+};
 use porthole_core::surface::SurfaceId;
 use porthole_protocol::launches::{LaunchResponse, ReplaceRequest};
 
-use crate::routes::errors::ApiError;
-use crate::routes::launches::{confidence_to_wire, correlation_to_wire, request_to_launch_spec};
-use crate::state::AppState;
+use crate::{
+    routes::{
+        errors::ApiError,
+        launches::{confidence_to_wire, correlation_to_wire, request_to_launch_spec},
+    },
+    state::AppState,
+};
 
 pub async fn post_replace(
     State(state): State<AppState>,

@@ -3,9 +3,11 @@
 use std::time::{Duration, Instant};
 
 use porthole_adapter_macos::MacOsAdapter;
-use porthole_core::adapter::{Adapter, ProcessLaunchSpec, RequireConfidence};
-use porthole_core::input::{ClickButton, ClickSpec, KeyEvent};
-use porthole_core::wait::WaitCondition;
+use porthole_core::{
+    adapter::{Adapter, ProcessLaunchSpec, RequireConfidence},
+    input::{ClickButton, ClickSpec, KeyEvent},
+    wait::WaitCondition,
+};
 
 fn spec_textedit() -> ProcessLaunchSpec {
     ProcessLaunchSpec {
@@ -28,7 +30,14 @@ async fn text_types_into_textedit_and_wait_dirty_fires() {
 
     // Wait for the editor to be visible/stable first.
     adapter
-        .wait(&surface, &WaitCondition::Stable { window_ms: 800, threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
+        .wait(
+            &surface,
+            &WaitCondition::Stable {
+                window_ms: 800,
+                threshold_pct: 1.0,
+            },
+            Instant::now() + Duration::from_secs(10),
+        )
         .await
         .expect("initial stable");
 
@@ -36,7 +45,11 @@ async fn text_types_into_textedit_and_wait_dirty_fires() {
     let baseline = adapter.screenshot(&surface).await.expect("baseline");
     adapter.text(&surface, "hello porthole\n").await.expect("text");
     let dirty = adapter
-        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
+        .wait(
+            &surface,
+            &WaitCondition::Dirty { threshold_pct: 1.0 },
+            Instant::now() + Duration::from_secs(10),
+        )
         .await
         .expect("dirty");
     assert_eq!(dirty.condition, "dirty");
@@ -55,11 +68,21 @@ async fn key_event_triggers_dirty_after_typing() {
     adapter.text(&surface, "x").await.expect("text");
     // Pressing Enter should cause a frame change.
     adapter
-        .key(&surface, &[KeyEvent { key: "Enter".into(), modifiers: vec![] }])
+        .key(
+            &surface,
+            &[KeyEvent {
+                key: "Enter".into(),
+                modifiers: vec![],
+            }],
+        )
         .await
         .expect("key Enter");
     let dirty = adapter
-        .wait(&surface, &WaitCondition::Dirty { threshold_pct: 1.0 }, Instant::now() + Duration::from_secs(10))
+        .wait(
+            &surface,
+            &WaitCondition::Dirty { threshold_pct: 1.0 },
+            Instant::now() + Duration::from_secs(10),
+        )
         .await
         .expect("dirty");
     assert_eq!(dirty.condition, "dirty");
@@ -75,7 +98,16 @@ async fn click_inside_window_is_accepted() {
     let surface = outcome.surface;
 
     adapter
-        .click(&surface, &ClickSpec { x: 100.0, y: 100.0, button: ClickButton::Left, count: 1, modifiers: vec![] })
+        .click(
+            &surface,
+            &ClickSpec {
+                x: 100.0,
+                y: 100.0,
+                button: ClickButton::Left,
+                count: 1,
+                modifiers: vec![],
+            },
+        )
         .await
         .expect("click");
 

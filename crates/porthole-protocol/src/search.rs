@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 pub use porthole_core::search::{Candidate, SearchQuery};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchRequest {

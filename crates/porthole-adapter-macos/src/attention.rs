@@ -1,9 +1,11 @@
 #![cfg(target_os = "macos")]
 
 use core_graphics::display::CGDisplay;
-use porthole_core::attention::{AttentionInfo, CursorPos};
-use porthole_core::display::DisplayId;
-use porthole_core::PortholeError;
+use porthole_core::{
+    PortholeError,
+    attention::{AttentionInfo, CursorPos},
+    display::DisplayId,
+};
 
 /// Returns the CGWindowID of the frontmost on-screen window. Uses
 /// `CGWindowListCreate` with `kCGWindowListOptionOnScreenOnly`; the first entry
@@ -15,15 +17,16 @@ pub fn frontmost_cg_window_id() -> Option<u32> {
     if arr.is_empty() {
         return None;
     }
-    use core_foundation::base::{CFType, TCFType};
-    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-    use core_foundation::number::CFNumber;
-    use core_foundation::string::CFString;
+    use core_foundation::{
+        base::{CFType, TCFType},
+        dictionary::{CFDictionary, CFDictionaryRef},
+        number::CFNumber,
+        string::CFString,
+    };
     use core_graphics::window::kCGWindowNumber;
 
     let raw_ptr: *const std::ffi::c_void = unsafe { *arr.get_unchecked(0) };
-    let dict: CFDictionary<CFString, CFType> =
-        unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
+    let dict: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(raw_ptr as CFDictionaryRef) };
     let key = unsafe { CFString::wrap_under_get_rule(kCGWindowNumber) };
     dict.find(&key)
         .and_then(|v| v.downcast::<CFNumber>())
@@ -41,10 +44,7 @@ pub async fn attention() -> Result<AttentionInfo, PortholeError> {
     for id in display_ids.iter() {
         let display = CGDisplay::new(*id);
         let b = display.bounds();
-        if cursor.0 >= b.origin.x
-            && cursor.0 < b.origin.x + b.size.width
-            && cursor.1 >= b.origin.y
-            && cursor.1 < b.origin.y + b.size.height
+        if cursor.0 >= b.origin.x && cursor.0 < b.origin.x + b.size.width && cursor.1 >= b.origin.y && cursor.1 < b.origin.y + b.size.height
         {
             cursor_display_id = Some(DisplayId::new(format!("disp_{id}")));
             break;
@@ -57,7 +57,11 @@ pub async fn attention() -> Result<AttentionInfo, PortholeError> {
         focused_surface_id: None, // porthole-tracked focus matching is v0.1
         focused_app_name: frontmost_name,
         focused_display_id,
-        cursor: CursorPos { x: cursor.0, y: cursor.1, display_id: cursor_display_id },
+        cursor: CursorPos {
+            x: cursor.0,
+            y: cursor.1,
+            display_id: cursor_display_id,
+        },
         recently_active_surface_ids: vec![],
     })
 }

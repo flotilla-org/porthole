@@ -1,9 +1,10 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use porthole_core::in_memory::InMemoryAdapter;
-use porthole_core::search::{encode_ref, Candidate};
-use porthole_core::surface::{SurfaceId, SurfaceInfo};
+use porthole_core::{
+    in_memory::InMemoryAdapter,
+    search::{Candidate, encode_ref},
+    surface::{SurfaceId, SurfaceInfo},
+};
 use portholed::server::serve;
 
 #[tokio::test]
@@ -43,20 +44,14 @@ async fn search_track_roundtrip_over_uds() {
     let client = porthole::client::DaemonClient::new(&socket);
 
     let search: porthole_protocol::search::SearchResponse = client
-        .post_json(
-            "/surfaces/search",
-            &serde_json::json!({ "app_name": "ScriptedApp" }),
-        )
+        .post_json("/surfaces/search", &serde_json::json!({ "app_name": "ScriptedApp" }))
         .await
         .expect("search");
     assert_eq!(search.candidates.len(), 1);
     assert_eq!(search.candidates[0].ref_, r);
 
     let track: porthole_protocol::search::TrackResponse = client
-        .post_json(
-            "/surfaces/track",
-            &serde_json::json!({ "ref": r }),
-        )
+        .post_json("/surfaces/track", &serde_json::json!({ "ref": r }))
         .await
         .expect("track");
     assert!(!track.reused_existing_handle);

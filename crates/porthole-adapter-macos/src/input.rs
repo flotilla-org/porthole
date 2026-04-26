@@ -1,19 +1,17 @@
 #![cfg(target_os = "macos")]
 
-use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
-    ScrollEventUnit,
+use core_graphics::{
+    event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, ScrollEventUnit},
+    event_source::{CGEventSource, CGEventSourceStateID},
+    geometry::CGPoint,
 };
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use core_graphics::geometry::CGPoint;
-use porthole_core::input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
-use porthole_core::surface::SurfaceInfo;
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{
+    ErrorCode, PortholeError,
+    input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec},
+    surface::SurfaceInfo,
+};
 
-use crate::close_focus;
-use crate::key_codes::key_code;
-use crate::MacOsAdapter;
-use crate::permissions::ensure_accessibility_granted;
+use crate::{MacOsAdapter, close_focus, key_codes::key_code, permissions::ensure_accessibility_granted};
 
 fn event_source() -> Result<CGEventSource, PortholeError> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -38,9 +36,7 @@ pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEve
     close_focus::focus(adapter, surface).await?;
     let source = event_source()?;
     for ev in events {
-        let code = key_code(&ev.key).ok_or_else(|| {
-            PortholeError::new(ErrorCode::UnknownKey, format!("no keycode for '{}'", ev.key))
-        })?;
+        let code = key_code(&ev.key).ok_or_else(|| PortholeError::new(ErrorCode::UnknownKey, format!("no keycode for '{}'", ev.key)))?;
         let flags = flags_for(&ev.modifiers);
 
         let down = CGEvent::new_keyboard_event(source.clone(), code, true)
@@ -140,11 +136,7 @@ pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Scroll
 async fn window_to_screen(surface: &SurfaceInfo, x: f64, y: f64) -> Result<(f64, f64), PortholeError> {
     let bounds = crate::close_focus::window_bounds(surface).await?;
     const TOLERANCE: f64 = 1.0;
-    if x < -TOLERANCE
-        || x > bounds.w + TOLERANCE
-        || y < -TOLERANCE
-        || y > bounds.h + TOLERANCE
-    {
+    if x < -TOLERANCE || x > bounds.w + TOLERANCE || y < -TOLERANCE || y > bounds.h + TOLERANCE {
         return Err(PortholeError::new(
             ErrorCode::InvalidCoordinate,
             format!(

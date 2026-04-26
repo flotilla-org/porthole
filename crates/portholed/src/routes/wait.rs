@@ -1,12 +1,13 @@
 use std::time::Duration;
 
-use axum::extract::{Path, State};
-use axum::Json;
+use axum::{
+    Json,
+    extract::{Path, State},
+};
 use porthole_core::surface::SurfaceId;
 use porthole_protocol::wait::{WaitRequest, WaitResponse};
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
 pub async fn post_wait(
     State(state): State<AppState>,

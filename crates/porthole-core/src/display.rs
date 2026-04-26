@@ -46,7 +46,12 @@ mod tests {
     fn display_info_roundtrip() {
         let d = DisplayInfo {
             id: DisplayId::new("disp_1"),
-            bounds: Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 },
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1920.0,
+                h: 1080.0,
+            },
             scale: 2.0,
             primary: true,
             focused: false,

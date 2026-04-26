@@ -1,13 +1,12 @@
 #![cfg(target_os = "macos")]
 
-use std::path::PathBuf;
-use std::process::Stdio;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
-use porthole_core::in_memory::InMemoryAdapter;
-use porthole_core::search::Candidate;
-use porthole_core::surface::{SurfaceId, SurfaceInfo};
+use porthole_core::{
+    in_memory::InMemoryAdapter,
+    search::Candidate,
+    surface::{SurfaceId, SurfaceInfo},
+};
 use portholed::server::serve;
 
 /// Exercises the full path from `porthole attach --containing-pid $$
@@ -57,31 +56,23 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
     // CARGO_BIN_EXE_porthole is set by Cargo for integration tests of the
     // crate that owns the binary, but not for external crates. We fall back
     // to resolving the path from CARGO_MANIFEST_DIR / the target directory.
-    let cli = std::env::var("CARGO_BIN_EXE_porthole")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            // In a workspace, CARGO_MANIFEST_DIR points to this crate.
-            // Walk up to the workspace root and then into target/debug.
-            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            // CARGO_MANIFEST_DIR = .../porthole/crates/porthole-adapter-macos
-            // parent() × 2 = .../porthole  (the workspace root)
-            let workspace_root = manifest_dir
-                .parent() // .../porthole/crates
-                .and_then(|p| p.parent()) // .../porthole
-                .expect("workspace root");
-            workspace_root.join("target").join("debug").join("porthole")
-        });
+    let cli = std::env::var("CARGO_BIN_EXE_porthole").map(PathBuf::from).unwrap_or_else(|_| {
+        // In a workspace, CARGO_MANIFEST_DIR points to this crate.
+        // Walk up to the workspace root and then into target/debug.
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // CARGO_MANIFEST_DIR = .../porthole/crates/porthole-adapter-macos
+        // parent() × 2 = .../porthole  (the workspace root)
+        let workspace_root = manifest_dir
+            .parent() // .../porthole/crates
+            .and_then(|p| p.parent()) // .../porthole
+            .expect("workspace root");
+        workspace_root.join("target").join("debug").join("porthole")
+    });
     let runtime_dir = tmp.path().to_path_buf();
     let output = tokio::task::spawn_blocking(move || {
         std::process::Command::new(cli)
             .env("PORTHOLE_RUNTIME_DIR", runtime_dir)
-            .args([
-                "attach",
-                "--containing-pid",
-                &test_pid.to_string(),
-                "--frontmost",
-                "--json",
-            ])
+            .args(["attach", "--containing-pid", &test_pid.to_string(), "--frontmost", "--json"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -99,8 +90,7 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
         "CLI exit {:?}\nstdout: {stdout}\nstderr: {stderr}",
         output.status.code()
     );
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("CLI stdout is not JSON");
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("CLI stdout is not JSON");
     assert!(parsed.get("surface_id").is_some(), "response missing surface_id");
     assert_eq!(parsed.get("cg_window_id").and_then(|v| v.as_u64()), Some(42));
 

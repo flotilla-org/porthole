@@ -1,10 +1,11 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::RwLock;
 
-use crate::surface::{SurfaceId, SurfaceInfo, SurfaceState};
-use crate::{ErrorCode, PortholeError};
+use crate::{
+    ErrorCode, PortholeError,
+    surface::{SurfaceId, SurfaceInfo, SurfaceState},
+};
 
 #[derive(Default, Clone)]
 pub struct HandleStore {
@@ -146,6 +147,7 @@ mod tests {
     #[tokio::test]
     async fn track_or_get_is_atomic_under_concurrency() {
         use std::sync::Arc;
+
         use crate::surface::SurfaceInfo;
 
         let store = HandleStore::new();

@@ -27,4 +27,4 @@ pub use permission::SystemPermissionStatus;
 pub use placement::{Anchor, DisplayTarget, GeometrySnapshot, PlacementOutcome, PlacementSpec};
 pub use search::{Candidate, SearchQuery};
 pub use surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
-pub use wait::{LastObserved, WaitCondition, WaitOutcome, WaitTimeout, DEFAULT_WAIT_TIMEOUT, WAIT_SAMPLE_INTERVAL};
+pub use wait::{DEFAULT_WAIT_TIMEOUT, LastObserved, WAIT_SAMPLE_INTERVAL, WaitCondition, WaitOutcome, WaitTimeout};

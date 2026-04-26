@@ -1,12 +1,18 @@
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::Json;
-use porthole_core::launch::{ExistingSurfaceInfo, LaunchPipelineError};
-use porthole_core::replace_pipeline::ReplacePipelineError;
-use porthole_core::wait_pipeline::WaitPipelineError;
-use porthole_core::{ErrorCode, PortholeError};
-use porthole_protocol::error::{LaunchReturnedExistingBody, WireError};
-use porthole_protocol::wait::WaitTimeoutBody;
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use porthole_core::{
+    ErrorCode, PortholeError,
+    launch::{ExistingSurfaceInfo, LaunchPipelineError},
+    replace_pipeline::ReplacePipelineError,
+    wait_pipeline::WaitPipelineError,
+};
+use porthole_protocol::{
+    error::{LaunchReturnedExistingBody, WireError},
+    wait::WaitTimeoutBody,
+};
 
 pub struct ApiError(pub WireError);
 
@@ -49,10 +55,7 @@ impl From<ReplacePipelineError> for ApiError {
                 let mut wire: WireError = error.into();
                 let merged = match wire.details.take() {
                     Some(serde_json::Value::Object(mut map)) => {
-                        map.insert(
-                            "old_handle_alive".into(),
-                            serde_json::Value::Bool(old_handle_alive),
-                        );
+                        map.insert("old_handle_alive".into(), serde_json::Value::Bool(old_handle_alive));
                         serde_json::Value::Object(map)
                     }
                     _ => serde_json::json!({ "old_handle_alive": old_handle_alive }),
@@ -112,8 +115,10 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use porthole_core::wait::LastObserved;
-    use porthole_core::wait_pipeline::{WaitPipelineError, WaitTimeoutInfo};
+    use porthole_core::{
+        wait::LastObserved,
+        wait_pipeline::{WaitPipelineError, WaitTimeoutInfo},
+    };
 
     use super::*;
 
@@ -151,7 +156,11 @@ mod tests {
 
     #[test]
     fn wire_error_details_skipped_when_none() {
-        let w = WireError { code: ErrorCode::SurfaceDead, message: "gone".into(), details: None };
+        let w = WireError {
+            code: ErrorCode::SurfaceDead,
+            message: "gone".into(),
+            details: None,
+        };
         let json = serde_json::to_string(&w).unwrap();
         assert!(!json.contains("details"), "details should be omitted when None: {json}");
     }
@@ -167,11 +176,10 @@ mod tests {
     #[test]
     fn replace_porthole_merges_old_handle_alive_into_existing_details() {
         use porthole_core::replace_pipeline::ReplacePipelineError;
-        let wrapped = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax")
-            .with_details(serde_json::json!({
-                "permission": "accessibility",
-                "remediation": { "cli_command": "porthole onboard" }
-            }));
+        let wrapped = PortholeError::new(ErrorCode::SystemPermissionNeeded, "ax").with_details(serde_json::json!({
+            "permission": "accessibility",
+            "remediation": { "cli_command": "porthole onboard" }
+        }));
         let api_err = ApiError::from(ReplacePipelineError::Porthole {
             error: wrapped,
             old_handle_alive: true,

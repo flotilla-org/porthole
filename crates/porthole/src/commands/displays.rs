@@ -8,8 +8,13 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
         println!(
             "{}  bounds=({}, {}, {}x{})  scale={}  primary={}  focused={}",
             d.id.as_str(),
-            d.bounds.x, d.bounds.y, d.bounds.w, d.bounds.h,
-            d.scale, d.primary, d.focused,
+            d.bounds.x,
+            d.bounds.y,
+            d.bounds.w,
+            d.bounds.h,
+            d.scale,
+            d.primary,
+            d.focused,
         );
     }
     Ok(())

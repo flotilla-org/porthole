@@ -12,8 +12,17 @@ pub struct ScrollArgs {
 }
 
 pub async fn run(client: &DaemonClient, args: ScrollArgs) -> Result<(), ClientError> {
-    let req = ScrollRequest { x: args.x, y: args.y, delta_x: args.delta_x, delta_y: args.delta_y, session: args.session };
+    let req = ScrollRequest {
+        x: args.x,
+        y: args.y,
+        delta_x: args.delta_x,
+        delta_y: args.delta_y,
+        session: args.session,
+    };
     let res: ScrollResponse = client.post_json(&format!("/surfaces/{}/scroll", args.surface_id), &req).await?;
-    println!("scrolled at ({}, {}) delta=({}, {}) on surface {}", args.x, args.y, args.delta_x, args.delta_y, res.surface_id);
+    println!(
+        "scrolled at ({}, {}) delta=({}, {}) on surface {}",
+        args.x, args.y, args.delta_x, args.delta_y, res.surface_id
+    );
     Ok(())
 }

@@ -1,7 +1,9 @@
 #![cfg(target_os = "macos")]
 
-use core_graphics::event::CGEvent;
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use core_graphics::{
+    event::CGEvent,
+    event_source::{CGEventSource, CGEventSourceStateID},
+};
 use porthole_core::PortholeError;
 
 /// Returns the current cursor position in global screen coordinates.

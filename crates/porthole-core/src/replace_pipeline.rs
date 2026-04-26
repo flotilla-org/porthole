@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use crate::adapter::Adapter;
-use crate::handle::HandleStore;
-use crate::launch::{ExistingSurfaceInfo, LaunchPipeline, LaunchPipelineError, LaunchPipelineOutcome};
-use crate::placement::{DisplayTarget, PlacementSpec};
-use crate::surface::SurfaceId;
-use crate::PortholeError;
+use crate::{
+    PortholeError,
+    adapter::Adapter,
+    handle::HandleStore,
+    launch::{ExistingSurfaceInfo, LaunchPipeline, LaunchPipelineError, LaunchPipelineOutcome},
+    placement::{DisplayTarget, PlacementSpec},
+    surface::SurfaceId,
+};
 
 pub struct ReplacePipeline {
     adapter: Arc<dyn Adapter>,
@@ -41,7 +43,10 @@ impl ReplacePipeline {
             Ok(info) => info,
             Err(e) => {
                 // Surface is already dead or missing — old handle is NOT alive.
-                return Err(ReplacePipelineError::Porthole { error: e, old_handle_alive: false });
+                return Err(ReplacePipelineError::Porthole {
+                    error: e,
+                    old_handle_alive: false,
+                });
             }
         };
         let snapshot = self.adapter.snapshot_geometry(&old_info).await.ok();
@@ -60,12 +65,15 @@ impl ReplacePipeline {
             if !old_handle_alive {
                 let _ = self.handles.mark_dead(old_id).await;
             }
-            return Err(ReplacePipelineError::Porthole { error: close_err, old_handle_alive });
+            return Err(ReplacePipelineError::Porthole {
+                error: close_err,
+                old_handle_alive,
+            });
         }
-        self.handles
-            .mark_dead(old_id)
-            .await
-            .map_err(|e| ReplacePipelineError::Porthole { error: e, old_handle_alive: false })?;
+        self.handles.mark_dead(old_id).await.map_err(|e| ReplacePipelineError::Porthole {
+            error: e,
+            old_handle_alive: false,
+        })?;
 
         // 3. Inheritance: inject snapshot only if caller_placement is None AND we have a snapshot.
         let inherited = match (caller_placement, snapshot) {
@@ -80,10 +88,14 @@ impl ReplacePipeline {
 
         // 4. Launch the replacement.
         match self.launch.launch(new_spec, effective).await {
-            Ok(out) => Ok(ReplaceOutcome { new: out, old_surface_id: old_id.clone() }),
-            Err(LaunchPipelineError::Porthole(e)) => {
-                Err(ReplacePipelineError::Porthole { error: e, old_handle_alive: false })
-            }
+            Ok(out) => Ok(ReplaceOutcome {
+                new: out,
+                old_surface_id: old_id.clone(),
+            }),
+            Err(LaunchPipelineError::Porthole(e)) => Err(ReplacePipelineError::Porthole {
+                error: e,
+                old_handle_alive: false,
+            }),
             Err(LaunchPipelineError::ReturnedExisting(info)) => {
                 Err(ReplacePipelineError::ReturnedExisting {
                     info,
@@ -97,12 +109,14 @@ impl ReplacePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::{ArtifactLaunchSpec, LaunchSpec, RequireConfidence};
-    use crate::display::{DisplayId, Rect};
-    use crate::in_memory::InMemoryAdapter;
-    use crate::placement::{GeometrySnapshot, PlacementOutcome};
-    use crate::surface::SurfaceInfo;
-    use crate::ErrorCode;
+    use crate::{
+        ErrorCode,
+        adapter::{ArtifactLaunchSpec, LaunchSpec, RequireConfidence},
+        display::{DisplayId, Rect},
+        in_memory::InMemoryAdapter,
+        placement::{GeometrySnapshot, PlacementOutcome},
+        surface::SurfaceInfo,
+    };
 
     async fn tracked_surface(handles: &HandleStore, pid: u32, cg: u32) -> SurfaceId {
         let mut info = SurfaceInfo::window(SurfaceId::new(), pid);
@@ -133,7 +147,12 @@ mod tests {
         adapter
             .set_next_snapshot_geometry(Ok(GeometrySnapshot {
                 display_id: DisplayId::new("in-mem-display-0"),
-                display_local: Rect { x: 100.0, y: 50.0, w: 800.0, h: 600.0 },
+                display_local: Rect {
+                    x: 100.0,
+                    y: 50.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
             }))
             .await;
 
@@ -156,13 +175,21 @@ mod tests {
         adapter
             .set_next_snapshot_geometry(Ok(GeometrySnapshot {
                 display_id: DisplayId::new("in-mem-display-0"),
-                display_local: Rect { x: 100.0, y: 50.0, w: 800.0, h: 600.0 },
+                display_local: Rect {
+                    x: 100.0,
+                    y: 50.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
             }))
             .await;
 
         // Caller passes Some(PlacementSpec::default()) — empty but present.
         let empty = PlacementSpec::default();
-        let out = replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", false), Some(&empty)).await.unwrap();
+        let out = replace
+            .replace(&old_id, &artifact_spec("/tmp/new.pdf", false), Some(&empty))
+            .await
+            .unwrap();
         assert_eq!(out.new.placement, PlacementOutcome::NotRequested);
         // place_surface should NOT have been called since placement was effectively empty.
         assert!(adapter.place_surface_calls().await.is_empty());
@@ -177,10 +204,7 @@ mod tests {
 
         let old_id = tracked_surface(&handles, 100, 50).await;
         adapter
-            .set_next_close_result(Err(PortholeError::new(
-                ErrorCode::CloseFailed,
-                "save dialog blocking close",
-            )))
+            .set_next_close_result(Err(PortholeError::new(ErrorCode::CloseFailed, "save dialog blocking close")))
             .await;
 
         match replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", false), None).await {
@@ -203,10 +227,7 @@ mod tests {
 
         let old_id = tracked_surface(&handles, 100, 50).await;
         adapter
-            .set_next_close_result(Err(PortholeError::new(
-                ErrorCode::SurfaceDead,
-                "surface already gone",
-            )))
+            .set_next_close_result(Err(PortholeError::new(ErrorCode::SurfaceDead, "surface already gone")))
             .await;
 
         match replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", false), None).await {
@@ -227,10 +248,7 @@ mod tests {
 
         let old_id = tracked_surface(&handles, 100, 50).await;
         adapter
-            .set_next_close_result(Err(PortholeError::new(
-                ErrorCode::SurfaceDead,
-                "window already closed by user",
-            )))
+            .set_next_close_result(Err(PortholeError::new(ErrorCode::SurfaceDead, "window already closed by user")))
             .await;
 
         let result = replace.replace(&old_id, &artifact_spec("/tmp/x.pdf", false), None).await;

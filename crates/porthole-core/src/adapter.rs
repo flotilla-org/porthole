@@ -2,16 +2,18 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::attention::AttentionInfo;
-use crate::display::DisplayInfo;
 pub use crate::display::Rect;
-use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::permission::{SystemPermissionPromptOutcome, SystemPermissionStatus};
-use crate::placement::GeometrySnapshot;
-use crate::search::{Candidate, SearchQuery};
-use crate::surface::SurfaceInfo;
-use crate::wait::{WaitCondition, WaitOutcome, WaitTimeout};
-use crate::PortholeError;
+use crate::{
+    PortholeError,
+    attention::AttentionInfo,
+    display::DisplayInfo,
+    input::{ClickSpec, KeyEvent, ScrollSpec},
+    permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
+    placement::GeometrySnapshot,
+    search::{Candidate, SearchQuery},
+    surface::SurfaceInfo,
+    wait::{WaitCondition, WaitOutcome, WaitTimeout},
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RequireConfidence {
@@ -106,7 +108,6 @@ pub struct Screenshot {
     pub captured_at_unix_ms: u64,
 }
 
-
 #[async_trait]
 pub trait Adapter: Send + Sync {
     fn name(&self) -> &'static str;
@@ -160,10 +161,7 @@ pub trait Adapter: Send + Sync {
     /// `name` is a string matching one of the names the adapter advertises via
     /// `system_permissions()`. Unknown names return an `InvalidArgument` error
     /// with the supported names in details.
-    async fn request_system_permission_prompt(
-        &self,
-        name: &str,
-    ) -> Result<SystemPermissionPromptOutcome, PortholeError>;
+    async fn request_system_permission_prompt(&self, name: &str) -> Result<SystemPermissionPromptOutcome, PortholeError>;
 
     /// Preflight: verify the named system permission is granted. If not, the
     /// adapter may attempt to trigger an OS prompt as a side effect, then
@@ -180,11 +178,7 @@ pub trait Adapter: Send + Sync {
     /// `(pid, cg_window_id)` if it still exists. The liveness check
     /// encompasses *all* windows, including hidden / minimized /
     /// other-Space windows — not just on-screen enumeration.
-    async fn window_alive(
-        &self,
-        pid: u32,
-        cg_window_id: u32,
-    ) -> Result<Option<SurfaceInfo>, PortholeError>;
+    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError>;
 
     /// Launch a file artifact via OS default handler (macOS: `open <path>`).
     /// Correlates via DocumentMatch (strong) / FrontmostChanged (plausible) /

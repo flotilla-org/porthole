@@ -30,9 +30,7 @@ pub fn containing_ancestors(pid: u32) -> Vec<u32> {
 }
 
 fn parent_of(pid: u32) -> Option<u32> {
-    let output = Command::new("/bin/ps")
-        .args(["-o", "ppid=", "-p", &pid.to_string()])
-        .output();
+    let output = Command::new("/bin/ps").args(["-o", "ppid=", "-p", &pid.to_string()]).output();
     let output = match output {
         Ok(o) => o,
         Err(e) => {

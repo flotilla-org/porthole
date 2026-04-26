@@ -1,9 +1,7 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use porthole_protocol::error::WireError;
-use porthole_protocol::info::InfoResponse;
-use porthole_protocol::system_permission::SystemPermissionPromptOutcome;
+use porthole_protocol::{error::WireError, info::InfoResponse, system_permission::SystemPermissionPromptOutcome};
 
 use crate::client::{ClientError, DaemonClient};
 
@@ -14,7 +12,10 @@ pub struct OnboardOptions {
 
 impl Default for OnboardOptions {
     fn default() -> Self {
-        Self { wait_seconds: 60, no_wait: false }
+        Self {
+            wait_seconds: 60,
+            no_wait: false,
+        }
     }
 }
 
@@ -26,10 +27,7 @@ pub struct OnboardResult {
 #[async_trait]
 pub trait OnboardClient: Send + Sync {
     async fn get_info(&self) -> Result<InfoResponse, ClientError>;
-    async fn request_prompt(
-        &self,
-        name: &str,
-    ) -> Result<SystemPermissionPromptOutcome, ClientError>;
+    async fn request_prompt(&self, name: &str) -> Result<SystemPermissionPromptOutcome, ClientError>;
 }
 
 #[async_trait]
@@ -37,15 +35,9 @@ impl OnboardClient for DaemonClient {
     async fn get_info(&self) -> Result<InfoResponse, ClientError> {
         self.get_json("/info").await
     }
-    async fn request_prompt(
-        &self,
-        name: &str,
-    ) -> Result<SystemPermissionPromptOutcome, ClientError> {
-        self.post_json(
-            "/system-permissions/request",
-            &serde_json::json!({ "name": name }),
-        )
-        .await
+    async fn request_prompt(&self, name: &str) -> Result<SystemPermissionPromptOutcome, ClientError> {
+        self.post_json("/system-permissions/request", &serde_json::json!({ "name": name }))
+            .await
     }
 }
 
@@ -62,10 +54,8 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
         return Ok(OnboardResult { exit_code: 0 });
     }
 
-    let granted_before: Vec<(String, bool)> =
-        perms.iter().map(|p| (p.name.clone(), p.granted)).collect();
-    let ungranted: Vec<String> =
-        perms.iter().filter(|p| !p.granted).map(|p| p.name.clone()).collect();
+    let granted_before: Vec<(String, bool)> = perms.iter().map(|p| (p.name.clone(), p.granted)).collect();
+    let ungranted: Vec<String> = perms.iter().filter(|p| !p.granted).map(|p| p.name.clone()).collect();
 
     if ungranted.is_empty() {
         for p in &perms {
@@ -123,11 +113,7 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     // 5. Summarise.
     let mut any_transition_requires_restart = false;
     for p in &final_perms {
-        let before = granted_before
-            .iter()
-            .find(|(n, _)| n == &p.name)
-            .map(|(_, b)| *b)
-            .unwrap_or(false);
+        let before = granted_before.iter().find(|(n, _)| n == &p.name).map(|(_, b)| *b).unwrap_or(false);
         let transitioned = !before && p.granted;
         let status = if p.granted { "granted" } else { "MISSING" };
         println!(
@@ -146,18 +132,13 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     // 6. Exit code.
     let exit_code = if any_still_missing || had_request_error {
         if any_still_missing {
-            println!(
-                "\nAt least one permission is still ungranted. Grant in Settings and re-run `porthole onboard`."
-            );
+            println!("\nAt least one permission is still ungranted. Grant in Settings and re-run `porthole onboard`.");
         }
         1
     } else if any_transition_requires_restart
-        || (restart_required_seen
-            && granted_before.iter().any(|(n, b)| !b && restart_required_flag_for(n)))
+        || (restart_required_seen && granted_before.iter().any(|(n, b)| !b && restart_required_flag_for(n)))
     {
-        println!(
-            "\nAll permissions granted. Restart the daemon before using Accessibility-dependent features."
-        );
+        println!("\nAll permissions granted. Restart the daemon before using Accessibility-dependent features.");
         2
     } else {
         0
@@ -166,10 +147,7 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     Ok(OnboardResult { exit_code })
 }
 
-async fn poll_until_granted(
-    client: &dyn OnboardClient,
-    deadline: Instant,
-) -> Result<InfoResponse, ClientError> {
+async fn poll_until_granted(client: &dyn OnboardClient, deadline: Instant) -> Result<InfoResponse, ClientError> {
     loop {
         let info: InfoResponse = client.get_info().await?;
         let all_granted = info
@@ -210,10 +188,12 @@ fn print_request_error(name: &str, err: &WireError) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Mutex;
+
     use porthole_core::ErrorCode;
     use porthole_protocol::info::{AdapterInfo, SystemPermissionStatus};
-    use std::sync::Mutex;
+
+    use super::*;
 
     // ClientError isn't Clone, so the fake stores WireError (which is Clone)
     // and reconstructs ClientError::Api on demand.
@@ -228,10 +208,7 @@ mod tests {
             let mut q = self.info_sequence.lock().unwrap();
             Ok(if q.len() > 1 { q.remove(0) } else { q[0].clone() })
         }
-        async fn request_prompt(
-            &self,
-            _name: &str,
-        ) -> Result<SystemPermissionPromptOutcome, ClientError> {
+        async fn request_prompt(&self, _name: &str) -> Result<SystemPermissionPromptOutcome, ClientError> {
             let mut q = self.prompt_results.lock().unwrap();
             let item = if q.len() > 1 { q.remove(0) } else { q[0].clone() };
             item.map_err(ClientError::Api)
@@ -275,7 +252,15 @@ mod tests {
             info_sequence: Mutex::new(vec![info_with(vec![("accessibility", true), ("screen_recording", true)])]),
             prompt_results: Mutex::new(vec![]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 0);
     }
 
@@ -288,7 +273,15 @@ mod tests {
             ]),
             prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 2);
     }
 
@@ -301,7 +294,15 @@ mod tests {
             ]),
             prompt_results: Mutex::new(vec![Ok(outcome("screen_recording", false, true, false))]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 0);
     }
 
@@ -311,7 +312,15 @@ mod tests {
             info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
             prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 1);
     }
 
@@ -321,7 +330,15 @@ mod tests {
             info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
             prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: true }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: true,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 3);
     }
 
@@ -331,7 +348,15 @@ mod tests {
             info_sequence: Mutex::new(vec![info_with(vec![("accessibility", false)])]),
             prompt_results: Mutex::new(vec![Ok(outcome("accessibility", false, true, true))]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 0, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 0,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 3);
     }
 
@@ -354,7 +379,15 @@ mod tests {
             ]),
             prompt_results: Mutex::new(vec![Err(wire)]),
         };
-        let res = run(&client, OnboardOptions { wait_seconds: 1, no_wait: false }).await.unwrap();
+        let res = run(
+            &client,
+            OnboardOptions {
+                wait_seconds: 1,
+                no_wait: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(res.exit_code, 1);
     }
 }

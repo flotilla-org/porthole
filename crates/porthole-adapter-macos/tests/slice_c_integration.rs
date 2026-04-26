@@ -1,11 +1,12 @@
 #![cfg(target_os = "macos")]
 
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use porthole_adapter_macos::MacOsAdapter;
-use porthole_core::adapter::{Adapter, ArtifactLaunchSpec, RequireConfidence};
-use porthole_core::display::Rect;
+use porthole_core::{
+    adapter::{Adapter, ArtifactLaunchSpec, RequireConfidence},
+    display::Rect,
+};
 
 fn pdf_spec(path: &str) -> ArtifactLaunchSpec {
     ArtifactLaunchSpec {
@@ -44,7 +45,15 @@ async fn place_surface_moves_textedit() {
     };
     let outcome = adapter.launch_process(&spec).await.expect("launch");
     adapter
-        .place_surface(&outcome.surface, Rect { x: 200.0, y: 100.0, w: 800.0, h: 600.0 })
+        .place_surface(
+            &outcome.surface,
+            Rect {
+                x: 200.0,
+                y: 100.0,
+                w: 800.0,
+                h: 600.0,
+            },
+        )
         .await
         .expect("place");
     let snap = adapter.snapshot_geometry(&outcome.surface).await.expect("snapshot");

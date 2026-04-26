@@ -3,8 +3,10 @@
 use std::time::Duration;
 
 use porthole_adapter_macos::MacOsAdapter;
-use porthole_core::adapter::{Adapter, ProcessLaunchSpec, RequireConfidence};
-use porthole_core::search::{encode_ref, SearchQuery};
+use porthole_core::{
+    adapter::{Adapter, ProcessLaunchSpec, RequireConfidence},
+    search::{SearchQuery, encode_ref},
+};
 
 fn textedit_spec() -> ProcessLaunchSpec {
     ProcessLaunchSpec {
@@ -23,7 +25,10 @@ fn textedit_spec() -> ProcessLaunchSpec {
 async fn search_finds_launched_textedit_by_app_name() {
     let adapter = MacOsAdapter::new();
     let outcome = adapter.launch_process(&textedit_spec()).await.expect("launch");
-    let query = SearchQuery { app_name: Some("TextEdit".into()), ..Default::default() };
+    let query = SearchQuery {
+        app_name: Some("TextEdit".into()),
+        ..Default::default()
+    };
     let candidates = adapter.search(&query).await.expect("search");
     assert!(
         candidates.iter().any(|c| c.pid == outcome.surface.pid.unwrap()),

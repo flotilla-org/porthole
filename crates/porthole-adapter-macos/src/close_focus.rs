@@ -1,13 +1,13 @@
 #![cfg(target_os = "macos")]
 
 use core_foundation::array::{CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef};
-use porthole_core::adapter::Rect;
-use porthole_core::surface::SurfaceInfo;
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{ErrorCode, PortholeError, adapter::Rect, surface::SurfaceInfo};
 
-use crate::ax::{AxElement, AxElementRef, AXValueGetValue};
-use crate::MacOsAdapter;
-use crate::permissions::ensure_accessibility_granted;
+use crate::{
+    MacOsAdapter,
+    ax::{AXValueGetValue, AxElement, AxElementRef},
+    permissions::ensure_accessibility_granted,
+};
 
 // AXValue type tags for CGPoint and CGSize.
 const K_AX_VALUE_CG_POINT_TYPE: i32 = 1;
@@ -15,9 +15,9 @@ const K_AX_VALUE_CG_SIZE_TYPE: i32 = 2;
 
 pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
     ensure_accessibility_granted(adapter)?;
-    let pid = surface.pid.ok_or_else(|| {
-        PortholeError::new(ErrorCode::CapabilityMissing, "focus: surface has no pid")
-    })? as i32;
+    let pid = surface
+        .pid
+        .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "focus: surface has no pid"))? as i32;
 
     // Activate the owning app via NSRunningApplication.
     activate_app(pid)?;
@@ -42,12 +42,13 @@ pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
 
 pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
     ensure_accessibility_granted(adapter)?;
-    use crate::enumerate::list_windows;
     use tokio::time::sleep;
 
-    let pid = surface.pid.ok_or_else(|| {
-        PortholeError::new(ErrorCode::CapabilityMissing, "close: surface has no pid")
-    })? as i32;
+    use crate::enumerate::list_windows;
+
+    let pid = surface
+        .pid
+        .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "close: surface has no pid"))? as i32;
 
     let press_close_button = |win: AxElementRef| -> Result<bool, PortholeError> {
         // SAFETY: win is borrowed from the AXWindows array held alive by the caller.
@@ -75,10 +76,8 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
         // Fallback: focus + Cmd+W via input path.
         // accessibility was already preflighted at the top of close().
         focus(adapter, surface).await?;
-        let src = core_graphics::event_source::CGEventSource::new(
-            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-        )
-        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "close fallback: event source failed"))?;
+        let src = core_graphics::event_source::CGEventSource::new(core_graphics::event_source::CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "close fallback: event source failed"))?;
         let code_w: u16 = 0x0D;
         let flags = core_graphics::event::CGEventFlags::CGEventFlagCommand;
         let down = core_graphics::event::CGEvent::new_keyboard_event(src.clone(), code_w, true)
@@ -99,10 +98,9 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
         let still_present = if let Some(cg_id) = surface.cg_window_id {
             windows.iter().any(|w| w.cg_window_id == cg_id)
         } else {
-            windows.iter().any(|w| {
-                w.owner_pid == pid
-                    && (surface.title.is_none() || w.title == surface.title)
-            })
+            windows
+                .iter()
+                .any(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title))
         };
         if !still_present {
             return Ok(());
@@ -117,14 +115,16 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
 
 pub async fn window_bounds(surface: &SurfaceInfo) -> Result<Rect, PortholeError> {
     use crate::enumerate::list_windows;
-    let pid = surface.pid.ok_or_else(|| {
-        PortholeError::new(ErrorCode::CapabilityMissing, "window_bounds: surface has no pid")
-    })? as i32;
+    let pid = surface
+        .pid
+        .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "window_bounds: surface has no pid"))? as i32;
     let windows = list_windows()?;
     let hit = if let Some(cg_id) = surface.cg_window_id {
         windows.iter().find(|w| w.cg_window_id == cg_id)
     } else {
-        windows.iter().find(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title))
+        windows
+            .iter()
+            .find(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title))
     };
     match hit {
         Some(_w) => {
@@ -141,7 +141,12 @@ fn bounds_from_ax(pid: i32, cg_window_id: Option<u32>) -> Result<Rect, PortholeE
         // SAFETY: win is borrowed from the AXWindows array held alive by the caller.
         let pos_ptr = unsafe { crate::ax::copy_attribute_borrowed(win, "AXPosition") };
         let size_ptr = unsafe { crate::ax::copy_attribute_borrowed(win, "AXSize") };
-        let mut rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+        let mut rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        };
         if let Some(p) = pos_ptr {
             let mut pt = core_graphics::geometry::CGPoint { x: 0.0, y: 0.0 };
             unsafe { AXValueGetValue(p, K_AX_VALUE_CG_POINT_TYPE, &raw mut pt as *mut std::ffi::c_void) };
@@ -172,12 +177,11 @@ fn with_first_window_for_pid<F, R>(pid: i32, op: F) -> Result<R, PortholeError>
 where
     F: FnOnce(AxElementRef) -> Result<R, PortholeError>,
 {
-    let app = AxElement::for_application(pid).ok_or_else(|| {
-        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null")
-    })?;
-    let windows_ptr = app.copy_attribute_raw("AXWindows").ok_or_else(|| {
-        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed")
-    })?;
+    let app = AxElement::for_application(pid)
+        .ok_or_else(|| PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null"))?;
+    let windows_ptr = app
+        .copy_attribute_raw("AXWindows")
+        .ok_or_else(|| PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed"))?;
     // windows_ptr is a retained CFArrayRef; we hold it alive until after the closure.
     let arr = windows_ptr as CFArrayRef;
     let count = unsafe { CFArrayGetCount(arr) };
@@ -206,12 +210,11 @@ pub(crate) fn with_ax_window_by_cg_id<F, R>(pid: i32, target: u32, op: F) -> Res
 where
     F: FnOnce(AxElementRef) -> Result<R, PortholeError>,
 {
-    let app = AxElement::for_application(pid).ok_or_else(|| {
-        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null")
-    })?;
-    let windows_ptr = app.copy_attribute_raw("AXWindows").ok_or_else(|| {
-        PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed")
-    })?;
+    let app = AxElement::for_application(pid)
+        .ok_or_else(|| PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXUIElementCreateApplication returned null"))?;
+    let windows_ptr = app
+        .copy_attribute_raw("AXWindows")
+        .ok_or_else(|| PortholeError::new(ErrorCode::SystemPermissionNeeded, "AXWindows read failed"))?;
     let arr = windows_ptr as CFArrayRef;
     let count = unsafe { CFArrayGetCount(arr) };
 
@@ -243,8 +246,7 @@ fn activate_app(pid: i32) -> Result<(), PortholeError> {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 
     unsafe {
-        let app: Option<Retained<NSRunningApplication>> =
-            NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
+        let app: Option<Retained<NSRunningApplication>> = NSRunningApplication::runningApplicationWithProcessIdentifier(pid);
         match app {
             Some(a) => {
                 let opts = NSApplicationActivationOptions::empty();

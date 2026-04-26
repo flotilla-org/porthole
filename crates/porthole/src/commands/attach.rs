@@ -1,8 +1,10 @@
 use porthole_core::search::SearchQuery;
 use porthole_protocol::search::{SearchRequest, SearchResponse, TrackRequest, TrackResponse};
 
-use crate::ancestry::containing_ancestors;
-use crate::client::{ClientError, DaemonClient};
+use crate::{
+    ancestry::containing_ancestors,
+    client::{ClientError, DaemonClient},
+};
 
 pub struct AttachArgs {
     pub app_name: Option<String>,
@@ -33,8 +35,15 @@ pub async fn run(client: &DaemonClient, args: AttachArgs) -> Result<(), ClientEr
     };
 
     // Search, pick if unique, track.
-    let search: SearchResponse =
-        client.post_json("/surfaces/search", &SearchRequest { query, session: args.session.clone() }).await?;
+    let search: SearchResponse = client
+        .post_json(
+            "/surfaces/search",
+            &SearchRequest {
+                query,
+                session: args.session.clone(),
+            },
+        )
+        .await?;
 
     if search.candidates.is_empty() {
         return Err(ClientError::Local("attach: no matching windows".to_string()));
@@ -60,12 +69,14 @@ pub async fn run(client: &DaemonClient, args: AttachArgs) -> Result<(), ClientEr
     let res: TrackResponse = client
         .post_json(
             "/surfaces/track",
-            &TrackRequest { ref_: chosen.ref_, session: args.session },
+            &TrackRequest {
+                ref_: chosen.ref_,
+                session: args.session,
+            },
         )
         .await?;
     if args.json {
-        let text = serde_json::to_string_pretty(&res)
-            .map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
+        let text = serde_json::to_string_pretty(&res).map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
         println!("{text}");
     } else {
         println!("{}", res.surface_id);

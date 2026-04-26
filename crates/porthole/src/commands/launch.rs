@@ -1,16 +1,20 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use porthole_core::placement::PlacementSpec;
-use porthole_protocol::launches::{
-    ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, ProcessLaunch, WireConfidence,
-};
+use porthole_protocol::launches::{ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, ProcessLaunch, WireConfidence};
 
 use crate::client::{ClientError, DaemonClient};
 
 pub enum LaunchKindArg {
-    Process { app: String, args: Vec<String>, env: Vec<(String, String)>, cwd: Option<String> },
-    Artifact { path: PathBuf },
+    Process {
+        app: String,
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        cwd: Option<String>,
+    },
+    Artifact {
+        path: PathBuf,
+    },
 }
 
 pub struct LaunchArgs {
@@ -31,7 +35,12 @@ pub async fn run(client: &DaemonClient, args: LaunchArgs) -> Result<(), ClientEr
             for (k, v) in env {
                 env_map.insert(k, v);
             }
-            LaunchKind::Process(ProcessLaunch { app, args: a, cwd, env: env_map })
+            LaunchKind::Process(ProcessLaunch {
+                app,
+                args: a,
+                cwd,
+                env: env_map,
+            })
         }
         LaunchKindArg::Artifact { path } => LaunchKind::Artifact(ArtifactLaunch {
             path: path.to_string_lossy().to_string(),
@@ -48,8 +57,7 @@ pub async fn run(client: &DaemonClient, args: LaunchArgs) -> Result<(), ClientEr
     };
     let res: LaunchResponse = client.post_json("/launches", &req).await?;
     if args.json {
-        let text = serde_json::to_string_pretty(&res)
-            .map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
+        let text = serde_json::to_string_pretty(&res).map_err(|e| ClientError::Local(format!("json encode: {e}")))?;
         println!("{text}");
     } else {
         println!("launch_id: {}", res.launch_id);

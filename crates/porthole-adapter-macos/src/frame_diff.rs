@@ -6,7 +6,7 @@
 //! tolerance. This is cheap (~4 KB per sample) and robust to a few
 //! blinking pixels like a terminal cursor.
 
-use image::{imageops::FilterType, DynamicImage, GrayImage, ImageBuffer, Luma};
+use image::{DynamicImage, GrayImage, ImageBuffer, Luma, imageops::FilterType};
 
 pub const FINGERPRINT_SIDE: u32 = 64;
 pub const FINGERPRINT_LEN: usize = (FINGERPRINT_SIDE * FINGERPRINT_SIDE) as usize;
@@ -17,8 +17,7 @@ pub struct Fingerprint(Box<[u8]>); // length FINGERPRINT_LEN
 
 impl Fingerprint {
     pub fn from_png(png_bytes: &[u8]) -> Result<Self, String> {
-        let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)
-            .map_err(|e| format!("png decode failed: {e}"))?;
+        let img = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).map_err(|e| format!("png decode failed: {e}"))?;
         Ok(Self::from_dynamic(&img))
     }
 
@@ -45,8 +44,9 @@ impl Fingerprint {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use image::{Rgba, RgbaImage};
+
+    use super::*;
 
     fn solid(width: u32, height: u32, rgba: [u8; 4]) -> RgbaImage {
         ImageBuffer::from_pixel(width, height, Rgba(rgba))

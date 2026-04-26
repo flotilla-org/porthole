@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use crate::adapter::Adapter;
-use crate::handle::HandleStore;
-use crate::input::{ClickSpec, KeyEvent, ScrollSpec};
-use crate::key_names;
-use crate::surface::SurfaceId;
-use crate::{ErrorCode, PortholeError};
+use crate::{
+    ErrorCode, PortholeError,
+    adapter::Adapter,
+    handle::HandleStore,
+    input::{ClickSpec, KeyEvent, ScrollSpec},
+    key_names,
+    surface::SurfaceId,
+};
 
 pub struct InputPipeline {
     adapter: Arc<dyn Adapter>,
@@ -76,8 +78,7 @@ impl InputPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::in_memory::InMemoryAdapter;
-    use crate::surface::SurfaceInfo;
+    use crate::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
 
     async fn setup() -> (Arc<InMemoryAdapter>, HandleStore, SurfaceId) {
         let adapter = Arc::new(InMemoryAdapter::new());
@@ -92,7 +93,16 @@ mod tests {
     async fn key_rejects_unsupported_name() {
         let (adapter, handles, id) = setup().await;
         let pipeline = InputPipeline::new(adapter.clone(), handles);
-        let err = pipeline.key(&id, &[KeyEvent { key: "NotAKey".into(), modifiers: vec![] }]).await.unwrap_err();
+        let err = pipeline
+            .key(
+                &id,
+                &[KeyEvent {
+                    key: "NotAKey".into(),
+                    modifiers: vec![],
+                }],
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownKey);
     }
 
@@ -100,7 +110,16 @@ mod tests {
     async fn key_delegates_to_adapter() {
         let (adapter, handles, id) = setup().await;
         let pipeline = InputPipeline::new(adapter.clone(), handles);
-        pipeline.key(&id, &[KeyEvent { key: "Enter".into(), modifiers: vec![] }]).await.unwrap();
+        pipeline
+            .key(
+                &id,
+                &[KeyEvent {
+                    key: "Enter".into(),
+                    modifiers: vec![],
+                }],
+            )
+            .await
+            .unwrap();
         assert_eq!(adapter.key_calls().await.len(), 1);
     }
 
@@ -109,7 +128,16 @@ mod tests {
         let (adapter, handles, id) = setup().await;
         let pipeline = InputPipeline::new(adapter.clone(), handles);
         let err = pipeline
-            .click(&id, &ClickSpec { x: 0.0, y: 0.0, button: crate::input::ClickButton::Left, count: 0, modifiers: vec![] })
+            .click(
+                &id,
+                &ClickSpec {
+                    x: 0.0,
+                    y: 0.0,
+                    button: crate::input::ClickButton::Left,
+                    count: 0,
+                    modifiers: vec![],
+                },
+            )
             .await
             .unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidArgument);
@@ -134,6 +162,9 @@ mod tests {
         let err = pipeline.close(&id).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::CloseFailed);
         // Handle must still be alive — the window was not closed.
-        handles.require_alive(&id).await.expect("handle should remain alive after close_failed");
+        handles
+            .require_alive(&id)
+            .await
+            .expect("handle should remain alive after close_failed");
     }
 }

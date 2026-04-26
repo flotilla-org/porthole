@@ -1,25 +1,15 @@
-use axum::extract::State;
-use axum::Json;
-use porthole_protocol::search::{
-    SearchRequest, SearchResponse, TrackRequest, TrackResponse,
-};
+use axum::{Json, extract::State};
+use porthole_protocol::search::{SearchRequest, SearchResponse, TrackRequest, TrackResponse};
 
-use crate::routes::errors::ApiError;
-use crate::state::AppState;
+use crate::{routes::errors::ApiError, state::AppState};
 
-pub async fn post_search(
-    State(state): State<AppState>,
-    Json(req): Json<SearchRequest>,
-) -> Result<Json<SearchResponse>, ApiError> {
+pub async fn post_search(State(state): State<AppState>, Json(req): Json<SearchRequest>) -> Result<Json<SearchResponse>, ApiError> {
     // session intentionally dropped until SSE events slice
     let candidates = state.attach.search(&req.query).await?;
     Ok(Json(SearchResponse { candidates }))
 }
 
-pub async fn post_track(
-    State(state): State<AppState>,
-    Json(req): Json<TrackRequest>,
-) -> Result<Json<TrackResponse>, ApiError> {
+pub async fn post_track(State(state): State<AppState>, Json(req): Json<TrackRequest>) -> Result<Json<TrackResponse>, ApiError> {
     // session intentionally dropped until SSE events slice
     let outcome = state.attach.track(&req.ref_).await?;
     let info = &outcome.surface;
