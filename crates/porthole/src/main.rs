@@ -5,7 +5,8 @@ use porthole::{
     client::DaemonClient,
     commands::{
         attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, key as key_cmd, launch as launch_cmd,
-        launch::LaunchArgs, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, text as text_cmd, wait as wait_cmd,
+        launch::LaunchArgs, place as place_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, text as text_cmd,
+        wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -233,6 +234,22 @@ enum Command {
     /// Focus a surface.
     Focus {
         surface_id: String,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// In-place resize/move a surface. Surface identity is preserved — the
+    /// inner process keeps running, unlike `replace`. Coordinates are in
+    /// global screen points.
+    Place {
+        surface_id: String,
+        #[arg(long)]
+        x: f64,
+        #[arg(long)]
+        y: f64,
+        #[arg(long)]
+        w: f64,
+        #[arg(long)]
+        h: f64,
         #[arg(long)]
         session: Option<String>,
     },
@@ -654,6 +671,14 @@ async fn main() -> std::process::ExitCode {
         }
         Command::Close { surface_id, session } => close_cmd::run(&client, surface_id, session).await,
         Command::Focus { surface_id, session } => focus_cmd::run(&client, surface_id, session).await,
+        Command::Place {
+            surface_id,
+            x,
+            y,
+            w,
+            h,
+            session,
+        } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, session).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
         Command::Search {
