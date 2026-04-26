@@ -14,7 +14,7 @@ What has shipped on `main`:
 - HTTP-over-UDS daemon (`portholed`) and CLI (`porthole`) talking via Unix Domain Socket.
 - System-permissions slice: `porthole onboard` flow, `/info` permission status, `/system-permissions/request` route, capability-aware error mapping (`SystemPermissionNeeded`, `SystemPermissionRequestFailed`).
 - Dev bundle script (`scripts/dev-bundle.sh`) producing an ad-hoc-signed `.app` for stable TCC identity across rebuilds.
-- CI: `cargo build` / `cargo test` / `cargo clippy --workspace -- -D warnings` / `cargo +nightly-2026-03-12 fmt --check`.
+- CI: `cargo build --workspace --locked` / `cargo test --workspace --locked` / `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo +nightly-2026-03-12 fmt --check`.
 
 What's known missing or rough:
 
@@ -35,7 +35,7 @@ What's known missing or rough:
 - [ ] `docs/recipes/terminal-orchestration.md` — agent-facing walkthrough: launch → focus → wait-stable → text/key → screenshot → scrollback → resize → close. Notes the inner-script ↔ harness UDS pattern as out-of-scope (not porthole's job).
 - [ ] `scripts/manual-terminal-smoke.sh` — runnable shell script exercising launch / focus / text / key / wait-stable / screenshot / scrollback / close on Ghostty (or any installed terminal).
 - [ ] README **Install** section documenting `cargo install --git ... porthole --locked` for the CLI, with the explicit caveat that the daemon needs the `.app` bundle to satisfy TCC.
-- [ ] `dev-bundle.sh`: rename output to `Porthole.app`, copy the `porthole` CLI into `Contents/MacOS/` alongside `portholed` so the CLI shares the daemon's TCC identity.
+- [ ] `dev-bundle.sh`: rename output from `Portholed.app` to `Porthole.app`, copy the `porthole` CLI into `Contents/MacOS/` alongside `portholed` so the CLI shares the daemon's TCC identity.
 
 ---
 
@@ -79,6 +79,7 @@ What's known missing or rough:
 - [ ] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
 - [ ] Notification surface for agent-permission approvals (depends on phase 2). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
 - [ ] `SMAppService.daemon(plistName:)` registration so the user gets a System Settings → General → Login Items entry. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
+- [ ] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
 - [ ] Quit / Restart daemon menu items.
 
 ---
@@ -90,7 +91,7 @@ What's known missing or rough:
 Candidates, roughly ordered by leverage:
 
 - [ ] **Recording on macOS** — AVFoundation or ScreenCaptureKit. Biggest user-visible feature gap.
-- [ ] **Multi-display placement verbs** — `POST /surfaces/{id}/place` extended to anchor-based placement (e.g. `anchor: focused_display`, `anchor: by_id`).
+- [ ] **Multi-display placement verbs** — extends the phase-0 `/place` route (which takes explicit geometry) with anchor-based placement (e.g. `anchor: focused_display`, `anchor: by_id`).
 - [ ] **Browser tabs via CDP** — Chrome / Edge tab coverage that AX can't reach. Expanded tab verb set (input, wait, replace) and content-area screenshot crop.
 - [ ] **`force_place: true` launch option** — placement on preexisting surfaces.
 - [ ] **Hyprland adapter (Linux)** — second platform via `hyprctl` IPC.
