@@ -1,7 +1,5 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use async_trait::async_trait;
 use porthole_core::{
     ErrorCode, PortholeError,
@@ -36,47 +34,19 @@ pub mod snapshot;
 pub mod wait;
 pub mod window_alive;
 
+/// Stateless adapter — TCC trust state is loaded per-process by the macOS
+/// runtime, not by us. Onboarding restarts the daemon between grants
+/// (via `porthole onboard`'s launchctl-kickstart loop), so per-daemon-process
+/// "have we prompted yet" bookkeeping isn't useful: each new daemon process
+/// starts fresh and any earlier prompt belongs to a dead process.
+#[derive(Default)]
 pub struct MacOsAdapter {
-    /// One AtomicBool per entry in `permissions::SUPPORTED_PERMISSIONS`,
-    /// matched by position. Tracks whether the OS prompt API has been called
-    /// for that permission this daemon session.
-    prompted: [AtomicBool; permissions::SUPPORTED_PERMISSIONS.len()],
+    _private: (),
 }
 
 impl MacOsAdapter {
     pub fn new() -> Self {
-        Self {
-            prompted: std::array::from_fn(|_| AtomicBool::new(false)),
-        }
-    }
-
-    fn prompted_index(name: &str) -> Option<usize> {
-        permissions::SUPPORTED_PERMISSIONS.iter().position(|p| p.name == name)
-    }
-
-    /// For preflight / request paths: mark a permission as having had its
-    /// prompt API called. Returns the *previous* value (true if already
-    /// prompted, false on first call). Unknown names return true (caller's
-    /// problem — they should reject before calling).
-    pub fn set_prompted(&self, name: &str) -> bool {
-        match Self::prompted_index(name) {
-            Some(i) => self.prompted[i].swap(true, Ordering::SeqCst),
-            None => true,
-        }
-    }
-
-    /// Check without modifying.
-    pub fn was_prompted(&self, name: &str) -> bool {
-        match Self::prompted_index(name) {
-            Some(i) => self.prompted[i].load(Ordering::SeqCst),
-            None => true,
-        }
-    }
-}
-
-impl Default for MacOsAdapter {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 
@@ -160,10 +130,13 @@ impl Adapter for MacOsAdapter {
         // Name validation against our supported set. InvalidArgument carries
         // the supported list in details.
         let granted_before = permissions::is_granted(name)?;
-        let was_prompted_before = self.was_prompted(name);
 
         if !granted_before {
-            // Attempt to open the OS prompt.
+            // Attempt to open the OS prompt. TCC silently no-ops on
+            // previously-denied permissions and on subsequent calls within
+            // the same process; we don't track that here because the next
+            // call goes through a freshly restarted daemon (per the onboard
+            // flow's kickstart-between-grants design).
             if let Err(reason) = permissions::try_trigger_prompt(name) {
                 let body = permissions::build_request_failed_body(name, reason);
                 return Err(
@@ -171,11 +144,10 @@ impl Adapter for MacOsAdapter {
                         .with_details(serde_json::to_value(body).unwrap_or_default()),
                 );
             }
-            self.set_prompted(name);
         }
 
         let granted_after = permissions::is_granted(name)?;
-        let prompt_triggered = !granted_before && !was_prompted_before;
+        let prompt_triggered = !granted_before;
         let requires_daemon_restart = permissions::requires_daemon_restart(name);
 
         Ok(SystemPermissionPromptOutcome {
