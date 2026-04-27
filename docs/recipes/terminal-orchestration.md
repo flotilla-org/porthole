@@ -15,8 +15,10 @@ Assumptions:
 | 1 | `launch --kind process --app /Applications/X.app` | Start a fresh window. Returns `surface_id`. | Once per test run. |
 | 2 | `focus <surface_id>` | Bring window to front so input lands. | Defensively, before any input burst. |
 | 3 | `wait <surface_id> --condition stable --window-ms 1500` | Block until the frame is unchanged for 1.5s, ignoring small pixel changes (cursor blink). | After launching, before screenshots, between input bursts. |
-| 4 | `text <surface_id> 'shell command here'` | Type a literal string. | Most input is this. |
-| 5 | `key <surface_id> --key Enter` | Send a named key. Modifiers via `--mod Cmd --mod Ctrl`. | Newlines, hotkeys, scrollback navigation. |
+| 4 | `send-keys <surface_id> 'cmd' Enter` | Tmux-style sequence: text, named keys, and modifier-prefixed keys in one call (`C-c`, `Cmd-Tab`, `M-x`). The recommended input primitive. |
+| 4a | `send <surface_id> 'shell command'` | Convenience for the most common case: type text and press Enter. |
+| 4b | `interrupt <surface_id>` | Convenience for Ctrl+C. |
+| 4c | `text <surface_id> 'literal'` / `key <surface_id> --key Enter --mod Cmd` | Lower-level primitives that map 1:1 to the wire endpoints. Use when `send-keys` parsing isn't what you want. |
 | 6 | `screenshot <surface_id> --out file.png` | PNG capture of the window. | At known points; the inner test script tells the harness when. |
 | 7 | `place <surface_id> --x N --y N --w N --h N` | In-place resize/move. **Surface identity preserved**, inner process unaffected. | Reflow tests, before/after geometry comparisons. |
 | 8 | `close <surface_id>` | Clean shutdown. | End of test run. |
@@ -41,15 +43,12 @@ porthole focus "$SID"
 porthole wait "$SID" --condition stable --window-ms 1500 --threshold-pct 1.0
 
 # 3. Type a known command. The exit code from `seq` is irrelevant; we want pixels.
-porthole text "$SID" 'printf "hello porthole\n"; seq 1 80'
-porthole key  "$SID" --key Enter
+porthole send "$SID" 'printf "hello porthole\n"; seq 1 80'
 porthole wait "$SID" --condition stable --window-ms 1500 --threshold-pct 1.0
 porthole screenshot "$SID" --out "$OUT/01-after-output.png"
 
 # 4. Scrollback: Cmd+ArrowUp three times, then capture.
-for _ in 1 2 3; do
-    porthole key "$SID" --key ArrowUp --mod Cmd
-done
+porthole send-keys "$SID" Cmd-Up Cmd-Up Cmd-Up
 porthole wait "$SID" --condition stable --window-ms 1000
 porthole screenshot "$SID" --out "$OUT/02-scrolled.png"
 
