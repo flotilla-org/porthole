@@ -140,7 +140,18 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
                     still_missing.push(name.clone());
                     continue;
                 }
-                client.wait_until_ready().await?;
+                // If the daemon doesn't come back up within the configured
+                // restart timeout, treat that as "this permission's status
+                // is unknown" rather than aborting the whole flow — the
+                // remaining permissions might still be onboardable, and a
+                // simple re-run of `porthole onboard` recovers when the
+                // daemon catches up.
+                if let Err(e) = client.wait_until_ready().await {
+                    eprintln!("  warning: daemon didn't come back online within restart timeout: {e}");
+                    eprintln!("  marking {name} as still-missing; re-run `porthole onboard` after the daemon recovers.");
+                    still_missing.push(name.clone());
+                    continue;
+                }
 
                 let after = client.get_info().await?;
                 let granted_now = after
@@ -165,6 +176,9 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     }
 
     if opts.no_wait {
+        // 3 means "fire-and-forget mode; caller handles restart and
+        // verification." Request errors above are still printed but don't
+        // change the exit code — by design, no_wait is "I'll figure it out."
         return Ok(OnboardResult { exit_code: 3 });
     }
 
@@ -219,6 +233,7 @@ mod tests {
         restart_count: Mutex<u32>,
         restart_outcomes: Mutex<Vec<RestartHappened>>,
         continue_count: Mutex<u32>,
+        wait_until_ready_fails: bool,
     }
 
     impl FakeClient {
@@ -230,10 +245,15 @@ mod tests {
                 restart_count: Mutex::new(0),
                 restart_outcomes: Mutex::new(vec![]),
                 continue_count: Mutex::new(0),
+                wait_until_ready_fails: false,
             }
         }
         fn with_restart_outcomes(mut self, outcomes: Vec<RestartHappened>) -> Self {
             self.restart_outcomes = Mutex::new(outcomes);
+            self
+        }
+        fn with_wait_until_ready_fails(mut self) -> Self {
+            self.wait_until_ready_fails = true;
             self
         }
     }
@@ -262,7 +282,11 @@ mod tests {
             })
         }
         async fn wait_until_ready(&self) -> Result<(), ClientError> {
-            Ok(())
+            if self.wait_until_ready_fails {
+                Err(ClientError::Local("daemon did not respond before timeout".into()))
+            } else {
+                Ok(())
+            }
         }
         fn wait_for_user_continue(&self) {
             *self.continue_count.lock().unwrap() += 1;
@@ -365,6 +389,31 @@ mod tests {
         // can't be auto-verified so it counts as still-missing → exit 1.
         assert_eq!(res.exit_code, 1);
         assert_eq!(*client.restart_count.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_timeout_marks_still_missing_does_not_abort() {
+        // Daemon restarts but never comes back online (flaky machine /
+        // timeout). Old behaviour: hard error from `?`, run() aborts
+        // immediately. New behaviour: warn, mark this permission still
+        // missing, continue with the rest, exit 1.
+        let client = FakeClient::new(
+            vec![
+                info_with(vec![("accessibility", false), ("screen_recording", false)]),
+                info_with(vec![("accessibility", false), ("screen_recording", false)]),
+                info_with(vec![("accessibility", false), ("screen_recording", false)]),
+            ],
+            vec![
+                Ok(outcome("accessibility", false, true, true)),
+                Ok(outcome("screen_recording", false, true, false)),
+            ],
+        )
+        .with_wait_until_ready_fails();
+        let res = run(&client, OnboardOptions::default()).await.unwrap();
+        assert_eq!(res.exit_code, 1);
+        // Both prompts were attempted — we didn't abort after the first
+        // timeout — so both restart attempts happened.
+        assert_eq!(*client.restart_count.lock().unwrap(), 2);
     }
 
     #[tokio::test]
