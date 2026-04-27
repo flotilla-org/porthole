@@ -15,13 +15,10 @@ Assumptions:
 | 1 | `launch --kind process --app /Applications/X.app` | Start a fresh window. Returns `surface_id`. | Once per test run. |
 | 2 | `focus <surface_id>` | Bring window to front so input lands. | Defensively, before any input burst. |
 | 3 | `wait <surface_id> --condition stable --window-ms 1500` | Block until the frame is unchanged for 1.5s, ignoring small pixel changes (cursor blink). | After launching, before screenshots, between input bursts. |
-| 4 | `send-keys <surface_id> 'cmd' Enter` | Tmux-style sequence: text, named keys, and modifier-prefixed keys in one call (`C-c`, `Cmd-Tab`, `M-x`). The recommended input primitive. |
-| 4a | `send <surface_id> 'shell command'` | Convenience for the most common case: type text and press Enter. |
-| 4b | `interrupt <surface_id>` | Convenience for Ctrl+C. |
-| 4c | `text <surface_id> 'literal'` / `key <surface_id> --key Enter --mod Cmd` | Lower-level primitives that map 1:1 to the wire endpoints. Use when `send-keys` parsing isn't what you want. |
-| 6 | `screenshot <surface_id> --out file.png` | PNG capture of the window. | At known points; the inner test script tells the harness when. |
-| 7 | `place <surface_id> --x N --y N --w N --h N` | In-place resize/move. **Surface identity preserved**, inner process unaffected. | Reflow tests, before/after geometry comparisons. |
-| 8 | `close <surface_id>` | Clean shutdown. | End of test run. |
+| 4 | `send-keys <surface_id> 'cmd' Enter` | Tmux-style sequence: text, named keys, and modifier-prefixed keys in one call (`C-c`, `Cmd-Tab`, `M-x`). The recommended input primitive. Convenience aliases: `send <id> 'cmd'` (text + Enter) and `interrupt <id>` (Ctrl+C). Lower-level: `text` and `key` map 1:1 to the wire endpoints when you don't want parsing. |
+| 5 | `screenshot <surface_id> --out file.png` | PNG capture of the window. | At known points; the inner test script tells the harness when. |
+| 6 | `place <surface_id> --x N --y N --w N --h N` | In-place resize/move. **Surface identity preserved**, inner process unaffected. | Reflow tests, before/after geometry comparisons. |
+| 7 | `close <surface_id>` | Clean shutdown. | End of test run. |
 
 ## End-to-end shell example
 

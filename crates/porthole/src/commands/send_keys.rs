@@ -29,10 +29,8 @@ pub struct SendKeysArgs {
 }
 
 pub async fn run(client: &DaemonClient, args: SendKeysArgs) -> Result<(), ClientError> {
-    if args.repeat == 0 {
-        return Err(ClientError::Local("repeat must be at least 1".into()));
-    }
-
+    // `repeat >= 1` is enforced at clap-parse time via value_parser range,
+    // so no runtime guard is needed here.
     let parsed = if args.literal {
         vec![key_syntax::parse_literal(&args.tokens)]
     } else {

@@ -226,7 +226,7 @@ enum Command {
         #[arg(short = 'l', long)]
         literal: bool,
         /// Repeat the whole sequence N times.
-        #[arg(short = 'N', long, default_value_t = 1)]
+        #[arg(short = 'N', long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
         repeat: u32,
         /// Pause N ms between each dispatched token. Helps when synthesised
         /// CGEvents arrive faster than the focused app drains them.
