@@ -6,4 +6,5 @@ cd "$REPO_ROOT"
 codesign -v target/debug/Porthole.app
 ./target/debug/Porthole.app/Contents/MacOS/portholed --help > /dev/null 2>&1 || true
 ./target/debug/Porthole.app/Contents/MacOS/porthole --help > /dev/null
+test -f target/debug/Porthole.app/Contents/Resources/icon.png || { echo "icon.png missing from bundle" >&2; exit 1; }
 echo "dev-bundle: ok"
