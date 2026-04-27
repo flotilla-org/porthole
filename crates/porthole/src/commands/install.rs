@@ -31,6 +31,8 @@ const BUNDLE_NAME: &str = "Porthole.app";
 pub enum InstallError {
     #[error("not running from a .app bundle: install can only run from inside Porthole.app (got {0})")]
     NotInBundle(PathBuf),
+    #[error("source and destination are the same path ({0}); install would self-delete the bundle")]
+    AlreadyAtDestination(PathBuf),
     #[error("destination {0} already exists; pass --force to overwrite")]
     DestinationExists(PathBuf),
     #[error("io error at {path}: {source}")]
@@ -95,7 +97,22 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
     let dst_apps = opts.prefix.applications_dir()?;
     let dst_bundle = dst_apps.join(BUNDLE_NAME);
 
+    // Guard against running install from inside the install destination —
+    // remove_path on dst would delete src, then copy_dir_recursive would fail
+    // with the source gone. `current_exe` returns the bundle path on macOS
+    // when invoked directly (not via a symlink), so this is reachable.
+    if src_bundle == dst_bundle {
+        return Err(InstallError::AlreadyAtDestination(dst_bundle));
+    }
+
     fs::create_dir_all(&dst_apps).map_err(|e| io_err(&dst_apps, e))?;
+
+    // Stop any prior install's daemon before touching its files. Bootout is
+    // a no-op if the plist isn't loaded, so this is safe on a fresh install.
+    let plist_path = launch_agent_plist_path()?;
+    if !opts.skip_launch_agent {
+        let _ = launchctl_bootout(&plist_path);
+    }
 
     if dst_bundle.exists() {
         if !opts.force {
@@ -132,15 +149,12 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
 
     if !opts.skip_launch_agent {
         let daemon_path = dst_bundle.join("Contents/MacOS/portholed");
-        let plist_path = launch_agent_plist_path()?;
         let log_dir = home()?.join("Library/Logs/porthole");
         fs::create_dir_all(&log_dir).map_err(|e| io_err(&log_dir, e))?;
         let plist_xml = render_launch_agent_plist(&daemon_path, &log_dir.join("portholed.log"));
         if let Some(parent) = plist_path.parent() {
             fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
         }
-        // Idempotent: bootout first if present, then bootstrap.
-        let _ = launchctl_bootout(&plist_path);
         fs::write(&plist_path, plist_xml).map_err(|e| io_err(&plist_path, e))?;
         println!("wrote LaunchAgent: {}", plist_path.display());
         launchctl_bootstrap(&plist_path)?;
@@ -242,7 +256,14 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 fn render_launch_agent_plist(program: &Path, log_path: &Path) -> String {
+    // Paths can legally contain `&`, `<`, `>` on macOS HFS+/APFS. Without
+    // escaping, those would produce malformed XML and launchctl would reject
+    // the plist with a cryptic error.
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -269,13 +290,13 @@ fn render_launch_agent_plist(program: &Path, log_path: &Path) -> String {
 </plist>
 "#,
         label = LAUNCH_AGENT_LABEL,
-        program = program.display(),
-        log = log_path.display(),
+        program = xml_escape(&program.display().to_string()),
+        log = xml_escape(&log_path.display().to_string()),
     )
 }
 
 fn current_uid() -> u32 {
-    // SAFETY: getuid() is signal-safe and always succeeds.
+    // SAFETY: getuid() has no preconditions and always succeeds on POSIX.
     unsafe { libc_getuid() }
 }
 
@@ -353,6 +374,25 @@ mod tests {
     #[test]
     fn path_contains_handles_empty_path() {
         assert!(!path_contains("", Path::new("/Users/x/.local/bin")));
+    }
+
+    #[test]
+    fn xml_escape_handles_special_characters() {
+        assert_eq!(xml_escape("path/with & ampersand"), "path/with &amp; ampersand");
+        assert_eq!(xml_escape("a<b>c"), "a&lt;b&gt;c");
+        assert_eq!(xml_escape("plain/path"), "plain/path");
+        // Order matters: & must escape first, otherwise &lt; becomes &amp;lt;.
+        assert_eq!(xml_escape("&<"), "&amp;&lt;");
+    }
+
+    #[test]
+    fn render_plist_escapes_xml_special_chars_in_paths() {
+        let plist = render_launch_agent_plist(
+            Path::new("/Users/a&b/Porthole.app/Contents/MacOS/portholed"),
+            Path::new("/Users/a&b/Library/Logs/porthole/portholed.log"),
+        );
+        assert!(plist.contains("/Users/a&amp;b/Porthole.app/Contents/MacOS/portholed"));
+        assert!(!plist.contains("/Users/a&b/Porthole.app"));
     }
 
     #[test]
