@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 use porthole::{
     client::DaemonClient,
     commands::{
-        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, key as key_cmd, launch as launch_cmd,
-        launch::LaunchArgs, place as place_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, text as text_cmd,
-        wait as wait_cmd,
+        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, install as install_cmd, key as key_cmd,
+        launch as launch_cmd, launch::LaunchArgs, place as place_cmd, replace as replace_cmd, screenshot::ScreenshotArgs,
+        scroll as scroll_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -37,6 +37,34 @@ enum Command {
         /// Skip polling; exit immediately after firing prompts with code 3.
         #[arg(long)]
         no_wait: bool,
+    },
+    /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
+    /// and register a LaunchAgent so the daemon starts at login.
+    /// Run from inside the bundle (`./target/<profile>/Porthole.app/Contents/MacOS/porthole install`).
+    Install {
+        /// Install per-user (~/Applications) instead of system-wide (/Applications).
+        #[arg(long)]
+        user: bool,
+        /// Overwrite an existing installation.
+        #[arg(long)]
+        force: bool,
+        /// Skip the ~/.local/bin/porthole symlink.
+        #[arg(long)]
+        no_symlink: bool,
+        /// Skip the LaunchAgent (daemon won't auto-start at login).
+        #[arg(long)]
+        no_launch_agent: bool,
+    },
+    /// Reverse of `install`. Removes the LaunchAgent, the ~/.local/bin/porthole
+    /// symlink, and (by default) the bundle. TCC grants persist; clear with
+    /// `tccutil reset` if needed.
+    Uninstall {
+        /// The installation to remove was per-user.
+        #[arg(long)]
+        user: bool,
+        /// Don't remove the bundle itself; only undo the LaunchAgent + symlink.
+        #[arg(long)]
+        keep_bundle: bool,
     },
     /// Launch a process or an artifact.
     Launch {
@@ -412,6 +440,35 @@ async fn main() -> std::process::ExitCode {
     let client = DaemonClient::new(socket_path());
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
+        Command::Install {
+            user,
+            force,
+            no_symlink,
+            no_launch_agent,
+        } => {
+            install_cmd::install(install_cmd::InstallOptions {
+                prefix: if user {
+                    install_cmd::InstallPrefix::User
+                } else {
+                    install_cmd::InstallPrefix::System
+                },
+                force,
+                skip_symlink: no_symlink,
+                skip_launch_agent: no_launch_agent,
+            })
+            .await
+        }
+        Command::Uninstall { user, keep_bundle } => {
+            install_cmd::uninstall(install_cmd::UninstallOptions {
+                prefix: if user {
+                    install_cmd::InstallPrefix::User
+                } else {
+                    install_cmd::InstallPrefix::System
+                },
+                keep_bundle,
+            })
+            .await
+        }
         Command::Onboard { wait, no_wait } => {
             match porthole::commands::onboard::run(
                 &client,
