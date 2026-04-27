@@ -18,7 +18,7 @@ Everything happens over HTTP-over-UDS — same protocol Firecracker uses for VM 
 
 ## Install & run
 
-Recommended: build the dev bundle and run from it. The bundle (`Porthole.app`) holds both the daemon and the CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers both.
+Recommended sequence: build the bundle, grant TCC interactively once, then run `porthole install` to make the daemon ambient and put the CLI on `PATH`.
 
 ```sh
 git clone https://github.com/flotilla-org/porthole
@@ -26,15 +26,24 @@ cd porthole
 cargo build --workspace --release
 ./scripts/dev-bundle.sh --release
 
-# Start the daemon
+# 1. Run from the build output once to grant TCC permissions interactively.
 ./target/release/Porthole.app/Contents/MacOS/portholed &
+./target/release/Porthole.app/Contents/MacOS/porthole onboard
 
-# Run the CLI
-./target/release/Porthole.app/Contents/MacOS/porthole onboard       # one-time grant flow
-./target/release/Porthole.app/Contents/MacOS/porthole info
+# 2. Install: copies Porthole.app to /Applications, symlinks the CLI into
+#    ~/.local/bin/porthole, registers a LaunchAgent so the daemon auto-starts
+#    at login. Pass --user to install per-user without admin.
+./target/release/Porthole.app/Contents/MacOS/porthole install
+
+# 3. From now on `porthole` is on PATH and the daemon comes up at login.
+porthole info
 ```
 
-Add the bundle's `Contents/MacOS/` to your `PATH` (or symlink `porthole` into `~/.local/bin/`) so the CLI is reachable as just `porthole`. A future `porthole install` subcommand (see `docs/roadmap.md`, phase 1) will automate this and the LaunchAgent for daemon auto-start.
+The order matters: grant TCC *before* installing. The LaunchAgent will start the daemon at every login, and a daemon that auto-starts before grants exist queues prompts the user has no context for.
+
+`Porthole.app` holds both the daemon and the CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers both.
+
+To reverse: `porthole uninstall` removes the LaunchAgent, the symlink, and the bundle. TCC grants persist; clear with `tccutil reset Accessibility org.flotilla.porthole.dev` (and `ScreenCapture`) if needed.
 
 The daemon listens on a UDS under `$XDG_RUNTIME_DIR/porthole/porthole.sock` (or `$TMPDIR/porthole-<uid>/porthole.sock` as a fallback). Override with `PORTHOLE_RUNTIME_DIR`.
 

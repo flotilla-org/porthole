@@ -30,12 +30,12 @@ What's known missing or rough:
 
 **Goal:** Unblock the kitty-graphics-protocol conformance test harness use case. End of this phase, an agent can install porthole, drive a real terminal end-to-end, and the resize gap is closed.
 
-- [ ] `POST /surfaces/{id}/place` route + handler + InMemoryAdapter e2e test (adapter method already exists at `crates/porthole-adapter-macos/src/placement.rs:9`)
-- [ ] CLI `porthole place <surface_id> --x --y --w --h` subcommand
-- [ ] `docs/recipes/terminal-orchestration.md` — agent-facing walkthrough: launch → focus → wait-stable → text/key → screenshot → scrollback → resize → close. Notes the inner-script ↔ harness UDS pattern as out-of-scope (not porthole's job).
-- [ ] `scripts/manual-terminal-smoke.sh` — runnable shell script exercising launch / focus / text / key / wait-stable / screenshot / scrollback / close on Ghostty (or any installed terminal).
-- [ ] README **Install** section documenting `cargo install --git ... porthole --locked` for the CLI, with the explicit caveat that the daemon needs the `.app` bundle to satisfy TCC.
-- [ ] `dev-bundle.sh`: rename output from `Portholed.app` to `Porthole.app`, copy the `porthole` CLI into `Contents/MacOS/` alongside `portholed` so the CLI shares the daemon's TCC identity.
+- [x] `POST /surfaces/{id}/place` route + handler + InMemoryAdapter e2e test (adapter method already exists at `crates/porthole-adapter-macos/src/placement.rs:9`)
+- [x] CLI `porthole place <surface_id> --x --y --w --h` subcommand
+- [x] `docs/recipes/terminal-orchestration.md` — agent-facing walkthrough: launch → focus → wait-stable → text/key → screenshot → scrollback → resize → close. Notes the inner-script ↔ harness UDS pattern as out-of-scope (not porthole's job).
+- [x] `scripts/manual-terminal-smoke.sh` — runnable shell script exercising launch / focus / text / key / wait-stable / screenshot / scrollback / close on Ghostty (or any installed terminal).
+- [x] README **Install** section documenting `cargo install --git ... porthole --locked` for the CLI, with the explicit caveat that the daemon needs the `.app` bundle to satisfy TCC.
+- [x] `dev-bundle.sh`: rename output from `Portholed.app` to `Porthole.app`, copy the `porthole` CLI into `Contents/MacOS/` alongside `portholed` so the CLI shares the daemon's TCC identity.
 
 ---
 
@@ -43,14 +43,14 @@ What's known missing or rough:
 
 **Goal:** No more "did you remember to start the daemon?". Single canonical install location, daemon auto-starts on login, CLI on PATH.
 
-- [ ] `porthole install` subcommand:
-    - Copy bundle to `/Applications/Porthole.app` (fall back to `~/Applications/Porthole.app` without admin).
-    - Symlink `~/.local/bin/porthole` → bundle's CLI.
-    - Detect whether `~/.local/bin` is on `PATH`; warn + offer to append a one-liner to `~/.zshrc` / `~/.bashrc`.
-    - Drop `~/Library/LaunchAgents/org.flotilla.porthole.plist` (`RunAtLoad=true`, `KeepAlive(Crashed=true)`, `LimitLoadToSessionType=Aqua`, `Program` pointing at `Porthole.app/Contents/MacOS/portholed`).
-    - `launchctl bootstrap gui/$UID <plist>`.
-- [ ] `porthole uninstall` subcommand: reverse of the above. Leaves the `.app` for the user to drag to Trash.
-- [ ] Recommended sequence documented in README: install bundle → `porthole onboard` → `porthole install`. Order matters because TCC dialogs need an active user; auto-start before grants exist queues prompts the user has no context for.
+- [x] `porthole install` subcommand:
+    - [x] Copy bundle to `/Applications/Porthole.app` (fall back to `~/Applications/Porthole.app` with `--user`).
+    - [x] Symlink `~/.local/bin/porthole` → bundle's CLI.
+    - [x] Detect whether `~/.local/bin` is on `PATH`; print a copy-pasteable export line if missing. (No auto-edit of dotfiles — too intrusive; the print-and-let-the-user-paste shape was a deliberate scope decision.)
+    - [x] Drop `~/Library/LaunchAgents/org.flotilla.porthole.plist` (`RunAtLoad=true`, `KeepAlive(Crashed=true)`, `LimitLoadToSessionType=Aqua`, `Program` pointing at `Porthole.app/Contents/MacOS/portholed`, stdout/stderr to `~/Library/Logs/porthole/portholed.log`).
+    - [x] `launchctl bootstrap gui/$UID <plist>`. Idempotent: bootouts any prior load before writing.
+- [x] `porthole uninstall` subcommand: reverse of the above. `--keep-bundle` to leave the `.app` for the user to manage manually.
+- [x] Recommended sequence documented in README: install bundle → `porthole onboard` → `porthole install`. Order matters because TCC dialogs need an active user; auto-start before grants exist queues prompts the user has no context for.
 - [ ] Optional: `porthole status` — daemon up/down, socket path, version, surface count.
 
 ---
