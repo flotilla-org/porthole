@@ -29,14 +29,19 @@ struct Cli {
 enum Command {
     /// Print daemon info and loaded adapters.
     Info,
-    /// Guided setup: trigger system-permission prompts and report status.
+    /// Guided setup: walk through each ungranted permission, prompt the OS,
+    /// wait for the user to grant, restart the daemon, and verify. Permissions
+    /// are processed one at a time because TCC coalesces simultaneous prompt
+    /// requests and AX/SR trust state is cached per process — the daemon must
+    /// restart between grants to see fresh state.
     Onboard {
-        /// Poll timeout in seconds (default 60).
-        #[arg(long, default_value_t = 60)]
-        wait: u64,
-        /// Skip polling; exit immediately after firing prompts with code 3.
+        /// Skip the per-permission Enter wait + auto-restart. Fire all prompts
+        /// and exit with code 3; caller handles restart and re-verification.
         #[arg(long)]
         no_wait: bool,
+        /// Seconds to wait for the daemon to come back up after each restart.
+        #[arg(long, default_value_t = 10)]
+        restart_timeout: u64,
     },
     /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
     /// and register a LaunchAgent so the daemon starts at login.
@@ -469,12 +474,16 @@ async fn main() -> std::process::ExitCode {
             })
             .await
         }
-        Command::Onboard { wait, no_wait } => {
+        Command::Onboard { no_wait, restart_timeout } => {
+            let onboard_client = porthole::commands::onboard::InteractiveOnboardClient {
+                client: &client,
+                restart_timeout_seconds: restart_timeout,
+            };
             match porthole::commands::onboard::run(
-                &client,
+                &onboard_client,
                 porthole::commands::onboard::OnboardOptions {
-                    wait_seconds: wait,
                     no_wait,
+                    restart_timeout_seconds: restart_timeout,
                 },
             )
             .await

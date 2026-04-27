@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -36,6 +39,25 @@ impl DaemonClient {
             .header("content-type", "application/json")
             .body(Full::new(Bytes::from(body_bytes)))?;
         self.send_and_parse(req).await
+    }
+
+    /// Block until /info responds successfully, with exponential backoff up to
+    /// `timeout`. Used after a daemon restart (kickstart) — the UDS socket
+    /// briefly disappears while launchd brings the new process up.
+    pub async fn wait_until_ready(&self, timeout: Duration) -> Result<(), ClientError> {
+        use porthole_protocol::info::InfoResponse;
+        let deadline = Instant::now() + timeout;
+        let mut delay = Duration::from_millis(100);
+        let mut last_err: Option<ClientError> = None;
+        while Instant::now() < deadline {
+            match self.get_json::<InfoResponse>("/info").await {
+                Ok(_) => return Ok(()),
+                Err(e) => last_err = Some(e),
+            }
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(Duration::from_millis(2000));
+        }
+        Err(last_err.unwrap_or_else(|| ClientError::Local("daemon did not respond before timeout".into())))
     }
 
     async fn send_and_parse<T: DeserializeOwned>(&self, req: Request<Full<Bytes>>) -> Result<T, ClientError> {

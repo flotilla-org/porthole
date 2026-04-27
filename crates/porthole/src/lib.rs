@@ -5,4 +5,5 @@
 pub mod ancestry;
 pub mod client;
 pub mod commands;
+pub mod launchd;
 pub mod runtime;

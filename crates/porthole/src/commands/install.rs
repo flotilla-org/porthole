@@ -19,12 +19,13 @@ use std::{
     env, fs, io,
     os::unix,
     path::{Path, PathBuf},
-    process::Command,
 };
 
-use crate::client::ClientError;
+use crate::{
+    client::ClientError,
+    launchd::{self, LAUNCH_AGENT_LABEL, LaunchctlError},
+};
 
-const LAUNCH_AGENT_LABEL: &str = "org.flotilla.porthole";
 const BUNDLE_NAME: &str = "Porthole.app";
 
 #[derive(Debug, thiserror::Error)]
@@ -43,12 +44,8 @@ pub enum InstallError {
         #[source]
         source: io::Error,
     },
-    #[error("launchctl {action} failed (exit {code:?}): {stderr}")]
-    Launchctl {
-        action: &'static str,
-        code: Option<i32>,
-        stderr: String,
-    },
+    #[error(transparent)]
+    Launchctl(#[from] LaunchctlError),
     #[error("HOME env var not set")]
     NoHome,
 }
@@ -124,7 +121,7 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
     // a launch agent. Bootout is a no-op if nothing's loaded.
     let plist_path = launch_agent_plist_path()?;
     if !opts.skip_launch_agent || opts.force {
-        let _ = launchctl_bootout(&plist_path);
+        let _ = launchd::bootout(&plist_path);
     }
 
     if dst_bundle.exists() {
@@ -170,7 +167,7 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
         }
         fs::write(&plist_path, plist_xml).map_err(|e| io_err(&plist_path, e))?;
         println!("wrote LaunchAgent: {}", plist_path.display());
-        launchctl_bootstrap(&plist_path)?;
+        launchd::bootstrap(&plist_path)?;
         println!("daemon registered with launchd; will start at login (and now).");
     }
 
@@ -183,7 +180,7 @@ fn do_uninstall(opts: UninstallOptions) -> Result<(), InstallError> {
     let plist_path = launch_agent_plist_path()?;
     if plist_path.exists() {
         println!("unloading LaunchAgent: {}", plist_path.display());
-        let _ = launchctl_bootout(&plist_path);
+        let _ = launchd::bootout(&plist_path);
         fs::remove_file(&plist_path).map_err(|e| io_err(&plist_path, e))?;
     }
 
@@ -322,48 +319,6 @@ fn render_launch_agent_plist(program: &Path, log_path: &Path) -> String {
         program = xml_escape(&program.display().to_string()),
         log = xml_escape(&log_path.display().to_string()),
     )
-}
-
-fn current_uid() -> u32 {
-    // SAFETY: getuid() has no preconditions and always succeeds on POSIX.
-    unsafe { libc_getuid() }
-}
-
-unsafe extern "C" {
-    #[link_name = "getuid"]
-    fn libc_getuid() -> u32;
-}
-
-fn launchctl_bootstrap(plist_path: &Path) -> Result<(), InstallError> {
-    let target = format!("gui/{}", current_uid());
-    let output = Command::new("launchctl")
-        .args(["bootstrap", &target])
-        .arg(plist_path)
-        .output()
-        .map_err(|e| io_err(Path::new("launchctl"), e))?;
-    if !output.status.success() {
-        return Err(InstallError::Launchctl {
-            action: "bootstrap",
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn launchctl_bootout(plist_path: &Path) -> Result<(), InstallError> {
-    let target = format!("gui/{}", current_uid());
-    let output = Command::new("launchctl")
-        .args(["bootout", &target])
-        .arg(plist_path)
-        .output()
-        .map_err(|e| io_err(Path::new("launchctl"), e))?;
-    // Ignore non-zero exits — launchctl bootout exits 113/EALREADY when the
-    // service isn't loaded, which is the expected case on a fresh install
-    // and on the second call within an idempotent re-install. Exec failure
-    // (launchctl missing entirely) does still surface above as an Io error.
-    let _ = output;
-    Ok(())
 }
 
 #[cfg(test)]
