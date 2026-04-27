@@ -42,11 +42,17 @@ pub async fn run(client: &DaemonClient, args: SendKeysArgs) -> Result<(), Client
     let delay = Duration::from_millis(args.inter_event_delay_ms);
     let mut total_chars = 0usize;
     let mut total_keys = 0usize;
+    // Track whether we've dispatched anything yet across all repeats. The
+    // delay should fire between *every* dispatched event, including across
+    // repeat boundaries and within single-token sequences (--repeat 5 on a
+    // single key needs the inter-event pause too).
+    let mut first_dispatch = true;
     for _ in 0..args.repeat {
-        for (idx, tok) in parsed.iter().enumerate() {
-            if idx > 0 && !delay.is_zero() {
+        for tok in parsed.iter() {
+            if !first_dispatch && !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
+            first_dispatch = false;
             match tok {
                 KeyToken::Text(s) => {
                     let req = TextRequest {

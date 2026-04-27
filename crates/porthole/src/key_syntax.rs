@@ -100,11 +100,18 @@ fn parse_one(token: &str) -> ParseResult {
         modifiers.push(Modifier::Ctrl);
     }
 
+    // Single-char letter/digit-as-key is only meaningful with modifiers
+    // (`C-c`, `M-1`). A bare `c` should be literal text typed via /text;
+    // that's what the user would naturally expect, and it sidesteps the
+    // need to translate a single char through the CGKeyCode synthesis path
+    // when /text's UnicodeString API handles it directly.
+    let allow_single_char = !modifiers.is_empty() || control_prefix;
+
     // If base resolves to a known key name, emit a Key token. Otherwise:
-    // - if we did pick up modifiers, that's a malformed token (modifiers without
-    //   a recognised base) → ParseError.
-    // - if no modifiers and base is just the original token, it's literal text.
-    match resolve_named_key(base) {
+    // - if we picked up modifiers but the base isn't a recognised key, that's
+    //   a malformed token (e.g. `C-Frobble`) → ParseError.
+    // - if no modifiers, base is just the original token, treat as literal text.
+    match resolve_named_key(base, allow_single_char) {
         Some(name) => ParseResult::Key(KeyToken::Key { name, modifiers }),
         None if !modifiers.is_empty() || control_prefix => ParseResult::Error(ParseError::UnknownKey {
             token: token.to_string(),
@@ -152,7 +159,12 @@ fn parse_modifiers(token: &str) -> Result<(Vec<Modifier>, &str), ParseError> {
 /// Map cleat-tmux key names AND DOM-style names onto porthole's wire vocabulary
 /// (DOM KeyboardEvent.code: `Enter`, `Escape`, `ArrowUp`, `Backspace`, `KeyA`,
 /// `Digit1`, `F1`...).
-fn resolve_named_key(s: &str) -> Option<String> {
+///
+/// `allow_single_char` controls whether a bare ASCII letter/digit (e.g. `"c"`,
+/// `"5"`) resolves to `KeyC`/`Digit5`. Set true when called with a modifier
+/// in scope (so `C-c` works); set false for unmodified tokens (so a bare `c`
+/// falls through to be typed as literal text instead).
+fn resolve_named_key(s: &str, allow_single_char: bool) -> Option<String> {
     let mapped = match s {
         // Identity / DOM-native — already in porthole's vocab.
         "Enter" | "Escape" | "Tab" | "Backspace" | "Space" | "Delete" => s,
@@ -178,19 +190,23 @@ fn resolve_named_key(s: &str) -> Option<String> {
                 return Some(s.to_string());
             }
             // DOM-style KeyA..KeyZ and Digit0..Digit9 (used by porthole today).
+            // These pass through regardless of allow_single_char — they're
+            // unambiguous key names.
             if (s.starts_with("Key") && s.len() == 4 && s.chars().nth(3).is_some_and(|c| c.is_ascii_uppercase()))
                 || (s.starts_with("Digit") && s.len() == 6 && s.chars().nth(5).is_some_and(|c| c.is_ascii_digit()))
             {
                 return Some(s.to_string());
             }
-            // Single ASCII letter → KeyA..KeyZ (lowercase or uppercase both fine).
+            // Single ASCII char shortcuts only apply when modifiers attach.
+            if !allow_single_char {
+                return None;
+            }
             if s.len() == 1
                 && let Some(c) = s.chars().next()
                 && c.is_ascii_alphabetic()
             {
                 return Some(format!("Key{}", c.to_ascii_uppercase()));
             }
-            // Single ASCII digit → Digit0..Digit9.
             if s.len() == 1
                 && let Some(c) = s.chars().next()
                 && c.is_ascii_digit()
@@ -401,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn single_letter_uppercase_or_lowercase_maps_to_key() {
+    fn modified_single_letter_maps_to_key_uppercase_or_lowercase() {
         let out = parse_tokens(&s(&["C-A"])).unwrap();
         assert_eq!(
             out,
@@ -418,5 +434,57 @@ mod tests {
                 modifiers: vec![Modifier::Ctrl],
             }]
         );
+    }
+
+    #[test]
+    fn modified_single_digit_maps_to_key() {
+        let out = parse_tokens(&s(&["Cmd-1"])).unwrap();
+        assert_eq!(
+            out,
+            vec![KeyToken::Key {
+                name: "Digit1".into(),
+                modifiers: vec![Modifier::Cmd],
+            }]
+        );
+    }
+
+    #[test]
+    fn bare_single_letter_is_literal_text_not_key() {
+        // Without a modifier, a bare 'c' is typed as literal text — typing
+        // `send-keys SID c` should produce the character 'c' on the focused
+        // surface, not synthesise a KeyC press. The key path is reserved for
+        // when the user explicitly wants modifiers (`C-c`) or names a key
+        // (`KeyC`, `Tab`, `Enter`).
+        let out = parse_tokens(&s(&["c"])).unwrap();
+        assert_eq!(out, vec![KeyToken::Text("c".into())]);
+    }
+
+    #[test]
+    fn bare_single_digit_is_literal_text_not_key() {
+        let out = parse_tokens(&s(&["5"])).unwrap();
+        assert_eq!(out, vec![KeyToken::Text("5".into())]);
+    }
+
+    #[test]
+    fn dom_key_name_resolves_even_without_modifiers() {
+        // `KeyA`, `Digit5`, etc. are unambiguous DOM names — they always
+        // resolve to a key event, modifier or no.
+        let out = parse_tokens(&s(&["KeyA"])).unwrap();
+        assert_eq!(
+            out,
+            vec![KeyToken::Key {
+                name: "KeyA".into(),
+                modifiers: vec![]
+            }]
+        );
+    }
+
+    #[test]
+    fn trailing_dash_token_falls_through_to_text() {
+        // `C-` has an empty base after the modifier. parse_modifiers returns
+        // it as literal-text-shaped to avoid claiming it's a malformed key.
+        // Net result: the token becomes Text("C-").
+        let out = parse_tokens(&s(&["C-"])).unwrap();
+        assert_eq!(out, vec![KeyToken::Text("C-".into())]);
     }
 }

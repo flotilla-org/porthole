@@ -17,6 +17,14 @@ pub struct SendArgs {
     pub session: Option<String>,
 }
 
+/// Partial-failure note: this is two HTTP calls (text, then Enter) — there's
+/// no atomic "type-and-submit" endpoint on the daemon. If the /text call
+/// succeeds but the /key call fails (UDS hiccup, daemon restart mid-call),
+/// the text is on screen but unsubmitted. Caller can recover by calling
+/// `interrupt` to clear the line and retrying. Atomicity would mean a new
+/// daemon endpoint that batches the operations server-side; not worth the
+/// wire-shape expansion for an edge case the existing primitives recover
+/// from cleanly.
 pub async fn run(client: &DaemonClient, args: SendArgs) -> Result<(), ClientError> {
     let text_req = TextRequest {
         text: args.text,
