@@ -479,15 +479,7 @@ async fn main() -> std::process::ExitCode {
                 client: &client,
                 restart_timeout_seconds: restart_timeout,
             };
-            match porthole::commands::onboard::run(
-                &onboard_client,
-                porthole::commands::onboard::OnboardOptions {
-                    no_wait,
-                    restart_timeout_seconds: restart_timeout,
-                },
-            )
-            .await
-            {
+            match porthole::commands::onboard::run(&onboard_client, porthole::commands::onboard::OnboardOptions { no_wait }).await {
                 Ok(result) => std::process::exit(result.exit_code),
                 Err(e) => {
                     eprintln!("error: {e}");

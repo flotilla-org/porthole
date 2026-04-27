@@ -23,22 +23,11 @@ use crate::{
     launchd,
 };
 
+#[derive(Default)]
 pub struct OnboardOptions {
     /// Skip the per-permission Enter wait + auto-restart. Equivalent to "fire
     /// prompts and exit immediately" — caller does the rest manually.
     pub no_wait: bool,
-    /// How long to wait for the daemon to come back up after kickstart, in
-    /// seconds. Default 10.
-    pub restart_timeout_seconds: u64,
-}
-
-impl Default for OnboardOptions {
-    fn default() -> Self {
-        Self {
-            no_wait: false,
-            restart_timeout_seconds: 10,
-        }
-    }
 }
 
 /// Return value carries the exit code the main binary should use.
@@ -132,8 +121,9 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
                 println!("  grant in: {}", settings_path_fallback(name));
 
                 if opts.no_wait {
-                    // Fire and forget; user resumes manually.
-                    still_missing.push(name.clone());
+                    // Fire and forget; the function exits below with code 3
+                    // before still_missing is consulted, so we don't need to
+                    // track this permission's post-grant state.
                     continue;
                 }
 
@@ -358,15 +348,7 @@ mod tests {
             vec![info_with(vec![("accessibility", false)])],
             vec![Ok(outcome("accessibility", false, true, true))],
         );
-        let res = run(
-            &client,
-            OnboardOptions {
-                no_wait: true,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+        let res = run(&client, OnboardOptions { no_wait: true }).await.unwrap();
         assert_eq!(res.exit_code, 3);
         assert_eq!(*client.restart_count.lock().unwrap(), 0);
     }

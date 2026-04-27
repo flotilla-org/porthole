@@ -54,7 +54,13 @@ impl DaemonClient {
                 Ok(_) => return Ok(()),
                 Err(e) => last_err = Some(e),
             }
-            tokio::time::sleep(delay).await;
+            // Clamp the sleep to the remaining budget so we exit on time
+            // rather than overshooting by up to `delay` (which can grow to 2s).
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            tokio::time::sleep(delay.min(remaining)).await;
             delay = (delay * 2).min(Duration::from_millis(2000));
         }
         Err(last_err.unwrap_or_else(|| ClientError::Local("daemon did not respond before timeout".into())))
