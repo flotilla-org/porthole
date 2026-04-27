@@ -16,16 +16,16 @@ open -R target/release/Porthole.app    # reveal in Finder
 ./target/release/Porthole.app/Contents/MacOS/porthole onboard
 ```
 
-`porthole onboard` does three things:
+`porthole onboard` walks through ungranted permissions one at a time:
 1. Reads `/info` to see which permissions are ungranted.
-2. Asks the daemon to trigger the OS prompt for each one (Settings opens automatically).
-3. Polls until granted or 60 seconds pass, then prints a summary.
+2. For each one: fires the OS prompt, waits for you to press Enter once you've granted in Settings, restarts the daemon (`launchctl kickstart -k`) so its cached AX/SR trust state refreshes, then re-reads `/info` to verify.
+
+Serial because TCC silently coalesces simultaneous prompt requests from one process and AX/SR trust state caches per-process; each grant needs its own daemon lifetime.
 
 Exit codes:
-- **0** — all granted already; no action taken.
-- **1** — at least one permission still ungranted after waiting. Grant in Settings and re-run.
-- **2** — all granted now, but **restart the daemon**. Accessibility grants need a process restart for the AX runtime to pick them up.
-- **3** — `--no-wait` mode; prompts fired, grant state unknown.
+- **0** — all granted and verified post-restart.
+- **1** — at least one still missing (dismissed, or daemon not under launchd so we can't auto-verify), or a request to fire the prompt errored.
+- **3** — `--no-wait` mode; prompts fired, no Enter wait, no restart, no verification — caller handles the rest.
 
 ## Rebuild workflow
 
