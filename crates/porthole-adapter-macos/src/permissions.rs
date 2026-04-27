@@ -240,23 +240,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn prompt_triggered_reflects_granted_before_only() {
-        // Without per-process bookkeeping, prompt_triggered just means
-        // "granted_before was false." Two ungranted calls both report true;
-        // the OS silently no-ops the second prompt internally.
-        let adapter = MacOsAdapter::new();
-        if ax_is_trusted_live() {
-            eprintln!("accessibility already granted; test skipped");
-            return;
-        }
-        let first = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
-        let second = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
-        assert!(first.prompt_triggered);
-        assert!(second.prompt_triggered);
-    }
-
-    #[tokio::test]
     async fn unknown_permission_name_returns_invalid_argument() {
         let adapter = MacOsAdapter::new();
         let err = adapter

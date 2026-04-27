@@ -56,11 +56,27 @@ pub fn bootstrap(plist_path: &Path) -> Result<(), LaunchctlError> {
 
 /// `launchctl bootout gui/$UID <plist>`. Idempotent: non-zero exit (typically
 /// 113/EALREADY when the service isn't loaded) is the expected case on
-/// fresh installs and is silently ignored. Exec failure (launchctl missing
-/// entirely) still surfaces as `Exec`.
+/// fresh installs and is treated as success. Exec failure (launchctl missing
+/// entirely) still surfaces as `Exec`. Other non-zero exits (permission
+/// errors, malformed plist, etc.) are non-fatal — bootout is best-effort
+/// before we re-write the plist anyway — but they're logged at warn so
+/// operators have a signal something unexpected happened.
 pub fn bootout(plist_path: &Path) -> Result<(), LaunchctlError> {
     let output = Command::new("launchctl").args(["bootout", &target()]).arg(plist_path).output()?;
-    let _ = output;
+    if !output.status.success() {
+        // launchctl bootout exits 113 (EALREADY in some macOS versions, or a
+        // generic "service not loaded" code in others) when there's nothing
+        // to unload. That's the common path. Log everything else.
+        let code = output.status.code().unwrap_or(-1);
+        if code != 113 {
+            tracing::warn!(
+                exit_code = code,
+                stderr = %String::from_utf8_lossy(&output.stderr).trim_end(),
+                plist = %plist_path.display(),
+                "launchctl bootout returned non-zero exit; continuing",
+            );
+        }
+    }
     Ok(())
 }
 

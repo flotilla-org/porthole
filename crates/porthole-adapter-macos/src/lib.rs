@@ -147,14 +147,12 @@ impl Adapter for MacOsAdapter {
         }
 
         let granted_after = permissions::is_granted(name)?;
-        let prompt_triggered = !granted_before;
         let requires_daemon_restart = permissions::requires_daemon_restart(name);
 
         Ok(SystemPermissionPromptOutcome {
             permission: name.to_string(),
             granted_before,
             granted_after,
-            prompt_triggered,
             requires_daemon_restart,
             notes: permissions::notes_for(name),
         })

@@ -176,10 +176,12 @@ pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<Onb
     }
 
     if opts.no_wait {
-        // 3 means "fire-and-forget mode; caller handles restart and
-        // verification." Request errors above are still printed but don't
-        // change the exit code — by design, no_wait is "I'll figure it out."
-        return Ok(OnboardResult { exit_code: 3 });
+        // 3 means "fire-and-forget mode succeeded; caller handles restart
+        // and verification." A request error in this branch means we
+        // couldn't even fire the prompt — that's a real failure the caller
+        // shouldn't ignore, so it gets exit 1 even in no_wait mode.
+        let exit_code = if had_request_error { 1 } else { 3 };
+        return Ok(OnboardResult { exit_code });
     }
 
     let exit_code = if had_request_error || !still_missing.is_empty() {
@@ -313,12 +315,11 @@ mod tests {
         }
     }
 
-    fn outcome(name: &str, granted_after: bool, prompt_triggered: bool, requires_restart: bool) -> SystemPermissionPromptOutcome {
+    fn outcome(name: &str, granted_after: bool, requires_restart: bool) -> SystemPermissionPromptOutcome {
         SystemPermissionPromptOutcome {
             permission: name.into(),
             granted_before: false,
             granted_after,
-            prompt_triggered,
             requires_daemon_restart: requires_restart,
             notes: String::new(),
         }
@@ -344,8 +345,8 @@ mod tests {
                 info_with(vec![("accessibility", true), ("screen_recording", true)]),
             ],
             vec![
-                Ok(outcome("accessibility", true, true, true)),
-                Ok(outcome("screen_recording", true, true, false)),
+                Ok(outcome("accessibility", true, true)),
+                Ok(outcome("screen_recording", true, false)),
             ],
         );
         let res = run(&client, OnboardOptions::default()).await.unwrap();
@@ -360,7 +361,7 @@ mod tests {
         // shows MISSING for the prompted permission.
         let client = FakeClient::new(
             vec![info_with(vec![("accessibility", false)]), info_with(vec![("accessibility", false)])],
-            vec![Ok(outcome("accessibility", false, true, true))],
+            vec![Ok(outcome("accessibility", false, true))],
         );
         let res = run(&client, OnboardOptions::default()).await.unwrap();
         assert_eq!(res.exit_code, 1);
@@ -370,7 +371,7 @@ mod tests {
     async fn no_wait_skips_restart_and_exits_three() {
         let client = FakeClient::new(
             vec![info_with(vec![("accessibility", false)])],
-            vec![Ok(outcome("accessibility", false, true, true))],
+            vec![Ok(outcome("accessibility", false, true))],
         );
         let res = run(&client, OnboardOptions { no_wait: true }).await.unwrap();
         assert_eq!(res.exit_code, 3);
@@ -378,10 +379,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_wait_with_request_error_exits_one_not_three() {
+        // A request error in fire-and-forget mode means we couldn't fire
+        // the prompt at all — distinguishable from a successful fire so the
+        // caller doesn't conflate "succeeded, manage your own grants" with
+        // "couldn't reach the daemon."
+        let wire = WireError {
+            code: ErrorCode::SystemPermissionRequestFailed,
+            message: "bundle missing".into(),
+            details: None,
+        };
+        let client = FakeClient::new(vec![info_with(vec![("accessibility", false)])], vec![Err(wire)]);
+        let res = run(&client, OnboardOptions { no_wait: true }).await.unwrap();
+        assert_eq!(res.exit_code, 1);
+    }
+
+    #[tokio::test]
     async fn not_under_launchd_warns_and_marks_still_missing() {
         let client = FakeClient::new(
             vec![info_with(vec![("accessibility", false)])],
-            vec![Ok(outcome("accessibility", false, true, true))],
+            vec![Ok(outcome("accessibility", false, true))],
         )
         .with_restart_outcomes(vec![false]);
         let res = run(&client, OnboardOptions::default()).await.unwrap();
@@ -404,8 +421,8 @@ mod tests {
                 info_with(vec![("accessibility", false), ("screen_recording", false)]),
             ],
             vec![
-                Ok(outcome("accessibility", false, true, true)),
-                Ok(outcome("screen_recording", false, true, false)),
+                Ok(outcome("accessibility", false, true)),
+                Ok(outcome("screen_recording", false, false)),
             ],
         )
         .with_wait_until_ready_fails();
@@ -450,8 +467,8 @@ mod tests {
                 info_with(vec![("accessibility", true), ("screen_recording", true)]),
             ],
             vec![
-                Ok(outcome("accessibility", true, true, true)),
-                Ok(outcome("screen_recording", true, true, false)),
+                Ok(outcome("accessibility", true, true)),
+                Ok(outcome("screen_recording", true, false)),
             ],
         );
         run(&client, OnboardOptions::default()).await.unwrap();
