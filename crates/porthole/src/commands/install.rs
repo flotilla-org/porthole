@@ -35,6 +35,8 @@ pub enum InstallError {
     AlreadyAtDestination(PathBuf),
     #[error("destination {0} already exists; pass --force to overwrite")]
     DestinationExists(PathBuf),
+    #[error("no write permission for {0}; re-run with --user for a per-user install at ~/Applications")]
+    SystemInstallNoPermission(PathBuf),
     #[error("io error at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -107,10 +109,19 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
 
     fs::create_dir_all(&dst_apps).map_err(|e| io_err(&dst_apps, e))?;
 
-    // Stop any prior install's daemon before touching its files. Bootout is
-    // a no-op if the plist isn't loaded, so this is safe on a fresh install.
+    // Probe for write permission before mutating anything. /Applications is
+    // root-owned on macOS; without this probe the user would hit a confusing
+    // "permission denied" mid-install with no hint that --user is the fix.
+    if matches!(opts.prefix, InstallPrefix::System) {
+        check_writable(&dst_apps)?;
+    }
+
+    // Stop any prior install's daemon before touching its files. Always
+    // bootout on --force, regardless of --no-launch-agent: a stale daemon
+    // running on the old binary is surprising even if we're not re-registering
+    // a launch agent. Bootout is a no-op if nothing's loaded.
     let plist_path = launch_agent_plist_path()?;
-    if !opts.skip_launch_agent {
+    if !opts.skip_launch_agent || opts.force {
         let _ = launchctl_bootout(&plist_path);
     }
 
@@ -195,6 +206,22 @@ fn do_uninstall(opts: UninstallOptions) -> Result<(), InstallError> {
     println!("clear with: tccutil reset Accessibility org.flotilla.porthole.dev");
     println!("            tccutil reset ScreenCapture org.flotilla.porthole.dev");
     Ok(())
+}
+
+/// Verify we can write into `dir` by creating and removing a probe file.
+/// On the system install path this catches the no-admin case before we
+/// touch the existing bundle, surfacing a clear `--user` hint instead of a
+/// generic mid-install permission-denied.
+fn check_writable(dir: &Path) -> Result<(), InstallError> {
+    let probe = dir.join(".porthole-install-probe");
+    match fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Err(InstallError::SystemInstallNoPermission(dir.to_path_buf())),
+        Err(e) => Err(io_err(dir, e)),
+    }
 }
 
 fn home() -> Result<PathBuf, InstallError> {
@@ -406,6 +433,47 @@ mod tests {
         assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
         assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
         assert!(plist.contains("/Users/x/Library/Logs/porthole/portholed.log"));
+    }
+
+    #[test]
+    fn check_writable_returns_ok_for_writable_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        check_writable(tmp.path()).unwrap();
+        // Probe must be cleaned up.
+        assert!(!tmp.path().join(".porthole-install-probe").exists());
+    }
+
+    #[test]
+    fn check_writable_returns_no_permission_for_readonly_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let original = fs::metadata(tmp.path()).unwrap().permissions();
+        // Read-only for owner: r-x------
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = check_writable(tmp.path());
+
+        // Restore so tempdir's Drop can clean up.
+        fs::set_permissions(tmp.path(), original).unwrap();
+
+        match result {
+            Err(InstallError::SystemInstallNoPermission(_)) => {}
+            other => panic!("expected SystemInstallNoPermission, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn system_install_no_permission_error_mentions_user_flag() {
+        let err = InstallError::SystemInstallNoPermission(PathBuf::from("/Applications"));
+        let msg = err.to_string();
+        assert!(msg.contains("--user"), "expected --user hint, got: {msg}");
+    }
+
+    #[test]
+    fn already_at_destination_error_mentions_self_delete() {
+        let err = InstallError::AlreadyAtDestination(PathBuf::from("/Applications/Porthole.app"));
+        let msg = err.to_string();
+        assert!(msg.contains("self-delete"), "expected self-delete hint, got: {msg}");
     }
 
     #[test]
