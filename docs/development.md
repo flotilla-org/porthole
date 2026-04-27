@@ -11,9 +11,9 @@ git clone <repo>
 cd porthole
 cargo build --workspace --release
 ./scripts/dev-bundle.sh --release
-open -R target/release/Portholed.app    # reveal in Finder
-./target/release/Portholed.app/Contents/MacOS/portholed &
-./target/release/porthole onboard
+open -R target/release/Porthole.app    # reveal in Finder
+./target/release/Porthole.app/Contents/MacOS/portholed &
+./target/release/Porthole.app/Contents/MacOS/porthole onboard
 ```
 
 `porthole onboard` does three things:
@@ -45,8 +45,8 @@ macOS's TCC database can report stale state after crashes, force-quits, or bundl
 tccutil reset Accessibility org.flotilla.porthole.dev
 tccutil reset ScreenCapture org.flotilla.porthole.dev
 ./scripts/dev-bundle.sh --refresh
-./target/debug/Portholed.app/Contents/MacOS/portholed &
-./target/debug/porthole onboard
+./target/debug/Porthole.app/Contents/MacOS/portholed &
+./target/debug/Porthole.app/Contents/MacOS/porthole onboard
 ```
 
 ## Debug vs release bundle

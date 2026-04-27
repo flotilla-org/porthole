@@ -18,28 +18,52 @@ Everything happens over HTTP-over-UDS — same protocol Firecracker uses for VM 
 
 ## Install & run
 
-Build from source (requires Rust 1.85+):
+Recommended: build the dev bundle and run from it. The bundle (`Porthole.app`) holds both the daemon and the CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers both.
 
 ```sh
+git clone https://github.com/flotilla-org/porthole
+cd porthole
 cargo build --workspace --release
-./target/release/portholed &                   # start the daemon
-./target/release/porthole info                 # talk to it
+./scripts/dev-bundle.sh --release
+
+# Start the daemon
+./target/release/Porthole.app/Contents/MacOS/portholed &
+
+# Run the CLI
+./target/release/Porthole.app/Contents/MacOS/porthole onboard       # one-time grant flow
+./target/release/Porthole.app/Contents/MacOS/porthole info
 ```
+
+Add the bundle's `Contents/MacOS/` to your `PATH` (or symlink `porthole` into `~/.local/bin/`) so the CLI is reachable as just `porthole`. A future `porthole install` subcommand (see `docs/roadmap.md`, phase 1) will automate this and the LaunchAgent for daemon auto-start.
 
 The daemon listens on a UDS under `$XDG_RUNTIME_DIR/porthole/porthole.sock` (or `$TMPDIR/porthole-<uid>/porthole.sock` as a fallback). Override with `PORTHOLE_RUNTIME_DIR`.
 
-### Permissions (macOS)
+### Cargo install (CLI only)
 
-- **Accessibility**: required for input injection and AX-based operations. Grant under System Settings → Privacy & Security → Accessibility.
-- **Screen Recording**: required for screenshots. Grant under System Settings → Privacy & Security → Screen Recording.
-
-You grant these to the terminal app (or whatever process runs `portholed`). Check what the daemon sees with:
+If you just want the CLI to poke at a daemon someone else is running:
 
 ```sh
-porthole info
+cargo install --git https://github.com/flotilla-org/porthole porthole --locked
 ```
 
-The response lists `permissions` per adapter with `granted: bool`.
+This lands `porthole` in `~/.cargo/bin/`. **The daemon (`portholed`) must still be launched from the `.app` bundle** — TCC keys off bundle identity, so a daemon started from `~/.cargo/bin/portholed` would have no stable identity for grants and prompts would re-fire on every cargo install.
+
+### Permissions (macOS)
+
+The macOS adapter needs **Accessibility** and **Screen Recording** for input injection, screenshots, and frame-diff waits. The dev bundle gives a stable identity so grants persist across rebuilds.
+
+```sh
+porthole onboard       # interactive grant flow; opens System Settings as needed
+```
+
+`onboard` reads `/info` to see which permissions are ungranted, asks the daemon to fire each OS prompt, then polls until granted (60s default). Exit codes:
+
+- **0** — all granted, no action taken
+- **1** — at least one still ungranted after waiting
+- **2** — all granted but the daemon needs a restart for Accessibility to take effect
+- **3** — `--no-wait` mode; prompts fired, status unknown
+
+See `docs/development.md` for first-time setup, rebuild workflow, and TCC reset commands.
 
 ## Core concepts
 
@@ -291,6 +315,10 @@ porthole close $SURFACE
 Run `porthole --help` or `porthole <subcommand> --help` for the full flag set.
 
 ## Recipes
+
+For longer end-to-end walkthroughs, see [`docs/recipes/`](docs/recipes/) — currently:
+
+- [`terminal-orchestration.md`](docs/recipes/terminal-orchestration.md) — drive a terminal end-to-end (launch / focus / wait / type / screenshot / scrollback / reflow via `place` / close), with notes on inner-script ↔ harness signalling. Companion smoke script: `scripts/manual-terminal-smoke.sh`.
 
 ### Evidence-bundle for a terminal bug
 

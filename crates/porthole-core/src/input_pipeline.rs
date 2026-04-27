@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     ErrorCode, PortholeError,
     adapter::Adapter,
+    display::Rect,
     handle::HandleStore,
     input::{ClickSpec, KeyEvent, ScrollSpec},
     key_names,
@@ -72,6 +73,35 @@ impl InputPipeline {
     pub async fn focus(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
         let info = self.handles.require_alive(surface).await?;
         self.adapter.focus(&info).await
+    }
+
+    /// In-place resize/move. Surface identity is preserved — the same
+    /// `surface_id` resolves before and after, the inner process keeps
+    /// running. Use this for terminal-reflow tests and any other workflow
+    /// where you'd otherwise reach for `/replace` but don't want the window
+    /// closed and reopened.
+    pub async fn place(&self, surface: &SurfaceId, rect: Rect) -> Result<(), PortholeError> {
+        // Negative x/y is legitimate (windows off the primary display can have
+        // negative origins), but non-finite values would propagate to AX with
+        // undefined behaviour. w/h additionally have to be > 0 — a zero-size
+        // window is meaningless and AX would reject the size write anyway.
+        if !rect.x.is_finite() || !rect.y.is_finite() || !rect.w.is_finite() || !rect.h.is_finite() {
+            return Err(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "place: x, y, w, h must all be finite (got x={}, y={}, w={}, h={})",
+                    rect.x, rect.y, rect.w, rect.h
+                ),
+            ));
+        }
+        if rect.w <= 0.0 || rect.h <= 0.0 {
+            return Err(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                format!("place: w and h must be > 0 (got w={}, h={})", rect.w, rect.h),
+            ));
+        }
+        let info = self.handles.require_alive(surface).await?;
+        self.adapter.place_surface(&info, rect).await
     }
 }
 
@@ -149,6 +179,139 @@ mod tests {
         let pipeline = InputPipeline::new(adapter.clone(), handles.clone());
         pipeline.close(&id).await.unwrap();
         let err = handles.require_alive(&id).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::SurfaceDead);
+    }
+
+    #[tokio::test]
+    async fn place_rejects_invalid_rect() {
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let cases: &[Rect] = &[
+            // non-positive size
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 100.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 0.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: -1.0,
+                h: 100.0,
+            },
+            // non-finite size
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: f64::NAN,
+                h: 100.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: f64::NAN,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: f64::INFINITY,
+                h: 100.0,
+            },
+            // non-finite position
+            Rect {
+                x: f64::NAN,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+            Rect {
+                x: 0.0,
+                y: f64::INFINITY,
+                w: 100.0,
+                h: 100.0,
+            },
+        ];
+        for rect in cases {
+            let err = pipeline.place(&id, *rect).await.unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidArgument, "expected InvalidArgument for {rect:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn place_accepts_negative_origin() {
+        // A window on a secondary display can legitimately have a negative
+        // global x/y origin.
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        pipeline
+            .place(
+                &id,
+                Rect {
+                    x: -100.0,
+                    y: -50.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(adapter.place_surface_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn place_records_call_on_adapter() {
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        pipeline
+            .place(
+                &id,
+                Rect {
+                    x: 10.0,
+                    y: 20.0,
+                    w: 800.0,
+                    h: 600.0,
+                },
+            )
+            .await
+            .unwrap();
+        let calls = adapter.place_surface_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].1,
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 800.0,
+                h: 600.0
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn place_propagates_dead_handle() {
+        let (adapter, handles, id) = setup().await;
+        handles.mark_dead(&id).await.unwrap();
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let err = pipeline
+            .place(
+                &id,
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 100.0,
+                },
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err.code, ErrorCode::SurfaceDead);
     }
 
