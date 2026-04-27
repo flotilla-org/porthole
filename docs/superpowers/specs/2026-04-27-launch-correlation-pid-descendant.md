@@ -86,10 +86,15 @@ pub enum Correlation {
 Add `PidDescendant`. Wire serialisation `pid_descendant` (snake_case to match existing variants).
 
 ### `ProcessLaunchSpec` gains `tag_deadline_ms: Option<u64>`
-Default `1500` if `None`. Lower for fast-path apps (tag-only callers); higher to be patient with slow-launching ones. Capped at `timeout_ms`.
+Default `1500` if `None`. Lower for fast-path apps (tag-only callers); higher to be patient with slow-launching ones. **Clamped to `timeout_ms` inside `launch_process`** — not at the caller — so callers can't bypass the bound by passing a larger value than the overall launch budget.
 
 ### Per-window descendant lookup helper
-`crates/porthole-adapter-macos/src/correlation.rs::descendant_pids(root: u32) -> Result<HashSet<u32>, PortholeError>`. Recursive `proc_listpids` until convergence. Bounded depth (16) to avoid pathological PID-cycle tar pits (which shouldn't exist but cheap to guard).
+`crates/porthole-adapter-macos/src/correlation.rs::descendant_pids(root: u32, root_started_at: u64) -> Result<HashSet<u32>, PortholeError>`. Recursive `proc_listpids` until convergence. Bounded depth (16) to avoid pathological PID-cycle tar pits (which shouldn't exist but cheap to guard).
+
+The `root_started_at` parameter is captured at spawn time via `proc_pidinfo(PROC_PIDT_SHORTBSDINFO)` (the `pbsi_start_tvsec` field). Before recursing on the root, the helper re-fetches the start time and bails with `launch_correlation_failed` if it doesn't match — that catches the rare PID-reuse case where the spawned process has died and the kernel has handed its PID to an unrelated process whose own descendants would otherwise pollute the match set.
+
+### `--require-confidence weak` tiebreaker
+When multiple windows match (multi-PID descendants each owning windows, OR one PID owning multiple windows), `weak` returns the topmost. "Topmost" is defined as **lowest `kCGWindowLayer` value** (closer to the user); ties broken by **lowest `kCGWindowNumber`** (CG assigns window numbers monotonically; lowest = oldest stack member still alive). One canonical tiebreaker, applied consistently regardless of whether the ambiguity is multi-PID or multi-window-of-one-PID — replaces the earlier wording that mentioned `kCGWindowMemoryUsage` for the single-PID case (inconsistent and less deterministic).
 
 ## Edge cases
 
@@ -100,11 +105,14 @@ LaunchServices may activate an existing window instead of creating a new one. To
 - If the user passed `require_fresh_surface: true` and we get zero descendants with windows after the deadline, the launch fails with `launch_correlation_failed` — same as today.
 
 ### Multi-window apps
-Some apps (Finder, Preview, browsers) spawn multiple windows on launch. The descendant set may have one PID owning multiple windows. Pick:
-- The newest window (by some heuristic like `kCGWindowMemoryUsage` ordering, which approximates creation order in CG's list — fragile but widely used).
-- Or the one that became frontmost (NSWorkspace's `frontmostApplication` cross-reference).
+Some apps (Finder, Preview, browsers) spawn multiple windows on launch. The descendant set may have one PID owning multiple windows. With `--require-confidence strong`, this fails with `launch_correlation_ambiguous` and a candidate list — caller picks. With `--require-confidence weak`, the topmost-z-order tiebreaker described above resolves it deterministically.
 
-For v0 of this fix: pick the most recently-created window in the matched PID's window list. Document the heuristic and the workaround (`--require-confidence weak` returns the candidate list).
+(NSWorkspace's `frontmostApplication` cross-reference is *not* used — frontmost-at-launch-time isn't meaningfully related to "which window did we just create.")
+
+### PID reuse
+macOS PIDs cycle slowly (the kernel walks the PID table and skips live ones), but the cycle exists. If our spawned root PID dies and the kernel hands its number to an unrelated new process before correlation runs, that new process's descendants would otherwise pollute the match set.
+
+Mitigation: the `descendant_pids` helper takes `root_started_at` (captured at spawn time) and re-fetches it before recursing; if the start time doesn't match the current PID's start time, the spawned process is gone and we bail with `launch_correlation_failed`. Cheap (one `proc_pidinfo` call), bounded (no retries — if PID reuse happened, the launch is irrecoverable for this attempt).
 
 ### Fork-then-exit launchers
 Some apps (older `open` shims, third-party launchers) `fork` to do the real launch and the parent exits. The "spawned root PID" is gone before correlation runs.
