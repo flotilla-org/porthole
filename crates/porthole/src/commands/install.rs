@@ -109,9 +109,11 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
 
     fs::create_dir_all(&dst_apps).map_err(|e| io_err(&dst_apps, e))?;
 
-    // Probe for write permission before mutating anything. /Applications is
-    // root-owned on macOS; without this probe the user would hit a confusing
-    // "permission denied" mid-install with no hint that --user is the fix.
+    // Probe for write permission before the expensive bundle copy. The
+    // create_dir_all above is a no-op on /Applications (always exists), so
+    // this is the first call that would actually fail under no-admin. Without
+    // this probe the user would hit a generic "permission denied" mid-install
+    // with no hint that --user is the fix.
     if matches!(opts.prefix, InstallPrefix::System) {
         check_writable(&dst_apps)?;
     }
@@ -356,7 +358,10 @@ fn launchctl_bootout(plist_path: &Path) -> Result<(), InstallError> {
         .arg(plist_path)
         .output()
         .map_err(|e| io_err(Path::new("launchctl"), e))?;
-    // bootout fails harmlessly if not loaded; only treat command-not-found as fatal.
+    // Ignore non-zero exits — launchctl bootout exits 113/EALREADY when the
+    // service isn't loaded, which is the expected case on a fresh install
+    // and on the second call within an idempotent re-install. Exec failure
+    // (launchctl missing entirely) does still surface above as an Io error.
     let _ = output;
     Ok(())
 }
