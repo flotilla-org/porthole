@@ -80,7 +80,6 @@ mod tests {
                 permission: "accessibility".into(),
                 granted_before: false,
                 granted_after: true,
-                prompt_triggered: true,
                 requires_daemon_restart: true,
                 notes: "restart the daemon".into(),
             }))
@@ -96,7 +95,6 @@ mod tests {
         let outcome: SystemPermissionPromptOutcome = serde_json::from_value(body).unwrap();
         assert_eq!(outcome.permission, "accessibility");
         assert!(outcome.granted_after);
-        assert!(outcome.prompt_triggered);
         assert!(outcome.requires_daemon_restart);
         assert_eq!(outcome.notes, "restart the daemon");
     }

@@ -4,3 +4,7 @@ Cargo.lock.bak
 .DS_Store
 .idea/
 .claude/
+# Test artefacts dropped at repo root by `porthole screenshot --out`,
+# `porthole launch --json | jq` etc. during ad-hoc dogfooding.
+/*.png
+/*.json

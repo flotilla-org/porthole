@@ -7,7 +7,6 @@ pub struct SystemPermissionPromptOutcome {
     pub permission: String,
     pub granted_before: bool,
     pub granted_after: bool,
-    pub prompt_triggered: bool,
     pub requires_daemon_restart: bool,
     pub notes: String,
 }
@@ -18,7 +17,6 @@ impl From<CoreOutcome> for SystemPermissionPromptOutcome {
             permission,
             granted_before,
             granted_after,
-            prompt_triggered,
             requires_daemon_restart,
             notes,
         } = o;
@@ -26,7 +24,6 @@ impl From<CoreOutcome> for SystemPermissionPromptOutcome {
             permission,
             granted_before,
             granted_after,
-            prompt_triggered,
             requires_daemon_restart,
             notes,
         }
@@ -68,7 +65,6 @@ mod tests {
             permission: "accessibility".into(),
             granted_before: true,
             granted_after: false,
-            prompt_triggered: true,
             requires_daemon_restart: true,
             notes: "n".into(),
         };
@@ -76,7 +72,6 @@ mod tests {
         assert_eq!(wire.permission, core.permission);
         assert_eq!(wire.granted_before, core.granted_before);
         assert_eq!(wire.granted_after, core.granted_after);
-        assert_eq!(wire.prompt_triggered, core.prompt_triggered);
         assert_eq!(wire.requires_daemon_restart, core.requires_daemon_restart);
         assert_eq!(wire.notes, core.notes);
     }
@@ -87,7 +82,6 @@ mod tests {
             permission: "accessibility".into(),
             granted_before: false,
             granted_after: false,
-            prompt_triggered: true,
             requires_daemon_restart: true,
             notes: "Open System Settings...".into(),
         };

@@ -18,7 +18,7 @@ Everything happens over HTTP-over-UDS — same protocol Firecracker uses for VM 
 
 ## Install & run
 
-Recommended sequence: build the bundle, grant TCC interactively once, then run `porthole install` to make the daemon ambient and put the CLI on `PATH`.
+Recommended sequence: build the bundle, install it (daemon + CLI go in one place under launchd's control), then run `porthole onboard` against the installed daemon to grant TCC.
 
 ```sh
 git clone https://github.com/flotilla-org/porthole
@@ -26,20 +26,23 @@ cd porthole
 cargo build --workspace --release
 ./scripts/dev-bundle.sh --release
 
-# 1. Run from the build output once to grant TCC permissions interactively.
-./target/release/Porthole.app/Contents/MacOS/portholed &
-./target/release/Porthole.app/Contents/MacOS/porthole onboard
-
-# 2. Install: copies Porthole.app to /Applications, symlinks the CLI into
+# 1. Install: copies Porthole.app to /Applications, symlinks the CLI into
 #    ~/.local/bin/porthole, registers a LaunchAgent so the daemon auto-starts
-#    at login. Pass --user to install per-user without admin.
+#    at login (and now). Pass --user to install per-user without admin.
 ./target/release/Porthole.app/Contents/MacOS/porthole install
 
-# 3. From now on `porthole` is on PATH and the daemon comes up at login.
+# 2. Onboard: walks through each ungranted permission, fires the OS prompt,
+#    waits for you to grant, restarts the daemon, verifies. One permission
+#    at a time — TCC coalesces simultaneous prompts and AX/SR trust state
+#    is cached per process, so each grant gets its own restart cycle.
+porthole onboard
+
+# 3. From now on the daemon is ambient — comes up at login, restarts on
+#    crash. Verify:
 porthole info
 ```
 
-The order matters: grant TCC *before* installing. The LaunchAgent will start the daemon at every login, and a daemon that auto-starts before grants exist queues prompts the user has no context for.
+Why install before onboard: TCC grants attach to bundle path. Granting in the build location and then moving the bundle to `/Applications` resets the grants, and onboarding the build location twice does no good. Install first → onboard against the final location → done.
 
 `Porthole.app` holds both the daemon and the CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers both.
 
@@ -65,12 +68,13 @@ The macOS adapter needs **Accessibility** and **Screen Recording** for input inj
 porthole onboard       # interactive grant flow; opens System Settings as needed
 ```
 
-`onboard` reads `/info` to see which permissions are ungranted, asks the daemon to fire each OS prompt, then polls until granted (60s default). Exit codes:
+`onboard` walks through each ungranted permission one at a time: fires the OS prompt, waits for you to press Enter once you've granted in System Settings, restarts the daemon (via `launchctl kickstart -k`) so its cached AX/SR trust state refreshes, then re-reads `/info` to confirm. Serial because TCC silently coalesces simultaneous prompt requests from one process and the trust state is cached per-process; each grant needs its own daemon lifetime.
 
-- **0** — all granted, no action taken
-- **1** — at least one still ungranted after waiting
-- **2** — all granted but the daemon needs a restart for Accessibility to take effect
-- **3** — `--no-wait` mode; prompts fired, status unknown
+Exit codes:
+
+- **0** — all granted and verified post-restart
+- **1** — at least one still missing (dismissed, or daemon not under launchd so we can't verify) or a request to fire the prompt errored
+- **3** — `--no-wait` mode; prompts fired, no Enter wait, no restart, no verification — caller handles the rest
 
 See `docs/development.md` for first-time setup, rebuild workflow, and TCC reset commands.
 
