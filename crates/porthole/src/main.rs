@@ -4,9 +4,9 @@ use clap::{Parser, Subcommand};
 use porthole::{
     client::DaemonClient,
     commands::{
-        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, install as install_cmd, key as key_cmd,
-        launch as launch_cmd, launch::LaunchArgs, place as place_cmd, replace as replace_cmd, screenshot::ScreenshotArgs,
-        scroll as scroll_cmd, text as text_cmd, wait as wait_cmd,
+        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, install as install_cmd,
+        interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd, replace as replace_cmd,
+        screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd, send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -209,6 +209,52 @@ enum Command {
     Text {
         surface_id: String,
         text: String,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Send a tmux-style key sequence: text fragments, named keys, and
+    /// modifier-prefixed keys all in one call.
+    /// Examples:
+    ///   porthole send-keys SID Enter
+    ///   porthole send-keys SID C-c
+    ///   porthole send-keys SID 'echo hi' Enter
+    ///   porthole send-keys SID Cmd-Tab
+    /// Modifiers: C-x (Ctrl), M-x (Alt/Meta), S-x (Shift), Cmd-x (⌘), ^x
+    /// (Ctrl alt syntax). Named keys: Enter, Esc, Tab, BSpace, Space,
+    /// Up/Down/Left/Right, Home, End, PgUp, PgDn, DC, F1..F12, plus DOM
+    /// passthrough (KeyA..KeyZ, Digit0..Digit9, ArrowUp, etc.).
+    SendKeys {
+        surface_id: String,
+        #[arg(value_name = "TOKEN", required = true, num_args = 1..)]
+        tokens: Vec<String>,
+        /// Treat all tokens as literal text — skip the parser entirely.
+        #[arg(short = 'l', long)]
+        literal: bool,
+        /// Repeat the whole sequence N times.
+        #[arg(short = 'N', long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        repeat: u32,
+        /// Pause N ms between each dispatched token. Helps when synthesised
+        /// CGEvents arrive faster than the focused app drains them.
+        #[arg(long, default_value_t = 10)]
+        delay_ms: u64,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Convenience: type the text, then press Enter (unless --no-enter).
+    /// Equivalent to `send-keys SID 'text' Enter`. The most common
+    /// terminal-automation primitive.
+    Send {
+        surface_id: String,
+        text: String,
+        #[arg(long)]
+        no_enter: bool,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Convenience: send Ctrl+C to the surface. Equivalent to
+    /// `send-keys SID C-c`.
+    Interrupt {
+        surface_id: String,
         #[arg(long)]
         session: Option<String>,
     },
@@ -654,6 +700,45 @@ async fn main() -> std::process::ExitCode {
             key_cmd::run(&client, args).await
         }
         Command::Text { surface_id, text, session } => text_cmd::run(&client, text_cmd::TextArgs { surface_id, text, session }).await,
+        Command::SendKeys {
+            surface_id,
+            tokens,
+            literal,
+            repeat,
+            delay_ms,
+            session,
+        } => {
+            send_keys_cmd::run(
+                &client,
+                send_keys_cmd::SendKeysArgs {
+                    surface_id,
+                    tokens,
+                    literal,
+                    repeat,
+                    inter_event_delay_ms: delay_ms,
+                    session,
+                },
+            )
+            .await
+        }
+        Command::Send {
+            surface_id,
+            text,
+            no_enter,
+            session,
+        } => {
+            send_cmd::run(
+                &client,
+                send_cmd::SendArgs {
+                    surface_id,
+                    text,
+                    no_enter,
+                    session,
+                },
+            )
+            .await
+        }
+        Command::Interrupt { surface_id, session } => interrupt_cmd::run(&client, surface_id, session).await,
         Command::Click {
             surface_id,
             x,

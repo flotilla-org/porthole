@@ -15,11 +15,10 @@ Assumptions:
 | 1 | `launch --kind process --app /Applications/X.app` | Start a fresh window. Returns `surface_id`. | Once per test run. |
 | 2 | `focus <surface_id>` | Bring window to front so input lands. | Defensively, before any input burst. |
 | 3 | `wait <surface_id> --condition stable --window-ms 1500` | Block until the frame is unchanged for 1.5s, ignoring small pixel changes (cursor blink). | After launching, before screenshots, between input bursts. |
-| 4 | `text <surface_id> 'shell command here'` | Type a literal string. | Most input is this. |
-| 5 | `key <surface_id> --key Enter` | Send a named key. Modifiers via `--mod Cmd --mod Ctrl`. | Newlines, hotkeys, scrollback navigation. |
-| 6 | `screenshot <surface_id> --out file.png` | PNG capture of the window. | At known points; the inner test script tells the harness when. |
-| 7 | `place <surface_id> --x N --y N --w N --h N` | In-place resize/move. **Surface identity preserved**, inner process unaffected. | Reflow tests, before/after geometry comparisons. |
-| 8 | `close <surface_id>` | Clean shutdown. | End of test run. |
+| 4 | `send-keys <surface_id> 'cmd' Enter` | Tmux-style sequence: text, named keys, and modifier-prefixed keys in one call (`C-c`, `Cmd-Tab`, `M-x`). The recommended input primitive. Convenience aliases: `send <id> 'cmd'` (text + Enter) and `interrupt <id>` (Ctrl+C). Lower-level: `text` and `key` map 1:1 to the wire endpoints when you don't want parsing. |
+| 5 | `screenshot <surface_id> --out file.png` | PNG capture of the window. | At known points; the inner test script tells the harness when. |
+| 6 | `place <surface_id> --x N --y N --w N --h N` | In-place resize/move. **Surface identity preserved**, inner process unaffected. | Reflow tests, before/after geometry comparisons. |
+| 7 | `close <surface_id>` | Clean shutdown. | End of test run. |
 
 ## End-to-end shell example
 
@@ -41,15 +40,12 @@ porthole focus "$SID"
 porthole wait "$SID" --condition stable --window-ms 1500 --threshold-pct 1.0
 
 # 3. Type a known command. The exit code from `seq` is irrelevant; we want pixels.
-porthole text "$SID" 'printf "hello porthole\n"; seq 1 80'
-porthole key  "$SID" --key Enter
+porthole send "$SID" 'printf "hello porthole\n"; seq 1 80'
 porthole wait "$SID" --condition stable --window-ms 1500 --threshold-pct 1.0
 porthole screenshot "$SID" --out "$OUT/01-after-output.png"
 
 # 4. Scrollback: Cmd+ArrowUp three times, then capture.
-for _ in 1 2 3; do
-    porthole key "$SID" --key ArrowUp --mod Cmd
-done
+porthole send-keys "$SID" Cmd-Up Cmd-Up Cmd-Up
 porthole wait "$SID" --condition stable --window-ms 1000
 porthole screenshot "$SID" --out "$OUT/02-scrolled.png"
 
@@ -84,5 +80,6 @@ For automated test suites, you usually want the *inner* process to tell the *out
 - **Forgetting `focus`**. AX input goes to the focused app. If another window steals focus between `text` calls, your text lands in the wrong place. Re-`focus` defensively.
 - **Confusing `place` with `replace`**. `replace` *closes* the surface and launches a new one in its slot, minting a new `surface_id`. The inner shell process dies. For reflow, use `place`.
 - **Tight `wait` thresholds on terminals with cursor blink**. `--threshold-pct 1.0` ignores the blinking-cursor diff. Lower than 0.1 will time out forever.
-- **`scroll` vs scrollback keys**. `scroll` simulates a mouse wheel. Most terminals' scrollback is keyboard-bound (`Cmd+ArrowUp`, `Shift+PageUp`), so prefer `key` with modifiers for that.
+- **`scroll` vs scrollback keys**. `scroll` simulates a mouse wheel. Most terminals' scrollback is keyboard-bound (`Cmd+ArrowUp`, `Shift+PageUp`), so prefer `send-keys` (e.g. `send-keys SID Cmd-Up`) or the lower-level `key --mod Cmd --key ArrowUp` for that.
 - **Screen Recording permission**. Wait conditions that read pixels (`Stable`, `Dirty`, `TitleMatches`) need it; `Exists` and `Gone` do not. If a wait fails with `system_permission_needed`, run `porthole onboard`.
+- **`send-keys` token semantics for single chars**. A bare single ASCII character or digit (e.g. `send-keys SID c` or `send-keys SID 5`) is typed as **literal text**, not a keypress. Use `KeyA`/`KeyC`/`Digit5` (DOM names) when you want a key event without a modifier, or `C-c`/`Cmd-1` when you have a modifier. Multi-token sequences coalesce text fragments with single-space separators, so `send-keys SID hello world Enter` types "hello world" then presses Enter.
