@@ -12,7 +12,6 @@ pub struct SystemPermissionPromptOutcome {
     pub permission: String,
     pub granted_before: bool,
     pub granted_after: bool,
-    pub prompt_triggered: bool,
     pub requires_daemon_restart: bool,
     pub notes: String,
 }
@@ -39,7 +38,6 @@ mod tests {
             permission: "accessibility".into(),
             granted_before: false,
             granted_after: false,
-            prompt_triggered: true,
             requires_daemon_restart: true,
             notes: "restart the daemon".into(),
         };

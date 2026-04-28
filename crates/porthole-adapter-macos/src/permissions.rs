@@ -51,9 +51,7 @@ pub(crate) struct SupportedPermission {
 
 /// Single source of truth for the macOS adapter's supported permissions.
 /// Adding a permission: extend this slice and add an `ensure_*_granted`
-/// facade in this module for call-site readability. The
-/// `MacOsAdapter::prompted` array sizes itself from this constant — no
-/// manual update needed there.
+/// facade in this module for call-site readability.
 pub(crate) const SUPPORTED_PERMISSIONS: &[SupportedPermission] = &[
     SupportedPermission {
         name: "accessibility",
@@ -199,25 +197,22 @@ pub fn ensure_screen_recording_granted(adapter: &MacOsAdapter) -> Result<(), Por
     ensure_granted(adapter, "screen_recording")
 }
 
-pub(crate) fn ensure_granted(adapter: &MacOsAdapter, name: &str) -> Result<(), PortholeError> {
+pub(crate) fn ensure_granted(_adapter: &MacOsAdapter, name: &str) -> Result<(), PortholeError> {
     if is_granted(name)? {
         return Ok(());
     }
 
-    // Try to trigger prompt only on first miss per process.
-    if !adapter.was_prompted(name) {
-        match try_trigger_prompt(name) {
-            Ok(()) => {
-                adapter.set_prompted(name);
-            }
-            Err(reason) => {
-                let body = build_request_failed_body(name, reason);
-                return Err(
-                    PortholeError::new(ErrorCode::SystemPermissionRequestFailed, format!("cannot open prompt for {name}"))
-                        .with_details(serde_json::to_value(body).unwrap_or_default()),
-                );
-            }
-        }
+    // Try to trigger the OS prompt unconditionally — TCC silently no-ops on
+    // previously-denied permissions and on repeated calls within the same
+    // process, so the call is cheap and harmless. Earlier per-process
+    // bookkeeping was a workaround for a problem the onboard flow now solves
+    // by restarting the daemon between grants.
+    if let Err(reason) = try_trigger_prompt(name) {
+        let body = build_request_failed_body(name, reason);
+        return Err(
+            PortholeError::new(ErrorCode::SystemPermissionRequestFailed, format!("cannot open prompt for {name}"))
+                .with_details(serde_json::to_value(body).unwrap_or_default()),
+        );
     }
 
     let body = build_needed_body(name);
@@ -242,20 +237,6 @@ mod tests {
         assert_eq!(outcome.permission, "accessibility");
         assert_eq!(outcome.granted_before, ax_is_trusted_live());
         assert!(outcome.requires_daemon_restart);
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn prompt_bookkeeping_flips_on_first_call_only() {
-        let adapter = MacOsAdapter::new();
-        if ax_is_trusted_live() {
-            eprintln!("accessibility already granted; test skipped");
-            return;
-        }
-        let first = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
-        let second = adapter.request_system_permission_prompt("accessibility").await.expect("no-panic");
-        assert!(first.prompt_triggered, "first call should trigger prompt");
-        assert!(!second.prompt_triggered, "second call should not re-trigger");
     }
 
     #[tokio::test]
