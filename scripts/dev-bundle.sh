@@ -50,7 +50,9 @@ for bin in "$DAEMON_BIN" "$CLI_BIN"; do
 done
 
 APP="target/$PROFILE/Porthole.app"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+
+cp assets/icon.png "$APP/Contents/Resources/icon.png"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -63,6 +65,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <string>Porthole</string>
     <key>CFBundleExecutable</key>
     <string>portholed</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
     <key>CFBundleVersion</key>
     <string>0.0.0-dev</string>
     <key>CFBundleShortVersionString</key>
