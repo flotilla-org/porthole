@@ -15,7 +15,7 @@ The first end-to-end path is:
 ```text
 porthole ScreenCaptureKit capture
   -> capture-transfer producer
-  -> local shared-memory video payloads
+  -> local shared-memory video payloads passed by fd over UDS
   -> SDL viewer consumer
 ```
 
@@ -29,6 +29,8 @@ before adding IOSurface, dmabuf, remote transport, or mux semantics.
 - Prove the model with real porthole-produced macOS frames.
 - Prove cross-language consumption through a small C ABI.
 - Use CPU shared memory as the first payload transport.
+- Pass shared-memory file descriptors with `SCM_RIGHTS` on a raw Unix-domain
+  side channel rather than trying to encode descriptors in HTTP bodies.
 - Make latest-frame viewing behavior explicit: slow interactive consumers skip
   stale frames rather than blocking the producer.
 - Leave room for audio, accessibility events, metadata events, native handles,
@@ -71,14 +73,20 @@ Only `video` is implemented in v1.
 
 ## Architecture
 
-The first implementation should have four pieces:
+The first implementation should have five pieces:
 
 ```text
 crates/capture-transfer/
-  Rust protocol model, shared-memory transport, C ABI
+  Rust protocol model, shared-memory transport, fd passing, C ABI
+
+portholed HTTP-over-UDS registry
+  session discovery, source/track metadata, producer lifecycle
 
 porthole producer integration
   ScreenCaptureKit frames copied into capture-transfer video payloads
+
+raw capture-transfer UDS side channel
+  framed metadata plus SCM_RIGHTS descriptors for payload handles
 
 tools/capture-viewer-sdl/
   standalone SDL consumer using only the C ABI
@@ -99,6 +107,12 @@ The SDL viewer should be a separate executable and must consume through the C
 ABI. This keeps the first dogfood honest: if the ABI cannot support the viewer,
 the boundary is not real yet.
 
+HTTP-over-UDS remains the control plane. It can create sessions, list sessions,
+return source/track metadata, and provide the fd-transfer socket path or token.
+It must not pretend that an HTTP body carries a file descriptor. `SCM_RIGHTS` is
+socket ancillary data, so fd transfer needs a raw Unix-domain socket path where
+the implementation controls `sendmsg` and `recvmsg`.
+
 ## V1 Lifecycle
 
 The minimal lifecycle is:
@@ -107,10 +121,12 @@ The minimal lifecycle is:
 producer creates local session
 producer registers source
 producer registers video track for source
-consumer connects to session
+consumer discovers session through portholed
+consumer connects to raw fd-transfer side channel
 consumer receives replayed source and track registration events
 producer publishes video frames to the track
-consumer polls events and acquires the latest video frame
+consumer requests or subscribes to the latest video frame
+daemon replies with frame metadata plus shared-memory fd via SCM_RIGHTS
 producer updates source/track metadata if size or format changes
 producer unregisters source or exits
 consumer receives terminal event and cleans up
@@ -119,6 +135,13 @@ consumer receives terminal event and cleans up
 Consumers attach to a session, not directly to OS windows. Session identity must
 be distinct from the local transport address so the model can later survive mux
 or remote transport.
+
+The first interaction mode is consumer-initiated: a viewer asks for the latest
+frame for a track. The model must also leave room for producer-initiated offers:
+a terminal or other sink may later advertise that it can accept an image source,
+after which a producer can offer or push handles to that sink. Both flows use the
+same session/source/track vocabulary; they differ in who starts the handle
+exchange.
 
 ## C ABI Shape
 
@@ -149,6 +172,19 @@ void      ft_consumer_destroy(ft_consumer*);
 The exact names can change during implementation, but the shape should remain:
 session-oriented handles, explicit ids, explicit acquire/release ownership, and
 typed video functions for the only implemented track type.
+
+The in-process producer-pointer connection is only a bootstrap/test shape. The
+cross-process C ABI should grow a descriptor-based connection:
+
+```c
+typedef struct ft_session_descriptor {
+  const char *control_socket_path;
+  const char *session_id;
+} ft_session_descriptor;
+```
+
+That descriptor lets a consumer use HTTP-over-UDS for registry metadata and the
+raw UDS side channel for descriptor transfer.
 
 ## Event Model
 
@@ -192,7 +228,8 @@ format and stride honestly.
 ## Shared-Memory Transport
 
 V1 uses local CPU shared memory. The producer copies ScreenCaptureKit output into
-bounded shared-memory slots owned by the capture-transfer library.
+bounded shared-memory slots owned by the capture-transfer library. Cross-process
+consumers receive file descriptors for those slots with `SCM_RIGHTS`.
 
 Interactive consumers use latest-frame semantics:
 
@@ -202,10 +239,40 @@ Interactive consumers use latest-frame semantics:
 - slow consumers do not block the producer
 - acquired frames are pinned until release or consumer disconnect cleanup
 - the producer may reuse unpinned older slots
+- fd passing is explicit metadata plus ancillary data, not HTTP body content
 
 This is the correct behavior for an SDL viewer and future terminal bridge. A
 recording consumer can later add ordered cursor semantics and explicit drop
 accounting.
+
+## FD Transfer Side Channel
+
+The fd-transfer side channel is a raw Unix-domain socket separate from
+portholed's Axum HTTP socket. Messages on the side channel should be small
+length-prefixed JSON or binary frames that describe the operation and the
+metadata. Handles travel as ancillary data with `SCM_RIGHTS`.
+
+Initial consumer-pull request:
+
+```text
+consumer -> daemon: latest_video_frame { session_id, track_id }
+daemon -> consumer: video_frame_metadata { sequence, width, height, stride, format, len } + fd
+```
+
+Reserved producer-offer flow:
+
+```text
+sink -> daemon: register_sink_capability { accepted_track_types, accepted_payload_kinds }
+producer/daemon -> sink: offer_source_or_track { session_id, source_id, track_id }
+sink -> daemon: accept/reject offer
+producer/daemon -> sink: metadata + fd/native handle
+```
+
+The content-type idea still has value as an operation marker, but only at a
+layer that owns the raw socket. A header such as
+`application/vnd.flotilla.capture-transfer.fd+json` means "this framed message
+is accompanied by SCM_RIGHTS ancillary data"; it does not mean the JSON or HTTP
+body contains a descriptor.
 
 ## Future Extensions
 
@@ -231,7 +298,7 @@ Additional consumer modes:
 
 Additional transports:
 
-- local FD-passing
+- local FD-passing over raw UDS side channel
 - mux side channel
 - remote out-of-band frame or video data
 
@@ -258,6 +325,10 @@ workarounds for missing OS permissions.
   memfd-like temporary files where available, mmap files, or a platform wrapper?
 - Should session discovery be by explicit UDS path, session id through the
   porthole daemon, or both?
+- Should the fd-transfer side channel use one long-lived connection per
+  consumer, one connection per acquired frame, or both?
+- What is the first producer-initiated offer scenario worth implementing:
+  terminal image-source registration, recorder subscription, or mux replay?
 - Which initial pixel format best minimizes conversion while keeping SDL upload
   simple?
 - How much frame-drop accounting belongs in v1 if recording is deferred?

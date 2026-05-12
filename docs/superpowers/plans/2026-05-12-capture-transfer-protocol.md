@@ -4,7 +4,7 @@
 
 **Goal:** Build an implemented capture-transfer protocol draft with porthole as a video producer and a standalone SDL viewer as a C-ABI consumer.
 
-**Architecture:** Add a `capture-transfer` Rust crate that models sessions, sources, tracks, events, and shared-memory video payloads, then expose a narrow C ABI. Integrate porthole as the first real producer and add a small SDL viewer that attaches to a session and displays latest video frames.
+**Architecture:** Add a `capture-transfer` Rust crate that models sessions, sources, tracks, events, shared-memory video payloads, and `SCM_RIGHTS` fd passing over a raw Unix-domain side channel, then expose a narrow C ABI. Integrate porthole as the first real producer and add a small SDL viewer that attaches to a session and displays latest video frames.
 
 **Tech Stack:** Rust workspace, C ABI, local shared memory, ScreenCaptureKit via the existing macOS adapter path, SDL for the standalone viewer.
 
@@ -200,38 +200,110 @@ git add tools/capture-viewer-sdl docs/development.md
 git commit -m "feat(capture-transfer): add SDL viewer consumer"
 ```
 
-## Chunk 5: Porthole Producer Integration
+## Chunk 5: FD Transfer And Porthole Producer Integration
 
-### Task 6: Add a synthetic producer path in porthole
+### Task 6: Add SCM_RIGHTS fd-passing primitives
 
 **Files:**
-- Modify: relevant porthole CLI and daemon files after inspecting current command layout
-- Modify: `docs/recipes/terminal-orchestration.md` or create a capture recipe if a separate doc is clearer
+- Create: `crates/capture-transfer/src/fdpass.rs`
+- Modify: `crates/capture-transfer/src/lib.rs`
 
-- [ ] **Step 1: Inspect current CLI and daemon route patterns**
+- [ ] **Step 1: Write fd-passing tests**
 
-Use `rg` to find the existing launch, screenshot, and recording/capture-adjacent command structure before choosing file paths.
+Use `UnixStream::pair()` to verify a file descriptor can be sent with `SCM_RIGHTS`, received as an owned fd, and read from the receiving side.
 
-- [ ] **Step 2: Add tests for producer session creation**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Write daemon/core tests with a synthetic frame source. Do not require macOS Screen Recording permission for these tests.
+Run: `cargo test -p capture-transfer --locked`
 
-- [ ] **Step 3: Implement the synthetic producer route or command**
+Expected: tests fail because the fd-passing module is not implemented.
 
-Expose enough plumbing to create a capture-transfer session and publish synthetic frames. This verifies porthole integration before ScreenCaptureKit is involved.
+- [ ] **Step 3: Implement send/receive helpers**
 
-- [ ] **Step 4: Run targeted tests**
+Use `sendmsg` / `recvmsg` with `SCM_RIGHTS`. Keep the API low-level and Unix-only for now.
 
-Run the porthole package tests that cover the new synthetic path.
+- [ ] **Step 4: Run tests**
+
+Run: `cargo test -p capture-transfer --locked`
+
+Expected: fd-passing tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates docs
-git commit -m "feat(porthole): wire synthetic capture-transfer producer"
+git add crates/capture-transfer
+git commit -m "feat(capture-transfer): add fd passing primitives"
 ```
 
-### Task 7: Wire real ScreenCaptureKit frames
+### Task 7: Add a daemon-owned synthetic capture session registry
+
+**Files:**
+- Modify: `crates/portholed/src/state.rs`
+- Modify: `crates/portholed/src/server.rs`
+- Create: `crates/portholed/src/routes/capture_sessions.rs`
+- Modify: `crates/portholed/src/routes/mod.rs`
+- Modify: `crates/portholed/Cargo.toml`
+- Modify: `crates/porthole-protocol` if wire structs are needed
+- Modify: `docs/recipes/terminal-orchestration.md` or create a capture recipe if a separate doc is clearer
+
+- [ ] **Step 1: Inspect current CLI and daemon route patterns**
+
+Use `rg` to find the existing launch, screenshot, and route test structure before choosing exact wire files.
+
+- [ ] **Step 2: Add tests for synthetic session creation and discovery**
+
+Write daemon tests that create a synthetic capture session, return a session id, expose source/track metadata, and return a raw fd-transfer socket path or token. Do not require macOS Screen Recording permission.
+
+- [ ] **Step 3: Implement registry state**
+
+Add a daemon-owned capture session registry to `AppState`. The first registry can own synthetic video producers and latest-frame slots.
+
+- [ ] **Step 4: Implement HTTP registry routes**
+
+Add control-plane routes for synthetic session creation and metadata discovery. These routes do not carry file descriptors.
+
+- [ ] **Step 5: Implement the raw fd-transfer side channel**
+
+Add a raw UDS listener for capture-transfer handle requests. The first operation is consumer-initiated latest-frame acquisition: request `{ session_id, track_id }`, reply with metadata plus one shared-memory fd via `SCM_RIGHTS`.
+
+- [ ] **Step 6: Run targeted tests**
+
+Run the portholed package tests that cover synthetic session creation and fd side-channel transfer.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add crates docs
+git commit -m "feat(portholed): add synthetic capture session registry"
+```
+
+### Task 8: Wire SDL viewer to daemon sessions
+
+**Files:**
+- Modify: `tools/capture-viewer-sdl/src/main.c`
+- Modify: `tools/capture-viewer-sdl/README.md`
+- Modify: `docs/development.md`
+
+- [ ] **Step 1: Add viewer argument parsing tests or smoke coverage**
+
+Keep the in-process synthetic mode, but add a `--session` or equivalent descriptor mode that connects to portholed.
+
+- [ ] **Step 2: Implement descriptor mode**
+
+Use the HTTP-over-UDS registry for metadata and the raw fd-transfer side channel for latest-frame descriptors.
+
+- [ ] **Step 3: Run the viewer against daemon synthetic session**
+
+Run the daemon, create a synthetic session, and verify the viewer displays or dummy-smokes frames from the daemon.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tools docs
+git commit -m "feat(capture-transfer): attach SDL viewer to daemon sessions"
+```
+
+### Task 9: Wire real ScreenCaptureKit frames
 
 **Files:**
 - Modify: `crates/porthole-adapter-macos` capture-related files after inspecting current adapter layout
@@ -265,7 +337,7 @@ git commit -m "feat(porthole): publish ScreenCaptureKit frames"
 
 ## Chunk 6: Final Verification
 
-### Task 8: Run repository gates
+### Task 10: Run repository gates
 
 **Files:**
 - No source edits expected unless checks fail.
