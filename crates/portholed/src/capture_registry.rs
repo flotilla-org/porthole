@@ -104,6 +104,7 @@ impl CaptureRegistry {
                 track_id,
                 VideoFrameDesc {
                     sequence: 1,
+                    // Synthetic sessions use 0 as an explicit timestamp sentinel.
                     timestamp_ns: 0,
                     width: 2,
                     height: 1,

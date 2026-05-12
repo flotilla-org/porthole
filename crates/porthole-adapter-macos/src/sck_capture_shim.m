@@ -29,6 +29,9 @@ typedef void (*PortholeSckErrorCallback)(void *ctx, const char *message);
 @implementation PortholeSckOutput
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer ofType:(SCStreamOutputType)type {
   (void)stream;
+  // Frame callbacks are serialized on the sampleHandlerQueue passed to
+  // addStreamOutput. porthole_sck_stop clears callbacks via dispatch_sync on
+  // that same queue, so this path does not need an additional lock.
   if (type != SCStreamOutputTypeScreen || self.frameCallback == NULL) {
     return;
   }
