@@ -336,6 +336,11 @@ enum Command {
     Attention,
     /// Print monitor list.
     Displays,
+    /// Create or inspect capture sessions.
+    CaptureSession {
+        #[command(subcommand)]
+        command: CaptureSessionCommand,
+    },
     /// Search for candidate windows.
     Search {
         #[arg(long)]
@@ -464,6 +469,16 @@ enum ButtonArg {
     Left,
     Right,
     Middle,
+}
+
+#[derive(Subcommand)]
+enum CaptureSessionCommand {
+    /// Create a synthetic daemon-backed capture session and print its descriptor.
+    Synthetic {
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl From<ButtonArg> for ClickButton {
@@ -824,6 +839,19 @@ async fn main() -> std::process::ExitCode {
         } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, session).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
+        Command::CaptureSession { command } => match command {
+            CaptureSessionCommand::Synthetic { json } => {
+                let control_socket_path = socket_path();
+                porthole::commands::capture_session::synthetic(
+                    &client,
+                    porthole::commands::capture_session::SyntheticArgs {
+                        control_socket_path: &control_socket_path,
+                        json,
+                    },
+                )
+                .await
+            }
+        },
         Command::Search {
             app_name,
             title_pattern,
