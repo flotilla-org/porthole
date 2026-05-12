@@ -182,6 +182,13 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
       dispatch_semaphore_signal(startSem);
     }];
     if (dispatch_semaphore_wait(startSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+      dispatch_sync(queue, ^{
+        @synchronized(output) {
+          output.frameCallback = NULL;
+          output.errorCallback = NULL;
+          output.ctx = NULL;
+        }
+      });
       return porthole_sck_copy_error(@"timed out starting ScreenCaptureKit stream");
     }
     if (startError != nil) {
