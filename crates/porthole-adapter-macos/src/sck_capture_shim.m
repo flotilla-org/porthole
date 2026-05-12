@@ -76,8 +76,10 @@ typedef void (*PortholeSckErrorCallback)(void *ctx, const char *message);
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
   (void)stream;
-  if (self.errorCallback != NULL && error != nil) {
-    self.errorCallback(self.ctx, error.localizedDescription.UTF8String);
+  @synchronized(self) {
+    if (self.errorCallback != NULL && self.ctx != NULL && error != nil) {
+      self.errorCallback(self.ctx, error.localizedDescription.UTF8String);
+    }
   }
 }
 @end
@@ -204,9 +206,11 @@ void porthole_sck_stop(void *rawHandle) {
   PortholeSckHandle *handle = (__bridge_transfer PortholeSckHandle *)rawHandle;
   if (@available(macOS 12.3, *)) {
     dispatch_sync(handle.queue, ^{
-      handle.output.frameCallback = NULL;
-      handle.output.errorCallback = NULL;
-      handle.output.ctx = NULL;
+      @synchronized(handle.output) {
+        handle.output.frameCallback = NULL;
+        handle.output.errorCallback = NULL;
+        handle.output.ctx = NULL;
+      }
     });
     dispatch_semaphore_t stopSem = dispatch_semaphore_create(0);
     [handle.stream stopCaptureWithCompletionHandler:^(NSError *error) {
