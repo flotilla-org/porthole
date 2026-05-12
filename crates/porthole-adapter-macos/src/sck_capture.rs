@@ -47,6 +47,13 @@ struct CallbackState {
     sequence: AtomicU64,
 }
 
+// SAFETY: CallbackState is shared with SCK callback threads through an opaque C
+// ctx pointer. Its fields are thread-safe, and the object is immutable after
+// construction except for the atomic sequence counter.
+unsafe impl Send for CallbackState {}
+// SAFETY: See the Send impl; callbacks only take shared references to state.
+unsafe impl Sync for CallbackState {}
+
 pub async fn start_video_capture(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
     let cg_window_id = surface.cg_window_id.ok_or_else(|| {
@@ -56,10 +63,24 @@ pub async fn start_video_capture(adapter: &MacOsAdapter, surface: &SurfaceInfo) 
         )
     })?;
 
+    let session = tokio::task::spawn_blocking(move || start_video_capture_blocking(cg_window_id))
+        .await
+        .map_err(|error| PortholeError::new(ErrorCode::InternalError, format!("ScreenCaptureKit start task failed: {error}")))??;
+    Ok(Box::new(session))
+}
+
+fn start_video_capture_blocking(cg_window_id: u32) -> Result<MacVideoCaptureSession, PortholeError> {
+    let initial_frame = match capture_initial_window_frame(cg_window_id) {
+        Ok(frame) => Some(frame),
+        Err(error) => {
+            tracing::debug!(error = %error, "failed to seed ScreenCaptureKit stream with initial window snapshot");
+            None
+        }
+    };
     let (tx, rx) = mpsc::channel(8);
     let state = Box::new(CallbackState {
-        tx,
-        sequence: AtomicU64::new(1),
+        tx: tx.clone(),
+        sequence: AtomicU64::new(if initial_frame.is_some() { 2 } else { 1 }),
     });
     let state_ptr = Box::into_raw(state);
     let mut raw_handle = ptr::null_mut();
@@ -89,12 +110,70 @@ pub async fn start_video_capture(adapter: &MacOsAdapter, surface: &SurfaceInfo) 
             "ScreenCaptureKit did not return a stream handle",
         ));
     }
+    if let Some(frame) = initial_frame {
+        let _ = tx.try_send(Ok(frame));
+    }
 
-    Ok(Box::new(MacVideoCaptureSession {
+    Ok(MacVideoCaptureSession {
         raw_handle,
         state: state_ptr,
         rx,
-    }))
+    })
+}
+
+fn capture_initial_window_frame(cg_window_id: u32) -> Result<VideoCaptureFrame, PortholeError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use core_graphics::{
+        geometry::{CGPoint, CGRect, CGSize},
+        window::{create_image, kCGWindowImageBoundsIgnoreFraming, kCGWindowImageDefault, kCGWindowListOptionIncludingWindow},
+    };
+
+    let zero_rect = CGRect::new(&CGPoint::new(0.0, 0.0), &CGSize::new(0.0, 0.0));
+    let image = create_image(
+        zero_rect,
+        kCGWindowListOptionIncludingWindow,
+        cg_window_id,
+        kCGWindowImageBoundsIgnoreFraming | kCGWindowImageDefault,
+    )
+    .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "initial capture snapshot returned null"))?;
+
+    let width = image.width() as u32;
+    let height = image.height() as u32;
+    let bytes_per_row = image.bytes_per_row();
+    let data = image.data();
+    let bgra: &[u8] = data.bytes();
+    let stride = width
+        .checked_mul(4)
+        .ok_or_else(|| PortholeError::new(ErrorCode::InternalError, "initial capture snapshot stride overflow"))?;
+    let mut bytes = Vec::with_capacity((stride as usize) * (height as usize));
+    for row in 0..height as usize {
+        let row_start = row * bytes_per_row;
+        let row_end = row_start + stride as usize;
+        if row_end > bgra.len() {
+            return Err(PortholeError::new(
+                ErrorCode::InternalError,
+                "initial capture snapshot bytes shorter than expected",
+            ));
+        }
+        bytes.extend_from_slice(&bgra[row_start..row_end]);
+    }
+    drop(data);
+    drop(image);
+    let timestamp_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0);
+
+    Ok(VideoCaptureFrame {
+        sequence: 1,
+        timestamp_ns,
+        width,
+        height,
+        stride,
+        pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+        bytes,
+    })
 }
 
 struct MacVideoCaptureSession {
@@ -103,6 +182,9 @@ struct MacVideoCaptureSession {
     rx: mpsc::Receiver<Result<VideoCaptureFrame, String>>,
 }
 
+// SAFETY: MacVideoCaptureSession owns the SCK handle and CallbackState pointer.
+// CallbackState is immutable after construction except for its AtomicU64; the
+// Sender is thread-safe, and Drop clears callbacks before freeing state.
 unsafe impl Send for MacVideoCaptureSession {}
 
 #[async_trait]

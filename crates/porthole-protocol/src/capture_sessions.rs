@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CreateSyntheticCaptureSessionResponse {
+pub struct CreateCaptureSessionResponse {
     pub session_id: String,
     pub source_id: u64,
     pub track_id: u64,

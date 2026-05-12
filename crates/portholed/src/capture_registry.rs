@@ -21,7 +21,7 @@ use porthole_core::{
     surface::SurfaceInfo,
 };
 use porthole_protocol::capture_sessions::{
-    CaptureSessionResponse, CreateSyntheticCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse,
+    CaptureSessionResponse, CreateCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse,
 };
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ impl CaptureRegistry {
         Ok(registry)
     }
 
-    pub fn create_synthetic_session(&self) -> Result<CreateSyntheticCaptureSessionResponse, CaptureRegistryError> {
+    pub fn create_synthetic_session(&self) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
         let fd_socket_path = self.fd_socket_path()?;
         let session_id = Uuid::new_v4().to_string();
         let mut state = SessionState::new();
@@ -130,7 +130,7 @@ impl CaptureRegistry {
             .sessions
             .insert(session_id.clone(), session);
 
-        Ok(CreateSyntheticCaptureSessionResponse {
+        Ok(CreateCaptureSessionResponse {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
@@ -142,7 +142,7 @@ impl CaptureRegistry {
         &self,
         adapter: Arc<dyn Adapter>,
         surface: SurfaceInfo,
-    ) -> Result<CreateSyntheticCaptureSessionResponse, CaptureRegistryError> {
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
         let fd_socket_path = self.fd_socket_path()?;
         let mut capture = adapter
             .start_video_capture(&surface)
@@ -213,7 +213,7 @@ impl CaptureRegistry {
             .sessions
             .insert(session_id.clone(), session);
 
-        Ok(CreateSyntheticCaptureSessionResponse {
+        Ok(CreateCaptureSessionResponse {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
@@ -270,6 +270,10 @@ impl CaptureRegistry {
             pixel_format: pixel_format_name(frame.desc.pixel_format).to_string(),
             len: frame.bytes().len(),
         };
+        // The fd is a cloned kernel reference to this frame's immutable backing
+        // file. After SCM_RIGHTS transfer, daemon-side pinning is no longer
+        // needed for consumer readability; pruning may unlink the path, but the
+        // receiver's fd remains valid until it closes it.
         session.video.release(frame);
         Ok(LatestFrameReply { response, fd })
     }

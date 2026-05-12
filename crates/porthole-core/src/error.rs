@@ -19,6 +19,7 @@ pub enum ErrorCode {
     UnknownKey,
     InvalidCoordinate,
     InvalidArgument,
+    InternalError,
     CloseFailed,
     LaunchReturnedExisting,
 }
@@ -40,6 +41,7 @@ impl fmt::Display for ErrorCode {
             Self::UnknownKey => "unknown_key",
             Self::InvalidCoordinate => "invalid_coordinate",
             Self::InvalidArgument => "invalid_argument",
+            Self::InternalError => "internal_error",
             Self::CloseFailed => "close_failed",
             Self::LaunchReturnedExisting => "launch_returned_existing",
         };

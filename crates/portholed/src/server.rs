@@ -70,7 +70,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
-    use porthole_protocol::capture_sessions::{CreateSyntheticCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse};
+    use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse};
     use tower::ServiceExt;
 
     use super::*;
@@ -107,7 +107,7 @@ mod tests {
         let res = post(router.clone(), "/capture-sessions/synthetic", serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
-        let created: CreateSyntheticCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(created.source_id, 1);
         assert_eq!(created.track_id, 1);
 
@@ -156,7 +156,7 @@ mod tests {
         let res = post(router.clone(), "/capture-sessions/surfaces/surf_test", serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
-        let created: CreateSyntheticCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(created.source_id, 1);
         assert_eq!(created.track_id, 1);
 

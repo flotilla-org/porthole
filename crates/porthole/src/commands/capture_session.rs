@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use porthole_protocol::capture_sessions::CreateSyntheticCaptureSessionResponse;
+use porthole_protocol::capture_sessions::CreateCaptureSessionResponse;
 
 use crate::client::{ClientError, DaemonClient};
 
@@ -10,12 +10,12 @@ pub struct CaptureSessionArgs<'a> {
 }
 
 pub async fn synthetic(client: &DaemonClient, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
-    let res: CreateSyntheticCaptureSessionResponse = client.post_json("/capture-sessions/synthetic", &serde_json::json!({})).await?;
+    let res: CreateCaptureSessionResponse = client.post_json("/capture-sessions/synthetic", &serde_json::json!({})).await?;
     print_session_response("synthetic", client, args, &res)
 }
 
 pub async fn surface(client: &DaemonClient, surface_id: &str, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
-    let res: CreateSyntheticCaptureSessionResponse = client
+    let res: CreateCaptureSessionResponse = client
         .post_json(&format!("/capture-sessions/surfaces/{surface_id}"), &serde_json::json!({}))
         .await?;
     print_session_response("surface", client, args, &res)
@@ -25,7 +25,7 @@ fn print_session_response(
     kind: &str,
     _client: &DaemonClient,
     args: CaptureSessionArgs<'_>,
-    res: &CreateSyntheticCaptureSessionResponse,
+    res: &CreateCaptureSessionResponse,
 ) -> Result<(), ClientError> {
     if args.json {
         let text = serde_json::to_string_pretty(&serde_json::json!({
@@ -44,7 +44,7 @@ fn print_session_response(
     Ok(())
 }
 
-pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, response: &CreateSyntheticCaptureSessionResponse) -> String {
+pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, response: &CreateCaptureSessionResponse) -> String {
     format!(
         "porthole_socket: {control_socket_path}\n\
          session_id: {}\n\
