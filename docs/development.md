@@ -63,6 +63,20 @@ cargo test -p porthole-adapter-macos -- --ignored
 
 These tests use whatever daemon is currently running (or spawn their own from `CARGO_BIN_EXE_portholed` — a different path and thus a different TCC identity). Run the bundled daemon for the realistic path.
 
+## Capture transfer SDL viewer
+
+The first capture-transfer dogfood viewer lives in `tools/capture-viewer-sdl`.
+It currently runs a synthetic producer in-process and consumes frames only
+through the `capture-transfer` C ABI. Build and smoke-test it with:
+
+```sh
+cargo build -p capture-transfer --locked
+cmake -S tools/capture-viewer-sdl -B target/capture-viewer-sdl \
+  -DCAPTURE_TRANSFER_LIB="$PWD/target/debug/libcapture_transfer.dylib"
+cmake --build target/capture-viewer-sdl
+SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl --frames 3
+```
+
 ## What *not* to do when permissions are missing
 
 Per `AGENTS.md`: stop, state the missing permission, tell the user to run `porthole onboard`, wait. Do not build mock layers, feature flags, or "degrade to empty" paths. Preflight returns `system_permission_needed` with remediation — surface that, don't route around it.
