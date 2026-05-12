@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/capture-transfer",
     "crates/porthole-core",
     "crates/porthole-protocol",
     "crates/portholed",
