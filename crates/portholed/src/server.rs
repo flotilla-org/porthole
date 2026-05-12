@@ -175,6 +175,7 @@ mod tests {
         let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
+        assert_eq!(frame.timestamp_ns, 123_456_789);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
 

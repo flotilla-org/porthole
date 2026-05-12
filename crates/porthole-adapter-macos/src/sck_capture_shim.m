@@ -97,9 +97,10 @@ static char *porthole_sck_copy_error(NSString *message) {
     utf8 = "unknown ScreenCaptureKit error";
   }
   char *copy = malloc(strlen(utf8) + 1);
-  if (copy != NULL) {
-    strcpy(copy, utf8);
+  if (copy == NULL) {
+    abort();
   }
+  strcpy(copy, utf8);
   return copy;
 }
 
@@ -127,7 +128,9 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
                                                    contentError = error;
                                                    dispatch_semaphore_signal(contentSem);
                                                  }];
-    dispatch_semaphore_wait(contentSem, DISPATCH_TIME_FOREVER);
+    if (dispatch_semaphore_wait(contentSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+      return porthole_sck_copy_error(@"timed out waiting for ScreenCaptureKit shareable content");
+    }
     if (contentError != nil) {
       return porthole_sck_copy_error(contentError.localizedDescription);
     }
@@ -176,7 +179,9 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
       startError = error;
       dispatch_semaphore_signal(startSem);
     }];
-    dispatch_semaphore_wait(startSem, DISPATCH_TIME_FOREVER);
+    if (dispatch_semaphore_wait(startSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+      return porthole_sck_copy_error(@"timed out starting ScreenCaptureKit stream");
+    }
     if (startError != nil) {
       return porthole_sck_copy_error(startError.localizedDescription);
     }

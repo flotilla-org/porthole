@@ -85,7 +85,7 @@ impl VideoCaptureSession for InMemoryVideoCaptureSession {
         self.emitted = true;
         Ok(Some(VideoCaptureFrame {
             sequence: 1,
-            timestamp_ns: 0,
+            timestamp_ns: 123_456_789,
             width: 2,
             height: 1,
             stride: 8,

@@ -4,17 +4,17 @@ use porthole_protocol::capture_sessions::CreateSyntheticCaptureSessionResponse;
 
 use crate::client::{ClientError, DaemonClient};
 
-pub struct SyntheticArgs<'a> {
+pub struct CaptureSessionArgs<'a> {
     pub control_socket_path: &'a Path,
     pub json: bool,
 }
 
-pub async fn synthetic(client: &DaemonClient, args: SyntheticArgs<'_>) -> Result<(), ClientError> {
+pub async fn synthetic(client: &DaemonClient, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
     let res: CreateSyntheticCaptureSessionResponse = client.post_json("/capture-sessions/synthetic", &serde_json::json!({})).await?;
     print_session_response("synthetic", client, args, &res)
 }
 
-pub async fn surface(client: &DaemonClient, surface_id: &str, args: SyntheticArgs<'_>) -> Result<(), ClientError> {
+pub async fn surface(client: &DaemonClient, surface_id: &str, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
     let res: CreateSyntheticCaptureSessionResponse = client
         .post_json(&format!("/capture-sessions/surfaces/{surface_id}"), &serde_json::json!({}))
         .await?;
@@ -24,7 +24,7 @@ pub async fn surface(client: &DaemonClient, surface_id: &str, args: SyntheticArg
 fn print_session_response(
     kind: &str,
     _client: &DaemonClient,
-    args: SyntheticArgs<'_>,
+    args: CaptureSessionArgs<'_>,
     res: &CreateSyntheticCaptureSessionResponse,
 ) -> Result<(), ClientError> {
     if args.json {

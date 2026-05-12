@@ -31,6 +31,7 @@ pub struct LatestVideoFrameResponse {
     pub session_id: String,
     pub track_id: u64,
     pub sequence: u64,
+    pub timestamp_ns: u64,
     pub width: u32,
     pub height: u32,
     pub stride: u32,

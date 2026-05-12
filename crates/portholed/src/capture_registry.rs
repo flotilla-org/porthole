@@ -34,6 +34,7 @@ pub struct CaptureRegistry {
 #[derive(Debug, Default)]
 struct CaptureRegistryInner {
     sessions: HashMap<String, CaptureSession>,
+    next_consumer_id: u64,
 }
 
 #[derive(Debug)]
@@ -93,6 +94,9 @@ impl CaptureRegistry {
                 }),
             )
             .map_err(CaptureRegistryError::from_capture)?;
+        // SessionState gives us typed id allocation and validation here; the
+        // current capture-session registry stores the resulting ids directly
+        // until event replay is exposed over the daemon boundary.
 
         let mut video = VideoSlotManager::new(3);
         video
@@ -169,6 +173,9 @@ impl CaptureRegistry {
                 }),
             )
             .map_err(CaptureRegistryError::from_capture)?;
+        // SessionState gives us typed id allocation and validation here; the
+        // current capture-session registry stores the resulting ids directly
+        // until event replay is exposed over the daemon boundary.
 
         let mut video = VideoSlotManager::new(3);
         publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
@@ -235,19 +242,22 @@ impl CaptureRegistry {
 
     fn latest_frame(&self, request: &LatestVideoFrameRequest) -> Result<LatestFrameReply, CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        inner.next_consumer_id = inner.next_consumer_id.saturating_add(1).max(1);
+        let consumer_id = ConsumerId::new(inner.next_consumer_id);
         let session = inner
             .sessions
             .get_mut(&request.session_id)
             .ok_or_else(|| CaptureRegistryError::UnknownSession(request.session_id.clone()))?;
         let frame = session
             .video
-            .acquire_latest(ConsumerId::new(1), TrackId::new(request.track_id))
+            .acquire_latest(consumer_id, TrackId::new(request.track_id))
             .map_err(CaptureRegistryError::from_capture)?;
         let fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
         let response = LatestVideoFrameResponse {
             session_id: request.session_id.clone(),
             track_id: request.track_id,
             sequence: frame.desc.sequence,
+            timestamp_ns: frame.desc.timestamp_ns,
             width: frame.desc.width,
             height: frame.desc.height,
             stride: frame.desc.stride,

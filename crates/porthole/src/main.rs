@@ -851,7 +851,7 @@ async fn main() -> std::process::ExitCode {
                 let control_socket_path = socket_path();
                 porthole::commands::capture_session::synthetic(
                     &client,
-                    porthole::commands::capture_session::SyntheticArgs {
+                    porthole::commands::capture_session::CaptureSessionArgs {
                         control_socket_path: &control_socket_path,
                         json,
                     },
@@ -863,7 +863,7 @@ async fn main() -> std::process::ExitCode {
                 porthole::commands::capture_session::surface(
                     &client,
                     &surface_id,
-                    porthole::commands::capture_session::SyntheticArgs {
+                    porthole::commands::capture_session::CaptureSessionArgs {
                         control_socket_path: &control_socket_path,
                         json,
                     },
