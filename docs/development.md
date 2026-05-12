@@ -123,6 +123,23 @@ kill "$portholed_pid"
 rm -rf "$runtime_dir"
 ```
 
+For a real tracked surface, use ScreenCaptureKit-backed capture instead of the
+synthetic producer:
+
+```sh
+surface_id="$(porthole attach --containing-pid $$ --frontmost --json | jq -r .surface_id)"
+descriptor="$(porthole capture-session surface "$surface_id")"
+session_id="$(printf '%s\n' "$descriptor" | awk '/^session_id:/ { print $2 }')"
+
+target/capture-viewer-sdl/capture-viewer-sdl \
+  --porthole-socket "$PORTHOLE_RUNTIME_DIR/porthole.sock" \
+  --session-id "$session_id"
+```
+
+This path requires the normal porthole macOS permissions. If it returns
+`system_permission_needed`, run `porthole onboard` for the daemon identity and
+retry; do not route around the permission failure.
+
 ## What *not* to do when permissions are missing
 
 Per `AGENTS.md`: stop, state the missing permission, tell the user to run `porthole onboard`, wait. Do not build mock layers, feature flags, or "degrade to empty" paths. Preflight returns `system_permission_needed` with remediation — surface that, don't route around it.

@@ -479,6 +479,13 @@ enum CaptureSessionCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Create a live capture session for an existing tracked surface.
+    Surface {
+        surface_id: String,
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl From<ButtonArg> for ClickButton {
@@ -844,6 +851,18 @@ async fn main() -> std::process::ExitCode {
                 let control_socket_path = socket_path();
                 porthole::commands::capture_session::synthetic(
                     &client,
+                    porthole::commands::capture_session::SyntheticArgs {
+                        control_socket_path: &control_socket_path,
+                        json,
+                    },
+                )
+                .await
+            }
+            CaptureSessionCommand::Surface { surface_id, json } => {
+                let control_socket_path = socket_path();
+                porthole::commands::capture_session::surface(
+                    &client,
+                    &surface_id,
                     porthole::commands::capture_session::SyntheticArgs {
                         control_socket_path: &control_socket_path,
                         json,

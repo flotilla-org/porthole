@@ -16,6 +16,10 @@ use capture_transfer::{
     state::SessionState,
     video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
+use porthole_core::{
+    adapter::{Adapter, VideoCaptureFrame, VideoCapturePixelFormat},
+    surface::SurfaceInfo,
+};
 use porthole_protocol::capture_sessions::{
     CaptureSessionResponse, CreateSyntheticCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse,
 };
@@ -41,6 +45,7 @@ struct CaptureSession {
     stride: u32,
     pixel_format: PixelFormat,
     video: VideoSlotManager,
+    _capture_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl CaptureRegistry {
@@ -113,6 +118,87 @@ impl CaptureRegistry {
             stride: 8,
             pixel_format: PixelFormat::Bgra8Unorm,
             video,
+            _capture_task: None,
+        };
+        self.inner
+            .lock()
+            .map_err(|_| CaptureRegistryError::Poisoned)?
+            .sessions
+            .insert(session_id.clone(), session);
+
+        Ok(CreateSyntheticCaptureSessionResponse {
+            session_id,
+            source_id: source_id.get(),
+            track_id: track_id.get(),
+            fd_socket_path,
+        })
+    }
+
+    pub async fn create_surface_session(
+        &self,
+        adapter: Arc<dyn Adapter>,
+        surface: SurfaceInfo,
+    ) -> Result<CreateSyntheticCaptureSessionResponse, CaptureRegistryError> {
+        let fd_socket_path = self.fd_socket_path()?;
+        let mut capture = adapter
+            .start_video_capture(&surface)
+            .await
+            .map_err(CaptureRegistryError::from_porthole)?;
+        let first_frame = tokio::time::timeout(std::time::Duration::from_secs(5), capture.next_frame())
+            .await
+            .map_err(|_| CaptureRegistryError::Capture("timed out waiting for first capture frame".to_string()))?
+            .map_err(CaptureRegistryError::from_porthole)?
+            .ok_or_else(|| CaptureRegistryError::Capture("capture stream ended before first frame".to_string()))?;
+
+        let session_id = Uuid::new_v4().to_string();
+        let mut state = SessionState::new();
+        let source_id = state
+            .register_source(SourceDesc {
+                kind: SourceKind::Window,
+                label: surface.title.clone().unwrap_or_else(|| surface.id.to_string()),
+            })
+            .map_err(CaptureRegistryError::from_capture)?;
+        let pixel_format = capture_pixel_format(first_frame.pixel_format);
+        let track_id = state
+            .register_track(
+                source_id,
+                TrackDesc::Video(VideoTrackDesc {
+                    width: first_frame.width,
+                    height: first_frame.height,
+                    pixel_format,
+                }),
+            )
+            .map_err(CaptureRegistryError::from_capture)?;
+
+        let mut video = VideoSlotManager::new(3);
+        publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
+
+        let registry = self.clone();
+        let task_session_id = session_id.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                match capture.next_frame().await {
+                    Ok(Some(frame)) => {
+                        let _ = registry.publish_capture_frame(&task_session_id, frame);
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::warn!(session_id = %task_session_id, error = %error, "capture stream stopped with error");
+                        break;
+                    }
+                }
+            }
+        });
+
+        let session = CaptureSession {
+            source_id,
+            track_id,
+            width: first_frame.width,
+            height: first_frame.height,
+            stride: first_frame.stride,
+            pixel_format,
+            video,
+            _capture_task: Some(task),
         };
         self.inner
             .lock()
@@ -172,6 +258,19 @@ impl CaptureRegistry {
         Ok(LatestFrameReply { response, fd })
     }
 
+    fn publish_capture_frame(&self, session_id: &str, frame: VideoCaptureFrame) -> Result<(), CaptureRegistryError> {
+        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        let session = inner
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
+        session.width = frame.width;
+        session.height = frame.height;
+        session.stride = frame.stride;
+        session.pixel_format = capture_pixel_format(frame.pixel_format);
+        publish_capture_frame_to_video(&mut session.video, session.track_id, &frame)
+    }
+
     fn fd_socket_path(&self) -> Result<String, CaptureRegistryError> {
         self.fd_socket_path
             .as_ref()
@@ -199,6 +298,9 @@ pub enum CaptureRegistryError {
     #[error("{0}")]
     Capture(String),
 
+    #[error("{0}")]
+    Porthole(porthole_core::PortholeError),
+
     #[error("io error: {0}")]
     Io(String),
 }
@@ -206,6 +308,37 @@ pub enum CaptureRegistryError {
 impl CaptureRegistryError {
     fn from_capture(error: capture_transfer::CaptureTransferError) -> Self {
         Self::Capture(error.to_string())
+    }
+
+    fn from_porthole(error: porthole_core::PortholeError) -> Self {
+        Self::Porthole(error)
+    }
+}
+
+fn publish_capture_frame_to_video(
+    video: &mut VideoSlotManager,
+    track_id: TrackId,
+    frame: &VideoCaptureFrame,
+) -> Result<(), CaptureRegistryError> {
+    video
+        .publish(
+            track_id,
+            VideoFrameDesc {
+                sequence: frame.sequence,
+                timestamp_ns: frame.timestamp_ns,
+                width: frame.width,
+                height: frame.height,
+                stride: frame.stride,
+                pixel_format: capture_pixel_format(frame.pixel_format),
+            },
+            &frame.bytes,
+        )
+        .map_err(CaptureRegistryError::from_capture)
+}
+
+fn capture_pixel_format(format: VideoCapturePixelFormat) -> PixelFormat {
+    match format {
+        VideoCapturePixelFormat::Bgra8Unorm => PixelFormat::Bgra8Unorm,
     }
 }
 

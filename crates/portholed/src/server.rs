@@ -37,6 +37,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
         .route("/system-permissions/request", post(system_permissions_route::post_request))
         .route("/capture-sessions/synthetic", post(capture_sessions_route::post_synthetic))
+        .route("/capture-sessions/surfaces/{id}", post(capture_sessions_route::post_surface))
         .route("/capture-sessions/{id}", get(capture_sessions_route::get_session))
         .with_state(state)
 }
@@ -117,6 +118,47 @@ mod tests {
             .unwrap();
         let res = router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+
+        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
+        let request = LatestVideoFrameRequest {
+            session_id: created.session_id.clone(),
+            track_id: created.track_id,
+        };
+        writeln!(stream, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+
+        let fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(frame.session_id, created.session_id);
+        assert_eq!(frame.track_id, created.track_id);
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 1);
+
+        let mut file = File::from(fd);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), frame.len);
+        assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
+    }
+
+    #[tokio::test]
+    async fn surface_capture_session_serves_latest_frame_fd() {
+        let temp = tempfile::tempdir().unwrap();
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let state = AppState::new_with_capture_socket(adapter, temp.path().join("capture-transfer.sock")).unwrap();
+        let info = SurfaceInfo::window(porthole_core::SurfaceId::from("surf_test"), 1);
+        state.handles.insert(info).await;
+        let router = build_router(state);
+
+        let res = post(router.clone(), "/capture-sessions/surfaces/surf_test", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateSyntheticCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created.source_id, 1);
+        assert_eq!(created.track_id, 1);
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let request = LatestVideoFrameRequest {

@@ -64,7 +64,7 @@ pub(crate) const SUPPORTED_PERMISSIONS: &[SupportedPermission] = &[
     },
     SupportedPermission {
         name: "screen_recording",
-        purpose: "window screenshot capture and frame-diff waits",
+        purpose: "window screenshot capture, frame-diff waits, and live capture sessions",
         settings_path: "System Settings → Privacy & Security → Screen Recording",
         notes_base: "Open System Settings → Privacy & Security → Screen Recording and enable porthole.",
         restart_required: false,
