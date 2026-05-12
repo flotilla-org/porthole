@@ -312,6 +312,11 @@ The first implementation should have tests at three levels:
   frame source without macOS permissions.
 - manual macOS smoke test for the real ScreenCaptureKit producer and SDL viewer.
 
+The real-capture smoke command is `scripts/manual-capture-transfer-smoke.sh`.
+It attaches the frontmost tracked surface by default, creates a
+`capture-session surface`, parses `session_id` and `porthole_socket` from the
+descriptor, and starts the SDL consumer for a bounded frame count.
+
 The real ScreenCaptureKit path is permission-dependent. If Accessibility or
 Screen Recording permission is missing, work must stop with `BLOCKED` and ask
 the user to grant the permission. Do not add mock bypasses or code-level
