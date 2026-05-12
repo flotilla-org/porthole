@@ -203,6 +203,11 @@ void porthole_sck_stop(void *rawHandle) {
   }
   PortholeSckHandle *handle = (__bridge_transfer PortholeSckHandle *)rawHandle;
   if (@available(macOS 12.3, *)) {
+    dispatch_sync(handle.queue, ^{
+      handle.output.frameCallback = NULL;
+      handle.output.errorCallback = NULL;
+      handle.output.ctx = NULL;
+    });
     dispatch_semaphore_t stopSem = dispatch_semaphore_create(0);
     [handle.stream stopCaptureWithCompletionHandler:^(NSError *error) {
       (void)error;
