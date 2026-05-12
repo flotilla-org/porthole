@@ -252,7 +252,13 @@ impl CaptureRegistry {
             .video
             .acquire_latest(consumer_id, TrackId::new(request.track_id))
             .map_err(CaptureRegistryError::from_capture)?;
-        let fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
+        let fd = match frame.try_clone_fd() {
+            Ok(fd) => fd,
+            Err(error) => {
+                session.video.release(frame);
+                return Err(CaptureRegistryError::from_capture(error));
+            }
+        };
         let response = LatestVideoFrameResponse {
             session_id: request.session_id.clone(),
             track_id: request.track_id,
