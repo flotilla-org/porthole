@@ -33,6 +33,38 @@ Exit codes:
 - **1** — at least one still missing (dismissed, or daemon not under launchd so we can't auto-verify), or a request to fire the prompt errored.
 - **3** — `--no-wait` mode; prompts fired, no Enter wait, no restart, no verification — caller handles the rest.
 
+## Dev bundle signing
+
+`scripts/dev-bundle.sh` signs `Porthole.app` with a local Apple Development
+identity when one exists. That gives TCC a stable designated requirement across
+rebuilds. If no Apple Development identity is available, the script falls back
+to ad-hoc signing; ad-hoc is useful for smoke tests but can make Privacy &
+Security grants look present while runtime checks still report missing after a
+rebuild.
+
+To pick a specific identity:
+
+```sh
+./scripts/dev-bundle.sh --sign "Apple Development: Your Name (TEAMID)"
+```
+
+To force the old ad-hoc path:
+
+```sh
+./scripts/dev-bundle.sh --adhoc
+```
+
+If you previously granted permissions to an ad-hoc build, reset TCC once after
+switching to certificate signing:
+
+```sh
+tccutil reset Accessibility org.flotilla.porthole.dev
+tccutil reset ScreenCapture org.flotilla.porthole.dev
+./scripts/dev-bundle.sh --refresh
+./target/debug/Porthole.app/Contents/MacOS/porthole install --user --force
+porthole onboard
+```
+
 ## Rebuild workflow
 
 Cargo replaces `target/<profile>/portholed` but the bundle's copy is stale. Two options:
