@@ -12,9 +12,15 @@ cd porthole
 cargo build --workspace --release
 ./scripts/dev-bundle.sh --release
 open -R target/release/Porthole.app    # reveal in Finder
-./target/release/Porthole.app/Contents/MacOS/portholed &
-./target/release/Porthole.app/Contents/MacOS/porthole onboard
+./target/release/Porthole.app/Contents/MacOS/porthole install --user --force
+porthole onboard
 ```
+
+Run the daemon via the LaunchAgent installed by `porthole install`, not by
+starting `Porthole.app/Contents/MacOS/portholed` from a terminal. For
+permission prompts, macOS tracks the responsible process; a terminal-launched
+daemon can cause Privacy & Security to ask for Ghostty/Terminal permission
+instead of Porthole permission.
 
 `porthole onboard` walks through ungranted permissions one at a time:
 1. Reads `/info` to see which permissions are ungranted.
@@ -33,9 +39,14 @@ Cargo replaces `target/<profile>/portholed` but the bundle's copy is stale. Two 
 
 ```sh
 ./scripts/dev-bundle.sh --refresh    # re-copy and re-sign; keeps TCC grants
+./target/debug/Porthole.app/Contents/MacOS/porthole install --user --force
 ```
 
-or just `cargo build` and run the binary from `target/<profile>/portholed` directly — but that's a *different* path from TCC's perspective, so you'll be prompted to grant again. Prefer the bundle.
+The second command copies the refreshed bundle to `~/Applications/Porthole.app`
+and restarts the LaunchAgent. Or just `cargo build` and run the binary from
+`target/<profile>/portholed` directly — but that's a *different* path from
+TCC's perspective and terminal-launched processes may be attributed to the
+terminal. Prefer the installed bundle.
 
 ## If grants get stuck
 
@@ -45,8 +56,8 @@ macOS's TCC database can report stale state after crashes, force-quits, or bundl
 tccutil reset Accessibility org.flotilla.porthole.dev
 tccutil reset ScreenCapture org.flotilla.porthole.dev
 ./scripts/dev-bundle.sh --refresh
-./target/debug/Porthole.app/Contents/MacOS/portholed &
-./target/debug/Porthole.app/Contents/MacOS/porthole onboard
+./target/debug/Porthole.app/Contents/MacOS/porthole install --user --force
+porthole onboard
 ```
 
 ## Debug vs release bundle
@@ -61,7 +72,7 @@ Tests marked `#[ignore]` in `porthole-adapter-macos` run against a real desktop 
 cargo test -p porthole-adapter-macos -- --ignored
 ```
 
-These tests use whatever daemon is currently running (or spawn their own from `CARGO_BIN_EXE_portholed` — a different path and thus a different TCC identity). Run the bundled daemon for the realistic path.
+These tests use whatever daemon is currently running (or spawn their own from `CARGO_BIN_EXE_portholed` — a different path and thus a different TCC identity). Run the installed bundled daemon for the realistic path.
 
 ## Capture transfer SDL viewer
 

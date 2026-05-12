@@ -90,5 +90,8 @@ chmod +x "$APP/Contents/MacOS/portholed" "$APP/Contents/MacOS/porthole"
 codesign -s - --force --deep "$APP"
 
 echo "bundle built: $APP"
-echo "launch the daemon: \"$APP/Contents/MacOS/portholed\""
-echo "run the CLI:       \"$APP/Contents/MacOS/porthole\" onboard"
+echo "install/restart:   \"$APP/Contents/MacOS/porthole\" install --user --force"
+echo "grant permissions: porthole onboard"
+echo
+echo "Do not launch portholed directly from a terminal for onboarding; macOS may"
+echo "attribute TCC prompts to the terminal app instead of Porthole."
