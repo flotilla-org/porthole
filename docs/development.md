@@ -66,15 +66,36 @@ These tests use whatever daemon is currently running (or spawn their own from `C
 ## Capture transfer SDL viewer
 
 The first capture-transfer dogfood viewer lives in `tools/capture-viewer-sdl`.
-It currently runs a synthetic producer in-process and consumes frames only
-through the `capture-transfer` C ABI. Build and smoke-test it with:
+It can run a synthetic producer in-process, or ask `portholed` to create a
+synthetic daemon session and consume frames through the fd-passing transport.
+Build and smoke-test the in-process path with:
 
 ```sh
-cargo build -p capture-transfer --locked
+cargo build -p capture-transfer -p portholed --locked
 cmake -S tools/capture-viewer-sdl -B target/capture-viewer-sdl \
   -DCAPTURE_TRANSFER_LIB="$PWD/target/debug/libcapture_transfer.dylib"
 cmake --build target/capture-viewer-sdl
 SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl --frames 3
+```
+
+Smoke-test the daemon-backed path with:
+
+```sh
+runtime_dir="$(mktemp -d)"
+PORTHOLE_RUNTIME_DIR="$runtime_dir" target/debug/portholed >"$runtime_dir/portholed.log" 2>&1 &
+portholed_pid=$!
+
+for _ in $(seq 1 50); do
+  [ -S "$runtime_dir/porthole.sock" ] && break
+  sleep 0.1
+done
+
+SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl \
+  --porthole-socket "$runtime_dir/porthole.sock" \
+  --frames 3
+
+kill "$portholed_pid"
+rm -rf "$runtime_dir"
 ```
 
 ## What *not* to do when permissions are missing
