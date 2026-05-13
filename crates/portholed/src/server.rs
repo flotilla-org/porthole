@@ -145,6 +145,9 @@ mod tests {
         assert_eq!(frame.producer_drop_count, 0);
         assert_eq!(frame.evicted_count, 0);
         assert_eq!(frame.consumer_skipped_count, 0);
+        assert_eq!(frame.payload_offset, 0);
+        assert_eq!(frame.payload_len, frame.len as u64);
+        assert_eq!(frame.payload_map_len, frame.len as u64);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();
@@ -192,6 +195,9 @@ mod tests {
         assert_eq!(frame.sync_kind, "cpu_copy_complete");
         assert_eq!(frame.damage_kind, "full_frame");
         assert_eq!(frame.damage_base_sequence, 1);
+        assert_eq!(frame.payload_offset, 0);
+        assert_eq!(frame.payload_len, frame.len as u64);
+        assert_eq!(frame.payload_map_len, frame.len as u64);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();

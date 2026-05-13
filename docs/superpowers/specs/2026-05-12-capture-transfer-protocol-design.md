@@ -222,7 +222,7 @@ Each video frame must carry:
 - damage regions, initially optional and usually full-frame
 - basic loss counters
 - payload kind, initially `cpu_shm`
-- payload length
+- payload offset, payload length, and mapped-region length
 
 The first implementation should support the smallest practical pixel-format set.
 It is acceptable to start with BGRA or RGBA if that is what the ScreenCaptureKit
@@ -245,6 +245,24 @@ recording cursor.
 V1 uses local CPU shared memory. The producer copies ScreenCaptureKit output into
 bounded shared-memory slots owned by the capture-transfer library. Cross-process
 consumers receive file descriptors for those slots with `SCM_RIGHTS`.
+
+Frame payload metadata is range-based even when the first daemon path still uses
+one immutable file per frame:
+
+```text
+payload_offset
+payload_len
+payload_map_len
+```
+
+Consumers must validate `payload_offset + payload_len <= payload_map_len` before
+reading. In-process producers may use reusable pool slots today because
+`ft_consumer_release_video_frame` is a real release point. Daemon-backed capture
+sessions still use immutable per-frame files: the current one-shot fd request
+does not tell the daemon when a remote consumer has finished reading, so reusing
+that slot immediately after sending the fd would be unsafe. Cross-process
+reusable pools need an explicit lease/release, cursor watermark, or native fence
+protocol before they become the daemon default.
 
 Interactive consumers use latest-frame semantics:
 
