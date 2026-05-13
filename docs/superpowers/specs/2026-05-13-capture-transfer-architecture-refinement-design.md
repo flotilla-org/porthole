@@ -492,10 +492,28 @@ Cache-line padding and false-sharing work matter once shared atomics exist. They
 do not matter much in the current mutex plus mmap-per-frame prototype, where
 allocation and copying dominate.
 
+Current CPU hot-path notes:
+
+- The live macOS CPU path has one expected copy: SCK-owned callback memory into
+  a reusable shared-memory slot.
+- The ring/pool shape should not be assumed slower than a normal bounded
+  thread-safe queue. It gives the producer bounded ownership and makes
+  allocation policy explicit.
+- The producer must not block on slow consumers. Consumers detect missed frames
+  through monotonic sequences, slot generations, and ring wraparound.
+- Drop policy remains ours to tune: overwrite old slots, add staging slots,
+  grow a pool, or introduce backpressure only if deliberately chosen.
+- If callback latency becomes visible, the first refinement should be a
+  producer ingress thread or staging policy, not abandoning the ring.
+
 ## Library Extraction And Language
 
 The protocol should be specified independently from the current Rust
 implementation.
+
+The likely extracted library name is `jackstay`: in keeping with porthole,
+cleat, and flotilla, it names the rope used to transfer cargo between ships.
+Until extraction, `capture-transfer` remains the in-repo crate name.
 
 The current Rust crate is a good prototype vehicle because it gives tests,
 clear ownership, and a C ABI quickly. It should not force the final extracted
@@ -529,8 +547,11 @@ When extraction happens, the repository boundary should separate:
 - Clarify timestamp clock domains, especially seed frame versus SCK PTS.
 - Add basic loss/drop counters.
 - Keep CPU shm as the stable baseline.
-- Start moving from per-frame allocation toward reusable CPU slots if profiling
-  confirms it is the next bottleneck.
+- Use reusable CPU slots and the live SCK borrowed-frame publisher path as the
+  baseline.
+- Add lightweight instrumentation for published frames, dropped frames, skipped
+  frames, slot wraps, publish duration, and maximum callback publish time.
+- Tighten wrap/miss detection semantics in tests and docs.
 
 ### Phase 2: macOS Native IOSurface Experiment
 
@@ -543,6 +564,8 @@ When extraction happens, the repository boundary should separate:
 ### Phase 3: Library Boundary
 
 - Identify which APIs belong to capture-transfer rather than porthole.
+- Use `jackstay` as the working name for the extracted low-level transfer
+  library unless a better name appears.
 - Extract only after the macOS CPU/native split proves the abstraction.
 - Keep porthole as a producer/consumer integration, not the owner of protocol
   semantics.
