@@ -131,7 +131,50 @@ codesign -s "$SIGNING_IDENTITY" --force --deep "$APP"
 
 echo "bundle built: $APP"
 if [[ "$SIGNING_IDENTITY" == "-" ]]; then
-    echo "signed with:      ad-hoc"
+    if [[ "$FORCE_ADHOC" -eq 1 ]]; then
+        echo "signed with:      ad-hoc (forced by --adhoc)"
+    else
+        # Loud, distinct banner: ad-hoc was the *fallback*, not a choice.
+        # On macOS Accessibility (and some other TCC services), the
+        # designated requirement is cdhash-based for ad-hoc-signed binaries
+        # and changes on every rebuild — TCC grants silently invalidate,
+        # System Settings keeps showing the toggle as on, and the daemon
+        # reports the permission as MISSING. The user almost always wants
+        # to know about this before they go granting things.
+        cat >&2 <<'WARN'
+
+================================================================
+  WARNING: ad-hoc signature — TCC grants will keep breaking
+================================================================
+
+  No Apple Development codesigning identity was found in your
+  keychain, so this bundle was signed ad-hoc as a fallback.
+
+  Ad-hoc signatures have a cdhash-based designated requirement,
+  which changes on every rebuild. macOS Accessibility (and some
+  other TCC services) match grants against the designated
+  requirement strictly. Your `porthole onboard` AX grant will
+  silently invalidate every rebuild — System Settings will keep
+  showing the toggle as on, but `porthole info` will report
+  accessibility as MISSING.
+
+  Fix: install an Apple Development identity (free with any
+  Apple ID).
+    - Xcode: Settings -> Accounts -> Add Apple ID ->
+      Manage Certificates -> + -> Apple Development
+    - From another Mac: Keychain Access -> right-click the cert
+      -> Export... -> .p12; import here with
+      `security import <file>.p12 -k ~/Library/Keychains/login.keychain-db`
+
+  Then re-run this script — it picks the identity up automatically.
+
+  Pass --adhoc explicitly to suppress this warning.
+
+================================================================
+
+WARN
+        echo "signed with:      ad-hoc (FALLBACK — see warning above)"
+    fi
 else
     echo "signed with:      $SIGNING_IDENTITY"
 fi

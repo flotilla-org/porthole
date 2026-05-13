@@ -48,6 +48,19 @@ pub enum InstallError {
     Launchctl(#[from] LaunchctlError),
     #[error("HOME env var not set")]
     NoHome,
+    #[error(
+        "$HOME is on an external volume (plist resolves to {plist_canonical}); macOS launchd refuses to bootstrap user LaunchAgents from /Volumes/* and returns EIO.\n\n\
+The plist has been written to {plist_in_home}. To finish the install, relocate it to the boot volume (one-time sudo):\n\n  \
+sudo install -m 644 -o root -g wheel \\\n    \"{plist_in_home}\" \\\n    /Library/LaunchAgents/\n  \
+rm \"{plist_in_home}\"\n  \
+launchctl bootstrap gui/$(id -u) \"/Library/LaunchAgents/{plist_filename}\"\n\n\
+The relocated plist runs as you (not root) because it's in LaunchAgents, not LaunchDaemons. Bundle and CLI stay where they are."
+    )]
+    PlistRequiresSystemRelocation {
+        plist_in_home: PathBuf,
+        plist_canonical: PathBuf,
+        plist_filename: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,6 +180,28 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
         }
         fs::write(&plist_path, plist_xml).map_err(|e| io_err(&plist_path, e))?;
         println!("wrote LaunchAgent: {}", plist_path.display());
+
+        // launchd refuses to bootstrap user agents whose plist file resolves
+        // under /Volumes/*, returning EIO with no useful diagnostic. This is
+        // the common case when $HOME has been relocated to an external APFS
+        // volume (typical on storage-constrained Mac minis). Detect that
+        // here, leave the plist on disk as a reference, and tell the user how
+        // to relocate it to /Library/LaunchAgents with one-time sudo. We
+        // deliberately don't try to elevate ourselves — install code that
+        // silently shells out to sudo is a surprise vector.
+        if let Some(canonical) = canonical_plist_under_volumes(&plist_path) {
+            let plist_filename = plist_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{LAUNCH_AGENT_LABEL}.plist"));
+            return Err(InstallError::PlistRequiresSystemRelocation {
+                plist_in_home: plist_path,
+                plist_canonical: canonical,
+                plist_filename,
+            });
+        }
+
         launchd::bootstrap(&plist_path)?;
         println!("daemon registered with launchd; will start at login (and now).");
     }
@@ -280,6 +315,40 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), InstallError> {
         }
     }
     Ok(())
+}
+
+/// If `plist_path`'s canonical form resolves under `/Volumes/`, return that
+/// canonical path. macOS launchd rejects user LaunchAgent plists from there
+/// with an opaque EIO, regardless of file permissions or volume mount flags.
+/// Canonicalize first so a symlinked `~/Library/LaunchAgents` from / to an
+/// external volume is also caught.
+///
+/// Returns `None` if the path can't be canonicalized (caller's plist write
+/// would have failed first) or the canonical path doesn't live under
+/// `/Volumes/` — both are non-error outcomes.
+fn canonical_plist_under_volumes(plist_path: &Path) -> Option<PathBuf> {
+    canonical_plist_under_volumes_inner(plist_path, |p| fs::canonicalize(p))
+}
+
+/// Testable inner with `canonicalize` injected: the wiring of
+/// `canonicalize → path_under_volumes` is what we want to pin, and we
+/// can't manufacture a real path that canonicalizes to `/Volumes/*` in
+/// CI without a real external mount. Tests pass a fake closure that
+/// returns whatever canonical path the scenario calls for.
+fn canonical_plist_under_volumes_inner<F>(plist_path: &Path, canonicalize: F) -> Option<PathBuf>
+where
+    F: FnOnce(&Path) -> io::Result<PathBuf>,
+{
+    let canonical = canonicalize(plist_path).ok()?;
+    if path_under_volumes(&canonical) { Some(canonical) } else { None }
+}
+
+/// True if `path` lives under the `/Volumes/` mount-point prefix.
+/// `Path::starts_with` is component-aware so `/VolumesNotAMatch/foo`
+/// doesn't false-positive. Split out so the predicate is testable without
+/// having to manufacture a real /Volumes/* path on disk.
+fn path_under_volumes(path: &Path) -> bool {
+    path.starts_with("/Volumes/")
 }
 
 fn xml_escape(s: &str) -> String {
@@ -449,6 +518,105 @@ mod tests {
 
         assert_eq!(fs::read_to_string(dst.join("a.txt")).unwrap(), "hello");
         assert_eq!(fs::read_to_string(dst.join("sub/b.txt")).unwrap(), "world");
+    }
+
+    #[test]
+    fn path_under_volumes_flags_paths_under_volumes_prefix() {
+        // Positive case — the actual rule launchd enforces.
+        assert!(path_under_volumes(Path::new(
+            "/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents"
+        )));
+        assert!(path_under_volumes(Path::new("/Volumes/x")));
+    }
+
+    #[test]
+    fn path_under_volumes_rejects_non_volumes_paths() {
+        // Boot volume paths must NOT trigger.
+        assert!(!path_under_volumes(Path::new("/Users/x/Library/LaunchAgents")));
+        assert!(!path_under_volumes(Path::new("/Library/LaunchAgents")));
+        assert!(!path_under_volumes(Path::new("/System/Volumes/Data/Users/x")));
+    }
+
+    #[test]
+    fn path_under_volumes_uses_component_aware_prefix() {
+        // `/VolumesNotAMatch/foo` is not under `/Volumes/`. String-prefix
+        // would false-positive here; Path::starts_with must not.
+        assert!(!path_under_volumes(Path::new("/VolumesNotAMatch/foo")));
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_returns_none_for_boot_volume_path() {
+        // Integration check on the canonicalize half: a real tempdir file
+        // (which lives on the boot volume) must canonicalize to a non-/Volumes/
+        // path, so the helper returns None.
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("x.plist");
+        fs::write(&plist, "x").unwrap();
+        assert_eq!(canonical_plist_under_volumes(&plist), None);
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_returns_none_for_nonexistent_path() {
+        // canonicalize fails on a path that doesn't exist; helper returns None.
+        let result = canonical_plist_under_volumes(Path::new("/nonexistent/Library/LaunchAgents/x.plist"));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_inner_flags_volumes_canonical() {
+        // Wiring test for the canonicalize → path_under_volumes composition,
+        // using an injected canonicalize. Catches regressions like passing
+        // the unresolved path to path_under_volumes by accident, inverting
+        // the branches, or dropping the check entirely.
+        let result = canonical_plist_under_volumes_inner(Path::new("any/path"), |_| {
+            Ok(PathBuf::from("/Volumes/MiniHomeX/Library/LaunchAgents/x.plist"))
+        });
+        assert_eq!(result, Some(PathBuf::from("/Volumes/MiniHomeX/Library/LaunchAgents/x.plist")));
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_inner_returns_none_for_boot_canonical() {
+        let result = canonical_plist_under_volumes_inner(Path::new("any/path"), |_| {
+            Ok(PathBuf::from("/Users/x/Library/LaunchAgents/x.plist"))
+        });
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_inner_returns_none_on_canonicalize_err() {
+        let result = canonical_plist_under_volumes_inner(Path::new("any/path"), |_| Err(io::Error::from(io::ErrorKind::NotFound)));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn plist_requires_system_relocation_error_has_copyable_commands() {
+        let err = InstallError::PlistRequiresSystemRelocation {
+            plist_in_home: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"),
+            plist_canonical: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"),
+            plist_filename: "org.flotilla.porthole.plist".to_string(),
+        };
+        let msg = err.to_string();
+        // The three commands the user needs to run, in order. Paths are
+        // double-quoted so a $HOME with spaces doesn't break the copy-paste.
+        assert!(
+            msg.contains("sudo install -m 644 -o root -g wheel"),
+            "missing sudo install line, got: {msg}"
+        );
+        assert!(
+            msg.contains("\"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            "missing quoted plist path, got: {msg}"
+        );
+        assert!(
+            msg.contains("rm \"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            "missing quoted rm line, got: {msg}"
+        );
+        assert!(
+            msg.contains("launchctl bootstrap gui/$(id -u) \"/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            "missing quoted bootstrap line, got: {msg}"
+        );
+        // The why, so the user understands what they're doing.
+        assert!(msg.contains("external volume"), "missing 'external volume' explanation, got: {msg}");
+        assert!(msg.contains("EIO"), "missing EIO mention, got: {msg}");
     }
 
     #[test]

@@ -80,18 +80,38 @@ pub fn bootout(plist_path: &Path) -> Result<(), LaunchctlError> {
     Ok(())
 }
 
-/// `launchctl kickstart -k gui/$UID/<label>`. Kills the running daemon and
-/// restarts it. The `-k` flag is the bit that does the kill — without it
-/// kickstart only starts an already-loaded service (no-op if running).
+/// Restart the daemon: `launchctl kickstart -k gui/$UID/<label>` to kill,
+/// then plain `launchctl kickstart gui/$UID/<label>` to guarantee it comes
+/// back up.
 ///
 /// Used by onboard between permission grants: AX and SR trust state is
 /// loaded once per process and not refreshed, so a restart is the only way
 /// to make the daemon see a freshly granted permission.
+///
+/// Why two steps: on macOS Tahoe (26 / Darwin 25), `kickstart -k` sends
+/// SIGTERM and then defers to the plist's KeepAlive policy. Our plist sets
+/// `KeepAlive={Crashed:true}`, which per `launchd.plist(5)` excludes
+/// SIGTERM from the crash set — so the daemon stays down after `-k` alone.
+/// Plain `kickstart` is documented to "run the specified service
+/// immediately, regardless of its configured launch conditions", which
+/// brings it back up. No-op if `-k` did restart on its own (older launchd
+/// versions, or a fast race where the daemon's already up again).
 pub fn kickstart_kill() -> Result<(), LaunchctlError> {
-    let output = Command::new("launchctl").args(["kickstart", "-k", &service_target()]).output()?;
+    let target = service_target();
+    run_launchctl_kickstart("kickstart -k", &["kickstart", "-k", &target])?;
+    run_launchctl_kickstart("kickstart", &["kickstart", &target])?;
+    Ok(())
+}
+
+/// Run a `launchctl kickstart[ -k]` invocation. `action` is the human-meaningful
+/// step label that goes into the error on failure — distinct values for the two
+/// invocations in `kickstart_kill` so a failure in the safety-net second step
+/// doesn't look identical to a failure in the kill step.
+fn run_launchctl_kickstart(action: &'static str, args: &[&str]) -> Result<(), LaunchctlError> {
+    let output = Command::new("launchctl").args(args).output()?;
     if !output.status.success() {
         return Err(LaunchctlError::NonZero {
-            action: "kickstart",
+            action,
             code: output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
