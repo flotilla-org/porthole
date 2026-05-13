@@ -5,6 +5,8 @@ use porthole_core::{
     replace_pipeline::ReplacePipeline, wait_pipeline::WaitPipeline,
 };
 
+use crate::capture_registry::CaptureRegistry;
+
 #[derive(Clone)]
 pub struct AppState {
     pub adapter: Arc<dyn Adapter>,
@@ -14,12 +16,24 @@ pub struct AppState {
     pub input: Arc<InputPipeline>,
     pub wait: Arc<WaitPipeline>,
     pub attach: Arc<AttachPipeline>,
+    pub capture: CaptureRegistry,
     pub started_at: Instant,
     pub daemon_version: &'static str,
 }
 
 impl AppState {
     pub fn new(adapter: Arc<dyn Adapter>) -> Self {
+        Self::new_with_capture_registry(adapter, CaptureRegistry::disabled())
+    }
+
+    pub fn new_with_capture_socket(adapter: Arc<dyn Adapter>, fd_socket_path: std::path::PathBuf) -> std::io::Result<Self> {
+        Ok(Self::new_with_capture_registry(
+            adapter,
+            CaptureRegistry::with_fd_socket(fd_socket_path)?,
+        ))
+    }
+
+    pub fn new_with_capture_registry(adapter: Arc<dyn Adapter>, capture: CaptureRegistry) -> Self {
         let handles = HandleStore::new();
         let pipeline = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
         let replace = Arc::new(ReplacePipeline::new(adapter.clone(), handles.clone(), pipeline.clone()));
@@ -34,6 +48,7 @@ impl AppState {
             input,
             wait,
             attach,
+            capture,
             started_at: Instant::now(),
             daemon_version: env!("CARGO_PKG_VERSION"),
         }

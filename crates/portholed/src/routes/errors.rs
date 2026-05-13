@@ -106,6 +106,7 @@ impl IntoResponse for ApiError {
             ErrorCode::UnknownKey => StatusCode::BAD_REQUEST,
             ErrorCode::InvalidCoordinate => StatusCode::BAD_REQUEST,
             ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
+            ErrorCode::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::CloseFailed => StatusCode::CONFLICT,
             ErrorCode::LaunchReturnedExisting => StatusCode::CONFLICT,
         };

@@ -68,6 +68,17 @@ The macOS adapter needs **Accessibility** and **Screen Recording** for input inj
 porthole onboard       # interactive grant flow; opens System Settings as needed
 ```
 
+For development builds, `scripts/dev-bundle.sh` signs `Porthole.app` with a local
+Apple Development identity when one is available, falling back to ad-hoc signing
+only when needed. If you previously granted permissions to an ad-hoc build and
+`porthole onboard` still reports missing permissions, reset TCC once and re-run
+onboarding:
+
+```sh
+tccutil reset Accessibility org.flotilla.porthole.dev
+tccutil reset ScreenCapture org.flotilla.porthole.dev
+```
+
 `onboard` walks through each ungranted permission one at a time: fires the OS prompt, waits for you to press Enter once you've granted in System Settings, restarts the daemon (via `launchctl kickstart -k`) so its cached AX/SR trust state refreshes, then re-reads `/info` to confirm. Serial because TCC silently coalesces simultaneous prompt requests from one process and the trust state is cached per-process; each grant needs its own daemon lifetime.
 
 Exit codes:

@@ -10,9 +10,9 @@ use tracing::info;
 
 use crate::{
     routes::{
-        attach as attach_route, attention as attention_route, close_focus as close_focus_route, info as info_route, input as input_route,
-        launches as launches_route, place as place_route, replace as replace_route, screenshot as screenshot_route,
-        system_permissions as system_permissions_route, wait as wait_route,
+        attach as attach_route, attention as attention_route, capture_sessions as capture_sessions_route, close_focus as close_focus_route,
+        info as info_route, input as input_route, launches as launches_route, place as place_route, replace as replace_route,
+        screenshot as screenshot_route, system_permissions as system_permissions_route, wait as wait_route,
     },
     state::AppState,
 };
@@ -36,6 +36,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/surfaces/{id}/close", post(close_focus_route::post_close))
         .route("/surfaces/{id}/focus", post(close_focus_route::post_focus))
         .route("/system-permissions/request", post(system_permissions_route::post_request))
+        .route("/capture-sessions/synthetic", post(capture_sessions_route::post_synthetic))
+        .route("/capture-sessions/surfaces/{id}", post(capture_sessions_route::post_surface))
+        .route("/capture-sessions/{id}", get(capture_sessions_route::get_session))
         .with_state(state)
 }
 
@@ -48,19 +51,26 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
     }
     let listener = UnixListener::bind(&socket_path)?;
     info!(socket = %socket_path.display(), "portholed listening");
-    let app = build_router(AppState::new(adapter));
+    let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
+    let app = build_router(AppState::new_with_capture_socket(adapter, capture_socket_path)?);
     axum::serve(listener, app).await
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        fs::File,
+        io::{BufRead, BufReader, Read, Write},
+        os::unix::net::UnixStream,
+        sync::Arc,
+    };
 
     use axum::{
         body::{Body, to_bytes},
         http::{Method, Request, StatusCode},
     };
     use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
+    use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse};
     use tower::ServiceExt;
 
     use super::*;
@@ -82,6 +92,98 @@ mod tests {
             .body(Body::from(body.to_string()))
             .unwrap();
         router.oneshot(req).await.unwrap()
+    }
+
+    async fn router_with_capture_socket() -> (Router, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let state = AppState::new_with_capture_socket(adapter, temp.path().join("capture-transfer.sock")).unwrap();
+        (build_router(state), temp)
+    }
+
+    #[tokio::test]
+    async fn synthetic_capture_session_serves_latest_frame_fd() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router.clone(), "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created.source_id, 1);
+        assert_eq!(created.track_id, 1);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/capture-sessions/{}", created.session_id))
+            .body(Body::empty())
+            .unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
+        let request = LatestVideoFrameRequest {
+            session_id: created.session_id.clone(),
+            track_id: created.track_id,
+        };
+        writeln!(stream, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+
+        let fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(frame.session_id, created.session_id);
+        assert_eq!(frame.track_id, created.track_id);
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 1);
+
+        let mut file = File::from(fd);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), frame.len);
+        assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
+    }
+
+    #[tokio::test]
+    async fn surface_capture_session_serves_latest_frame_fd() {
+        let temp = tempfile::tempdir().unwrap();
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let state = AppState::new_with_capture_socket(adapter, temp.path().join("capture-transfer.sock")).unwrap();
+        let info = SurfaceInfo::window(porthole_core::SurfaceId::from("surf_test"), 1);
+        state.handles.insert(info).await;
+        let router = build_router(state);
+
+        let res = post(router.clone(), "/capture-sessions/surfaces/surf_test", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created.source_id, 1);
+        assert_eq!(created.track_id, 1);
+
+        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
+        let request = LatestVideoFrameRequest {
+            session_id: created.session_id.clone(),
+            track_id: created.track_id,
+        };
+        writeln!(stream, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+
+        let fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(frame.session_id, created.session_id);
+        assert_eq!(frame.track_id, created.track_id);
+        assert_eq!(frame.timestamp_ns, 123_456_789);
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 1);
+
+        let mut file = File::from(fd);
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), frame.len);
+        assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 pub use crate::display::Rect;
 use crate::{
-    PortholeError,
+    ErrorCode, PortholeError,
     attention::AttentionInfo,
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, ScrollSpec},
@@ -108,6 +108,27 @@ pub struct Screenshot {
     pub captured_at_unix_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCapturePixelFormat {
+    Bgra8Unorm,
+}
+
+#[derive(Clone, Debug)]
+pub struct VideoCaptureFrame {
+    pub sequence: u64,
+    pub timestamp_ns: u64,
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixel_format: VideoCapturePixelFormat,
+    pub bytes: Vec<u8>,
+}
+
+#[async_trait]
+pub trait VideoCaptureSession: Send {
+    async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError>;
+}
+
 #[async_trait]
 pub trait Adapter: Send + Sync {
     fn name(&self) -> &'static str;
@@ -115,6 +136,13 @@ pub trait Adapter: Send + Sync {
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError>;
 
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError>;
+
+    async fn start_video_capture(&self, _surface: &SurfaceInfo) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "adapter does not support live video capture",
+        ))
+    }
 
     async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError>;
 

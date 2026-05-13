@@ -8,7 +8,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     ErrorCode, PortholeError,
-    adapter::{Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot},
+    adapter::{
+        Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot, VideoCaptureFrame,
+        VideoCapturePixelFormat, VideoCaptureSession,
+    },
     attention::{AttentionInfo, CursorPos},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},
     input::{ClickSpec, KeyEvent, ScrollSpec},
@@ -66,6 +69,30 @@ struct Script {
     attention_calls: usize,
     displays_calls: usize,
     system_permissions_calls: usize,
+    video_capture_calls: Vec<SurfaceId>,
+}
+
+struct InMemoryVideoCaptureSession {
+    emitted: bool,
+}
+
+#[async_trait]
+impl VideoCaptureSession for InMemoryVideoCaptureSession {
+    async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError> {
+        if self.emitted {
+            return Ok(None);
+        }
+        self.emitted = true;
+        Ok(Some(VideoCaptureFrame {
+            sequence: 1,
+            timestamp_ns: 123_456_789,
+            width: 2,
+            height: 1,
+            stride: 8,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            bytes: vec![0, 64, 128, 255, 255, 64, 128, 255],
+        }))
+    }
 }
 
 impl InMemoryAdapter {
@@ -274,6 +301,11 @@ impl Adapter for InMemoryAdapter {
                 captured_at_unix_ms: 0,
             })
         })
+    }
+
+    async fn start_video_capture(&self, surface: &SurfaceInfo) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
+        self.script.lock().await.video_capture_calls.push(surface.id.clone());
+        Ok(Box::new(InMemoryVideoCaptureSession { emitted: false }))
     }
 
     async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {

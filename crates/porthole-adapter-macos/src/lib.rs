@@ -29,6 +29,8 @@ pub mod launch;
 pub mod nsscreen;
 pub mod permissions;
 pub mod placement;
+#[cfg(target_os = "macos")]
+pub mod sck_capture;
 pub mod search;
 pub mod snapshot;
 pub mod wait;
@@ -62,6 +64,21 @@ impl Adapter for MacOsAdapter {
 
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
         capture::screenshot(self, surface).await
+    }
+
+    async fn start_video_capture(
+        &self,
+        surface: &SurfaceInfo,
+    ) -> Result<Box<dyn porthole_core::adapter::VideoCaptureSession>, PortholeError> {
+        #[cfg(target_os = "macos")]
+        {
+            sck_capture::start_video_capture(self, surface).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = surface;
+            Err(PortholeError::new(ErrorCode::AdapterUnsupported, "macOS adapter on non-macOS"))
+        }
     }
 
     async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {

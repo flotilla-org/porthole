@@ -1,5 +1,6 @@
 pub mod attach;
 pub mod attention;
+pub mod capture_session;
 pub mod click;
 pub mod close;
 pub mod displays;

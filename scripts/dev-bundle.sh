@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# Build porthole and wrap `portholed` + `porthole` in a single .app bundle with
-# ad-hoc codesigning. Both binaries inside the same bundle share TCC identity:
-# one Privacy & Security entry covers the daemon, and the CLI inherits the
-# same bundle context for free.
+# Build porthole and wrap `portholed` + `porthole` in a single .app bundle.
+# Both binaries inside the same bundle share TCC identity: one Privacy &
+# Security entry covers the daemon, and the CLI inherits the same bundle
+# context for free.
 
 set -euo pipefail
 
 PROFILE="debug"
 REFRESH_ONLY=0
 BUNDLE_ID="org.flotilla.porthole.dev"
+SIGN_IDENTITY=""
+FORCE_ADHOC=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--release] [--refresh]
+Usage: $0 [--release] [--refresh] [--sign IDENTITY] [--adhoc]
 
   --release   Build release profile (default: debug).
   --refresh   Don't rebuild; just re-copy the binaries into the existing bundle
               and re-sign. Use after cargo build to keep TCC grants.
+  --sign      Codesign with the given identity.
+  --adhoc     Force ad-hoc signing, even if an Apple Development identity exists.
 EOF
 }
 
@@ -24,10 +28,41 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --release) PROFILE="release"; shift ;;
         --refresh) REFRESH_ONLY=1; shift ;;
+        --sign)
+            if [[ $# -lt 2 ]]; then
+                echo "--sign requires an identity" >&2
+                usage
+                exit 1
+            fi
+            SIGN_IDENTITY="$2"
+            shift 2
+            ;;
+        --adhoc) FORCE_ADHOC=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
     esac
 done
+
+if [[ "$FORCE_ADHOC" -eq 1 && -n "$SIGN_IDENTITY" ]]; then
+    echo "--sign and --adhoc are mutually exclusive" >&2
+    usage
+    exit 1
+fi
+
+choose_sign_identity() {
+    if [[ "$FORCE_ADHOC" -eq 1 ]]; then
+        echo "-"
+        return
+    fi
+    if [[ -n "$SIGN_IDENTITY" ]]; then
+        echo "$SIGN_IDENTITY"
+        return
+    fi
+
+    security find-identity -v -p codesigning 2>/dev/null \
+        | sed -n 's/^[[:space:]]*[0-9]*) [A-Fa-f0-9]* "\(Apple Development:.*\)"$/\1/p' \
+        | head -n 1
+}
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -87,8 +122,21 @@ cp "$DAEMON_BIN" "$APP/Contents/MacOS/portholed"
 cp "$CLI_BIN"    "$APP/Contents/MacOS/porthole"
 chmod +x "$APP/Contents/MacOS/portholed" "$APP/Contents/MacOS/porthole"
 
-codesign -s - --force --deep "$APP"
+SIGNING_IDENTITY="$(choose_sign_identity)"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    SIGNING_IDENTITY="-"
+fi
+
+codesign -s "$SIGNING_IDENTITY" --force --deep "$APP"
 
 echo "bundle built: $APP"
-echo "launch the daemon: \"$APP/Contents/MacOS/portholed\""
-echo "run the CLI:       \"$APP/Contents/MacOS/porthole\" onboard"
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+    echo "signed with:      ad-hoc"
+else
+    echo "signed with:      $SIGNING_IDENTITY"
+fi
+echo "install/restart:   \"$APP/Contents/MacOS/porthole\" install --user --force"
+echo "grant permissions: porthole onboard"
+echo
+echo "Do not launch portholed directly from a terminal for onboarding; macOS may"
+echo "attribute TCC prompts to the terminal app instead of Porthole."
