@@ -10,7 +10,8 @@ use crate::{
     ErrorCode, PortholeError,
     adapter::{
         Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot, VideoCaptureColorSpace,
-        VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind, VideoCaptureTimestampClock,
+        VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
     },
     attention::{AttentionInfo, CursorPos},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},

@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{
-        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind,
-        VideoCaptureTimestampClock,
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession,
+        VideoCaptureSyncKind, VideoCaptureTimestampClock,
     },
     surface::SurfaceInfo,
 };
@@ -356,23 +356,25 @@ extern "C" fn frame_callback(ctx: *mut c_void, frame: *const SckFrame) {
         producer_drop_count,
     );
     // Capacity is intentionally small; slow consumers drop frames and catch the next one.
-    if state.tx.try_send(Ok(VideoCaptureFrame {
-        sequence,
-        timestamp_ns: frame.timestamp_ns,
-        timestamp_clock: metadata.timestamp_clock,
-        width: frame.width,
-        height: frame.height,
-        stride: frame.stride,
-        pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
-        color_space: metadata.color_space,
-        sync_kind: metadata.sync_kind,
-        damage_kind: metadata.damage_kind,
-        damage_base_sequence: metadata.damage_base_sequence,
-        dropped_before_publish: metadata.dropped_before_publish,
-        producer_drop_count: metadata.producer_drop_count,
-        bytes,
-    }))
-    .is_err()
+    if state
+        .tx
+        .try_send(Ok(VideoCaptureFrame {
+            sequence,
+            timestamp_ns: frame.timestamp_ns,
+            timestamp_clock: metadata.timestamp_clock,
+            width: frame.width,
+            height: frame.height,
+            stride: frame.stride,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: metadata.color_space,
+            sync_kind: metadata.sync_kind,
+            damage_kind: metadata.damage_kind,
+            damage_base_sequence: metadata.damage_base_sequence,
+            dropped_before_publish: metadata.dropped_before_publish,
+            producer_drop_count: metadata.producer_drop_count,
+            bytes,
+        }))
+        .is_err()
     {
         state
             .dropped_before_publish
@@ -392,9 +394,7 @@ extern "C" fn error_callback(ctx: *mut c_void, message: *const c_char) {
 
 #[cfg(test)]
 mod tests {
-    use porthole_core::adapter::{
-        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureSyncKind, VideoCaptureTimestampClock,
-    };
+    use porthole_core::adapter::{VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureSyncKind, VideoCaptureTimestampClock};
 
     use super::{CaptureFrameMetadata, CaptureFrameSource, frame_metadata};
 

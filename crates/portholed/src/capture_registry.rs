@@ -12,7 +12,10 @@ use std::{
 
 use capture_transfer::{
     fdpass,
-    model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId, VideoTrackDesc},
+    model::{
+        ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
+        VideoTrackDesc,
+    },
     state::SessionState,
     video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
