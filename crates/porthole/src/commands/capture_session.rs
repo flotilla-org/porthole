@@ -21,6 +21,12 @@ pub async fn surface(client: &DaemonClient, surface_id: &str, args: CaptureSessi
     print_session_response("surface", client, args, &res)
 }
 
+pub async fn close(client: &DaemonClient, session_id: &str) -> Result<(), ClientError> {
+    client.delete_empty(&format!("/capture-sessions/{session_id}")).await?;
+    println!("closed capture session {session_id}");
+    Ok(())
+}
+
 fn print_session_response(
     kind: &str,
     _client: &DaemonClient,
@@ -34,6 +40,8 @@ fn print_session_response(
             "session_id": res.session_id,
             "source_id": res.source_id,
             "track_id": res.track_id,
+            "status": res.status,
+            "status_message": res.status_message,
             "fd_socket_path": res.fd_socket_path,
         }))
         .map_err(|error| ClientError::Local(format!("json encode: {error}")))?;
@@ -50,8 +58,9 @@ pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, res
          session_id: {}\n\
          source_id: {}\n\
          track_id: {}\n\
+         status: {}\n\
          fd_socket_path: {}\n\
          viewer: capture-viewer-sdl --porthole-socket {control_socket_path} --session-id {}\n",
-        response.session_id, response.source_id, response.track_id, response.fd_socket_path, response.session_id
+        response.session_id, response.source_id, response.track_id, response.status, response.fd_socket_path, response.session_id
     )
 }

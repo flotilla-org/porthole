@@ -48,6 +48,7 @@ struct CaptureRegistryInner {
 struct CaptureSession {
     source_id: SourceId,
     track_id: TrackId,
+    lifecycle: CaptureSessionLifecycle,
     width: u32,
     height: u32,
     stride: u32,
@@ -55,6 +56,38 @@ struct CaptureSession {
     video: VideoSlotManager,
     _capture_task: Option<tokio::task::JoinHandle<()>>,
     _capture_handle: Option<CaptureSessionHandle>,
+}
+
+impl Drop for CaptureSession {
+    fn drop(&mut self) {
+        if let Some(task) = self._capture_task.take() {
+            task.abort();
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureSessionLifecycle {
+    Starting,
+    Ready,
+    Failed(String),
+}
+
+impl CaptureSessionLifecycle {
+    const fn status_name(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::Failed(_) => "failed",
+        }
+    }
+
+    fn status_message(&self) -> Option<String> {
+        match self {
+            Self::Failed(message) => Some(message.clone()),
+            Self::Starting | Self::Ready => None,
+        }
+    }
 }
 
 struct CaptureSessionHandle {
@@ -109,6 +142,7 @@ impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
         session.pixel_format = capture_pixel_format(frame.metadata.pixel_format);
         publish_capture_frame_view_to_video(&mut session.video, session.track_id, frame)
             .map_err(|error| PortholeError::new(ErrorCode::InternalError, error.to_string()))?;
+        session.lifecycle = CaptureSessionLifecycle::Ready;
         if let Some(tx) = self
             .first_frame_tx
             .lock()
@@ -212,6 +246,7 @@ impl CaptureRegistry {
         let session = CaptureSession {
             source_id,
             track_id,
+            lifecycle: CaptureSessionLifecycle::Ready,
             width: 2,
             height: 1,
             stride: 8,
@@ -230,6 +265,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
+            status: "ready".to_string(),
+            status_message: None,
             fd_socket_path,
         })
     }
@@ -278,6 +315,7 @@ impl CaptureRegistry {
             CaptureSession {
                 source_id,
                 track_id,
+                lifecycle: CaptureSessionLifecycle::Starting,
                 width: 0,
                 height: 0,
                 stride: 0,
@@ -333,6 +371,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
+            status: "ready".to_string(),
+            status_message: None,
             fd_socket_path,
         })
     }
@@ -392,6 +432,7 @@ impl CaptureRegistry {
                     Ok(None) => break,
                     Err(error) => {
                         tracing::warn!(session_id = %task_session_id, error = %error, "capture stream stopped with error");
+                        registry.mark_session_failed(&task_session_id, error.to_string());
                         break;
                     }
                 }
@@ -401,6 +442,7 @@ impl CaptureRegistry {
         let session = CaptureSession {
             source_id,
             track_id,
+            lifecycle: CaptureSessionLifecycle::Ready,
             width: first_frame.width,
             height: first_frame.height,
             stride: first_frame.stride,
@@ -419,6 +461,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
+            status: "ready".to_string(),
+            status_message: None,
             fd_socket_path,
         })
     }
@@ -426,6 +470,24 @@ impl CaptureRegistry {
     fn remove_session(&self, session_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.sessions.remove(session_id);
+        }
+    }
+
+    pub fn close_session(&self, session_id: &str) -> Result<(), CaptureRegistryError> {
+        self.inner
+            .lock()
+            .map_err(|_| CaptureRegistryError::Poisoned)?
+            .sessions
+            .remove(session_id)
+            .map(|_| ())
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))
+    }
+
+    fn mark_session_failed(&self, session_id: &str, message: String) {
+        if let Ok(mut inner) = self.inner.lock()
+            && let Some(session) = inner.sessions.get_mut(session_id)
+        {
+            session.lifecycle = CaptureSessionLifecycle::Failed(message);
         }
     }
 
@@ -440,6 +502,8 @@ impl CaptureRegistry {
             session_id: session_id.to_string(),
             source_id: session.source_id.get(),
             track_id: session.track_id.get(),
+            status: session.lifecycle.status_name().to_string(),
+            status_message: session.lifecycle.status_message(),
             width: session.width,
             height: session.height,
             stride: session.stride,
@@ -456,6 +520,21 @@ impl CaptureRegistry {
             .sessions
             .get_mut(&request.session_id)
             .ok_or_else(|| CaptureRegistryError::UnknownSession(request.session_id.clone()))?;
+        match &session.lifecycle {
+            CaptureSessionLifecycle::Ready => {}
+            CaptureSessionLifecycle::Starting => {
+                return Err(CaptureRegistryError::NotReady {
+                    session_id: request.session_id.clone(),
+                    status: session.lifecycle.status_name(),
+                });
+            }
+            CaptureSessionLifecycle::Failed(message) => {
+                return Err(CaptureRegistryError::Failed {
+                    session_id: request.session_id.clone(),
+                    message: message.clone(),
+                });
+            }
+        }
         let frame = session
             .video
             .acquire_latest(consumer_id, TrackId::new(request.track_id))
@@ -540,6 +619,12 @@ pub enum CaptureRegistryError {
 
     #[error("unknown capture session {0}")]
     UnknownSession(String),
+
+    #[error("capture session {session_id} is not ready ({status})")]
+    NotReady { session_id: String, status: &'static str },
+
+    #[error("capture session {session_id} failed: {message}")]
+    Failed { session_id: String, message: String },
 
     #[error("capture registry lock poisoned")]
     Poisoned,
@@ -749,7 +834,8 @@ mod tests {
     use porthole_protocol::capture_sessions::LatestVideoFrameRequest;
 
     use crate::capture_registry::{
-        CaptureRegistry, CaptureSession, RegistryVideoFramePublisher, publish_capture_frame_view_to_video, video_frame_desc_from_capture,
+        CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle, RegistryVideoFramePublisher,
+        publish_capture_frame_view_to_video, video_frame_desc_from_capture,
     };
 
     fn test_desc(sequence: u64) -> VideoFrameDesc {
@@ -791,6 +877,7 @@ mod tests {
             CaptureSession {
                 source_id,
                 track_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
                 width: 1,
                 height: 1,
                 stride: 4,
@@ -831,6 +918,42 @@ mod tests {
             .video
             .pinned_frame_count();
         assert_eq!(pinned, 0);
+    }
+
+    #[test]
+    fn latest_frame_rejects_starting_session_before_track_lookup() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "starting-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Starting,
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                _capture_task: None,
+                _capture_handle: None,
+            },
+        );
+
+        let result = registry.latest_frame(&LatestVideoFrameRequest {
+            session_id: session_id.clone(),
+            track_id: track_id.get(),
+        });
+
+        assert!(matches!(
+            result,
+            Err(CaptureRegistryError::NotReady {
+                session_id: id,
+                status: "starting",
+            }) if id == session_id
+        ));
     }
 
     #[test]
@@ -905,6 +1028,7 @@ mod tests {
             CaptureSession {
                 source_id,
                 track_id,
+                lifecycle: CaptureSessionLifecycle::Starting,
                 width: 0,
                 height: 0,
                 stride: 0,
@@ -943,6 +1067,7 @@ mod tests {
         assert_eq!(session.width, 1);
         assert_eq!(session.height, 1);
         assert_eq!(session.stride, 4);
+        assert_eq!(session.lifecycle, CaptureSessionLifecycle::Ready);
         let frame = session
             .video
             .acquire_latest(capture_transfer::video::ConsumerId::new(1), track_id)

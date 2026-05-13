@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::StatusCode,
 };
 use porthole_core::{ErrorCode, PortholeError};
 use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
@@ -26,11 +27,21 @@ pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) 
     state.capture.get_session(&id).map(Json).map_err(capture_error_to_api)
 }
 
+pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    state
+        .capture
+        .close_session(&id)
+        .map(|()| StatusCode::OK)
+        .map_err(capture_error_to_api)
+}
+
 fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
     let code = match error {
         CaptureRegistryError::UnknownSession(_) => ErrorCode::SurfaceNotFound,
         CaptureRegistryError::Porthole(error) => return ApiError(error.into()),
         CaptureRegistryError::Poisoned | CaptureRegistryError::Io(_) => ErrorCode::InternalError,
+        CaptureRegistryError::Failed { .. } => ErrorCode::InternalError,
+        CaptureRegistryError::NotReady { .. } => ErrorCode::InvalidArgument,
         CaptureRegistryError::FdSocketDisabled | CaptureRegistryError::Capture(_) => ErrorCode::InvalidArgument,
     };
     ApiError(PortholeError::new(code, error.to_string()).into())

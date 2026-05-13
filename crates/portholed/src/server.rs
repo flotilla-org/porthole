@@ -38,7 +38,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/system-permissions/request", post(system_permissions_route::post_request))
         .route("/capture-sessions/synthetic", post(capture_sessions_route::post_synthetic))
         .route("/capture-sessions/surfaces/{id}", post(capture_sessions_route::post_surface))
-        .route("/capture-sessions/{id}", get(capture_sessions_route::get_session))
+        .route(
+            "/capture-sessions/{id}",
+            get(capture_sessions_route::get_session).delete(capture_sessions_route::delete_session),
+        )
         .with_state(state)
 }
 
@@ -110,6 +113,8 @@ mod tests {
         let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(created.source_id, 1);
         assert_eq!(created.track_id, 1);
+        assert_eq!(created.status, "ready");
+        assert_eq!(created.status_message, None);
 
         let req = Request::builder()
             .method(Method::GET)
@@ -118,6 +123,12 @@ mod tests {
             .unwrap();
         let res = router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let session: porthole_protocol::capture_sessions::CaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(session.status, "ready");
+        assert_eq!(session.status_message, None);
+        assert_eq!(session.width, 2);
+        assert_eq!(session.height, 1);
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let request = LatestVideoFrameRequest {
@@ -160,6 +171,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_capture_session_removes_it() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router.clone(), "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri(format!("/capture-sessions/{}", created.session_id))
+            .body(Body::empty())
+            .unwrap();
+        let res = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/capture-sessions/{}", created.session_id))
+            .body(Body::empty())
+            .unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn surface_capture_session_serves_latest_frame_fd() {
         let temp = tempfile::tempdir().unwrap();
         let adapter = Arc::new(InMemoryAdapter::new());
@@ -174,6 +210,8 @@ mod tests {
         let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(created.source_id, 1);
         assert_eq!(created.track_id, 1);
+        assert_eq!(created.status, "ready");
+        assert_eq!(created.status_message, None);
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let request = LatestVideoFrameRequest {
