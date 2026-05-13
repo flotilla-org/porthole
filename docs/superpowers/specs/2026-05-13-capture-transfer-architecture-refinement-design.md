@@ -137,6 +137,13 @@ consumer releases slot use or advances cursor/watermark/native fence
 producer reuses slot only when allowed by policy and release state
 ```
 
+The current prototype now includes the first internal version of that steady
+state: each track has a fixed-size metadata ring inside `VideoSlotManager`.
+Frame publication writes a registered CPU slot, appends a ring entry naming the
+slot and payload range, and `acquire_latest` resolves the newest ring entry.
+This proves the metadata/control shape before exposing a shared ring mapping,
+wake primitive, or platform-native synchronization field.
+
 For CPU memory buffers, this means preallocated shared-memory slots rather than
 one mmap file per frame. For IOSurface or dmabuf, it means registering a small
 swapchain of native buffers. For D3D, it means registering shared resources and

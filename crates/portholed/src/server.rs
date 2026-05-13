@@ -145,6 +145,9 @@ mod tests {
         assert_eq!(frame.producer_drop_count, 0);
         assert_eq!(frame.evicted_count, 0);
         assert_eq!(frame.consumer_skipped_count, 0);
+        assert_ne!(frame.pool_id, 0);
+        assert_eq!(frame.slot_id, 0);
+        assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len as u64);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
 
@@ -195,6 +198,9 @@ mod tests {
         assert_eq!(frame.sync_kind, "cpu_copy_complete");
         assert_eq!(frame.damage_kind, "full_frame");
         assert_eq!(frame.damage_base_sequence, 1);
+        assert_ne!(frame.pool_id, 0);
+        assert_eq!(frame.slot_id, 0);
+        assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len as u64);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
 
