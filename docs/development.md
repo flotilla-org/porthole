@@ -37,21 +37,15 @@ Exit codes:
 
 `scripts/dev-bundle.sh` signs `Porthole.app` with a local Apple Development
 identity when one exists. That gives TCC a stable designated requirement across
-rebuilds. If no Apple Development identity is available, the script falls back
-to ad-hoc signing; ad-hoc is useful for smoke tests but can make Privacy &
-Security grants look present while runtime checks still report missing after a
-rebuild.
+rebuilds. If no Apple Development identity is available, the script fails.
+Ad-hoc signing is deliberately unsupported for the dev bundle: its designated
+requirement is cdhash-based and changes on every rebuild, which makes Privacy &
+Security grants look present while runtime checks report missing permissions.
 
 To pick a specific identity:
 
 ```sh
 ./scripts/dev-bundle.sh --sign "Apple Development: Your Name (TEAMID)"
-```
-
-To force the old ad-hoc path:
-
-```sh
-./scripts/dev-bundle.sh --adhoc
 ```
 
 If you previously granted permissions to an ad-hoc build, reset TCC once after

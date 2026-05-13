@@ -211,25 +211,88 @@ Each video frame must carry:
 - track id
 - monotonically increasing sequence number
 - timestamp
+- timestamp clock domain
 - width
 - height
 - stride
 - pixel format
 - colorspace or `unknown`
+- sync kind, initially `cpu_copy_complete` for copied CPU payloads
+- damage kind and damage base sequence, initially full-frame
 - damage regions, initially optional and usually full-frame
+- basic loss counters
 - payload kind, initially `cpu_shm`
-- payload length
+- pool id, slot id, and slot generation
+- payload offset, payload length, and mapped-region length
 
 The first implementation should support the smallest practical pixel-format set.
 It is acceptable to start with BGRA or RGBA if that is what the ScreenCaptureKit
 copy path and SDL upload path can use cleanly. The metadata should still model
 format and stride honestly.
 
+The CPU shared-memory implementation carries conservative metadata defaults.
+CoreGraphics seed frames use a Unix-time timestamp clock. Live ScreenCaptureKit
+frames use the media-time clock reported by the sample buffer. Color space is
+`unknown` until the producer can report it explicitly. CPU-copied frames use
+`cpu_copy_complete` or `sck_sample_ready` as their sync kind; neither implies a
+future native GPU timeline. Damage defaults to `full_frame` with
+`damage_base_sequence` equal to the frame sequence until SCK dirty rects or
+accumulated damage are implemented. Loss counters are surfaced as scalar
+metadata so consumers can distinguish normal latest-frame skips from a reliable
+recording cursor.
+
 ## Shared-Memory Transport
 
 V1 uses local CPU shared memory. The producer copies ScreenCaptureKit output into
 bounded shared-memory slots owned by the capture-transfer library. Cross-process
 consumers receive file descriptors for those slots with `SCM_RIGHTS`.
+
+CPU producers do not need to allocate an owned frame buffer before publishing.
+The capture-transfer library exposes a claim/fill/commit path: claim a writable
+slot, write directly into the mapped payload range, then commit the frame
+metadata into the ring. Outstanding claims reserve their pool slot locally so a
+producer cannot receive the same writable range twice before commit. The older
+`publish(&[u8])` style remains a convenience wrapper for callers that already
+own bytes, but it is not the transport shape we should optimize around. Porthole
+now has a publisher-style live capture path for macOS SCK callbacks: callback
+bytes are handed to the daemon as a borrowed frame view and copied directly into
+the claimed shared-memory slot. The owned `VideoCaptureFrame { bytes: Vec<u8> }`
+path remains as a compatibility/fallback path, and the CoreGraphics startup seed
+can still allocate while it repacks rows.
+
+Frame payload metadata is range-based:
+
+```text
+pool_id
+slot_id
+slot_generation
+payload_offset
+payload_len
+payload_map_len
+```
+
+Consumers must validate `payload_offset + payload_len <= payload_map_len` before
+reading and must treat `pool_id`, `slot_id`, and `slot_generation` as the
+identity of the payload slot the frame metadata names. In-process producers use
+`ft_consumer_release_video_frame` as the release point. Daemon-backed consumers
+use the fd-side-channel connection as the initial frame lease: the daemon keeps
+the acquired frame pinned after sending the fd and metadata, and releases it
+when the consumer closes that connection. The capture-transfer daemon client
+therefore keeps the socket alive inside the acquired `DaemonFrame` and closes it
+only after unmapping the payload.
+
+The implementation now has an internal per-track metadata ring. Publishing a
+frame writes the CPU slot, appends a fixed-size ring entry naming the sequence,
+frame key, pool id, slot id, slot generation, and payload range, then latest
+acquisition resolves the newest ring entry back to the stored frame. This is a
+prototype of the future shared control structure; it is still exercised through
+the existing request/lease path rather than mapped directly by external
+consumers.
+
+This connection-lifetime lease is intentionally a first step. A future streaming
+protocol should replace it with explicit frame lease ids, cursor watermarks, or
+native release fences, especially once long-lived subscriptions, ordered
+cursors, or GPU-backed payloads exist.
 
 Interactive consumers use latest-frame semantics:
 

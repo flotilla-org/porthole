@@ -60,7 +60,7 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
 mod tests {
     use std::{
         fs::File,
-        io::{BufRead, BufReader, Read, Write},
+        io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
         os::unix::net::UnixStream,
         sync::Arc,
     };
@@ -136,10 +136,25 @@ mod tests {
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
+        assert_eq!(frame.clock_domain, "unknown");
+        assert_eq!(frame.color_space, "unknown");
+        assert_eq!(frame.sync_kind, "cpu_copy_complete");
+        assert_eq!(frame.damage_kind, "full_frame");
+        assert_eq!(frame.damage_base_sequence, 1);
+        assert_eq!(frame.dropped_before_publish, 0);
+        assert_eq!(frame.producer_drop_count, 0);
+        assert_eq!(frame.evicted_count, 0);
+        assert_eq!(frame.consumer_skipped_count, 0);
+        assert_ne!(frame.pool_id, 0);
+        assert_eq!(frame.slot_id, 0);
+        assert_ne!(frame.slot_generation, 0);
+        assert_eq!(frame.payload_len, frame.len as u64);
+        assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).unwrap();
+        file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
+        file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes.len(), frame.len);
         assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
     }
@@ -178,10 +193,21 @@ mod tests {
         assert_eq!(frame.timestamp_ns, 123_456_789);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
+        assert_eq!(frame.clock_domain, "unix_time");
+        assert_eq!(frame.color_space, "unknown");
+        assert_eq!(frame.sync_kind, "cpu_copy_complete");
+        assert_eq!(frame.damage_kind, "full_frame");
+        assert_eq!(frame.damage_base_sequence, 1);
+        assert_ne!(frame.pool_id, 0);
+        assert_eq!(frame.slot_id, 0);
+        assert_ne!(frame.slot_generation, 0);
+        assert_eq!(frame.payload_len, frame.len as u64);
+        assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).unwrap();
+        file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
+        file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes.len(), frame.len);
         assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
     }

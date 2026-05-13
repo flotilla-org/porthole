@@ -1,9 +1,11 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use porthole_core::{
     ErrorCode, PortholeError,
-    adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot},
+    adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot, VideoCaptureFramePublisher},
     attention::AttentionInfo,
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, ScrollSpec},
@@ -77,6 +79,23 @@ impl Adapter for MacOsAdapter {
         #[cfg(not(target_os = "macos"))]
         {
             let _ = surface;
+            Err(PortholeError::new(ErrorCode::AdapterUnsupported, "macOS adapter on non-macOS"))
+        }
+    }
+
+    async fn start_video_capture_publisher(
+        &self,
+        surface: &SurfaceInfo,
+        publisher: Arc<dyn VideoCaptureFramePublisher>,
+    ) -> Result<Box<dyn porthole_core::adapter::VideoCaptureSession>, PortholeError> {
+        #[cfg(target_os = "macos")]
+        {
+            sck_capture::start_video_capture_publisher(self, surface, publisher).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = surface;
+            let _ = publisher;
             Err(PortholeError::new(ErrorCode::AdapterUnsupported, "macOS adapter on non-macOS"))
         }
     }

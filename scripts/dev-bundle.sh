@@ -10,17 +10,15 @@ PROFILE="debug"
 REFRESH_ONLY=0
 BUNDLE_ID="org.flotilla.porthole.dev"
 SIGN_IDENTITY=""
-FORCE_ADHOC=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--release] [--refresh] [--sign IDENTITY] [--adhoc]
+Usage: $0 [--release] [--refresh] [--sign IDENTITY]
 
   --release   Build release profile (default: debug).
   --refresh   Don't rebuild; just re-copy the binaries into the existing bundle
               and re-sign. Use after cargo build to keep TCC grants.
   --sign      Codesign with the given identity.
-  --adhoc     Force ad-hoc signing, even if an Apple Development identity exists.
 EOF
 }
 
@@ -37,23 +35,17 @@ while [[ $# -gt 0 ]]; do
             SIGN_IDENTITY="$2"
             shift 2
             ;;
-        --adhoc) FORCE_ADHOC=1; shift ;;
+        --adhoc)
+            echo "--adhoc is not supported for Porthole dev bundles." >&2
+            echo "Ad-hoc signatures change designated requirement on rebuild and invalidate TCC grants." >&2
+            exit 1
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
     esac
 done
 
-if [[ "$FORCE_ADHOC" -eq 1 && -n "$SIGN_IDENTITY" ]]; then
-    echo "--sign and --adhoc are mutually exclusive" >&2
-    usage
-    exit 1
-fi
-
 choose_sign_identity() {
-    if [[ "$FORCE_ADHOC" -eq 1 ]]; then
-        echo "-"
-        return
-    fi
     if [[ -n "$SIGN_IDENTITY" ]]; then
         echo "$SIGN_IDENTITY"
         return
@@ -66,6 +58,23 @@ choose_sign_identity() {
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
+
+SIGNING_IDENTITY="$(choose_sign_identity)"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    cat >&2 <<'ERR'
+Apple Development signing identity required for Porthole dev bundles.
+
+Ad-hoc signing is a hard failure because macOS TCC grants are keyed to the
+bundle's designated requirement. For ad-hoc signatures that requirement is
+cdhash-based and changes on every rebuild, so Accessibility and Screen
+Recording grants silently stop matching the installed app.
+
+Install or import an Apple Development certificate, then rerun this script:
+  Xcode -> Settings -> Accounts -> Manage Certificates -> + -> Apple Development
+  security import <file>.p12 -k ~/Library/Keychains/login.keychain-db
+ERR
+    exit 1
+fi
 
 if [[ "$REFRESH_ONLY" -eq 0 ]]; then
     if [[ "$PROFILE" == "release" ]]; then
@@ -122,62 +131,10 @@ cp "$DAEMON_BIN" "$APP/Contents/MacOS/portholed"
 cp "$CLI_BIN"    "$APP/Contents/MacOS/porthole"
 chmod +x "$APP/Contents/MacOS/portholed" "$APP/Contents/MacOS/porthole"
 
-SIGNING_IDENTITY="$(choose_sign_identity)"
-if [[ -z "$SIGNING_IDENTITY" ]]; then
-    SIGNING_IDENTITY="-"
-fi
-
 codesign -s "$SIGNING_IDENTITY" --force --deep "$APP"
 
 echo "bundle built: $APP"
-if [[ "$SIGNING_IDENTITY" == "-" ]]; then
-    if [[ "$FORCE_ADHOC" -eq 1 ]]; then
-        echo "signed with:      ad-hoc (forced by --adhoc)"
-    else
-        # Loud, distinct banner: ad-hoc was the *fallback*, not a choice.
-        # On macOS Accessibility (and some other TCC services), the
-        # designated requirement is cdhash-based for ad-hoc-signed binaries
-        # and changes on every rebuild — TCC grants silently invalidate,
-        # System Settings keeps showing the toggle as on, and the daemon
-        # reports the permission as MISSING. The user almost always wants
-        # to know about this before they go granting things.
-        cat >&2 <<'WARN'
-
-================================================================
-  WARNING: ad-hoc signature — TCC grants will keep breaking
-================================================================
-
-  No Apple Development codesigning identity was found in your
-  keychain, so this bundle was signed ad-hoc as a fallback.
-
-  Ad-hoc signatures have a cdhash-based designated requirement,
-  which changes on every rebuild. macOS Accessibility (and some
-  other TCC services) match grants against the designated
-  requirement strictly. Your `porthole onboard` AX grant will
-  silently invalidate every rebuild — System Settings will keep
-  showing the toggle as on, but `porthole info` will report
-  accessibility as MISSING.
-
-  Fix: install an Apple Development identity (free with any
-  Apple ID).
-    - Xcode: Settings -> Accounts -> Add Apple ID ->
-      Manage Certificates -> + -> Apple Development
-    - From another Mac: Keychain Access -> right-click the cert
-      -> Export... -> .p12; import here with
-      `security import <file>.p12 -k ~/Library/Keychains/login.keychain-db`
-
-  Then re-run this script — it picks the identity up automatically.
-
-  Pass --adhoc explicitly to suppress this warning.
-
-================================================================
-
-WARN
-        echo "signed with:      ad-hoc (FALLBACK — see warning above)"
-    fi
-else
-    echo "signed with:      $SIGNING_IDENTITY"
-fi
+echo "signed with:      $SIGNING_IDENTITY"
 echo "install/restart:   \"$APP/Contents/MacOS/porthole\" install --user --force"
 echo "grant permissions: porthole onboard"
 echo

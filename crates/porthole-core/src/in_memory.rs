@@ -9,8 +9,9 @@ use tokio::sync::Mutex;
 use crate::{
     ErrorCode, PortholeError,
     adapter::{
-        Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot, VideoCaptureFrame,
-        VideoCapturePixelFormat, VideoCaptureSession,
+        Adapter, ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec, Rect, Screenshot, VideoCaptureColorSpace,
+        VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
     },
     attention::{AttentionInfo, CursorPos},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},
@@ -86,10 +87,17 @@ impl VideoCaptureSession for InMemoryVideoCaptureSession {
         Ok(Some(VideoCaptureFrame {
             sequence: 1,
             timestamp_ns: 123_456_789,
+            timestamp_clock: VideoCaptureTimestampClock::UnixTime,
             width: 2,
             height: 1,
             stride: 8,
             pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: VideoCaptureColorSpace::Unknown,
+            sync_kind: VideoCaptureSyncKind::CpuCopyComplete,
+            damage_kind: VideoCaptureDamageKind::FullFrame,
+            damage_base_sequence: 1,
+            dropped_before_publish: 0,
+            producer_drop_count: 0,
             bytes: vec![0, 64, 128, 255, 255, 64, 128, 255],
         }))
     }
@@ -657,6 +665,22 @@ mod tests {
         assert!(got.is_some());
         let calls = adapter.window_alive_calls().await;
         assert_eq!(calls, vec![(42, 7)]);
+    }
+
+    #[tokio::test]
+    async fn video_capture_frame_has_explicit_metadata_defaults() {
+        let adapter = InMemoryAdapter::new();
+        let info = SurfaceInfo::window(SurfaceId::new(), 1);
+        let mut capture = adapter.start_video_capture(&info).await.unwrap();
+        let frame = capture.next_frame().await.unwrap().unwrap();
+
+        assert_eq!(frame.timestamp_clock, VideoCaptureTimestampClock::UnixTime);
+        assert_eq!(frame.color_space, VideoCaptureColorSpace::Unknown);
+        assert_eq!(frame.sync_kind, VideoCaptureSyncKind::CpuCopyComplete);
+        assert_eq!(frame.damage_kind, VideoCaptureDamageKind::FullFrame);
+        assert_eq!(frame.damage_base_sequence, frame.sequence);
+        assert_eq!(frame.dropped_before_publish, 0);
+        assert_eq!(frame.producer_drop_count, 0);
     }
 }
 

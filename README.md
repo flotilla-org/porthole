@@ -68,11 +68,13 @@ The macOS adapter needs **Accessibility** and **Screen Recording** for input inj
 porthole onboard       # interactive grant flow; opens System Settings as needed
 ```
 
-For development builds, `scripts/dev-bundle.sh` signs `Porthole.app` with a local
-Apple Development identity when one is available, falling back to ad-hoc signing
-only when needed. If you previously granted permissions to an ad-hoc build and
-`porthole onboard` still reports missing permissions, reset TCC once and re-run
-onboarding:
+For development builds, `scripts/dev-bundle.sh` requires a local Apple
+Development identity and fails hard if none is available. Ad-hoc signatures are
+not usable for normal Porthole development because their designated requirement
+changes on every rebuild, which invalidates TCC grants while System Settings may
+still show the toggles as enabled. If you previously granted permissions to an
+ad-hoc build and `porthole onboard` still reports missing permissions, reset TCC
+once after rebuilding with a certificate:
 
 ```sh
 tccutil reset Accessibility org.flotilla.porthole.dev
