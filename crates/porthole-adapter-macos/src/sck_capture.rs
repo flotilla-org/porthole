@@ -40,6 +40,73 @@ unsafe extern "C" {
     ) -> *mut c_char;
     fn porthole_sck_stop(handle: *mut c_void);
     fn porthole_sck_free_error(message: *mut c_char);
+    fn porthole_sck_screenshot_window(
+        cg_window_id: u32,
+        out_pixels: *mut *mut u8,
+        out_len: *mut usize,
+        out_width: *mut u32,
+        out_height: *mut u32,
+        out_bytes_per_row: *mut u32,
+    ) -> *mut c_char;
+    fn porthole_sck_free_screenshot(pixels: *mut u8);
+}
+
+/// One-shot BGRA8 screenshot via SCScreenshotManager. Caller owns the
+/// returned `pixels` Vec; the C buffer is freed before this returns.
+pub struct ScreenshotPixels {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub bytes_per_row: u32,
+}
+
+/// Capture a one-shot screenshot of `cg_window_id` via SCScreenshotManager.
+/// macOS 14+. Used by `capture::screenshot` in place of the legacy
+/// CGWindowListCreateImage path, which returns null on macOS Tahoe
+/// (26 / Darwin 25) even with Screen Recording granted.
+///
+/// Runs the shim on a blocking task — SCShareableContent's completion
+/// handler blocks on a dispatch_semaphore, so calling this directly from a
+/// tokio worker would starve the runtime under load.
+pub async fn screenshot_window(adapter: &MacOsAdapter, cg_window_id: u32) -> Result<ScreenshotPixels, PortholeError> {
+    ensure_screen_recording_granted(adapter)?;
+    tokio::task::spawn_blocking(move || screenshot_window_blocking(cg_window_id))
+        .await
+        .map_err(|e| PortholeError::new(ErrorCode::InternalError, format!("screenshot task failed: {e}")))?
+}
+
+fn screenshot_window_blocking(cg_window_id: u32) -> Result<ScreenshotPixels, PortholeError> {
+    let mut pixels: *mut u8 = ptr::null_mut();
+    let mut len: usize = 0;
+    let mut width: u32 = 0;
+    let mut height: u32 = 0;
+    let mut bytes_per_row: u32 = 0;
+
+    let err = unsafe { porthole_sck_screenshot_window(cg_window_id, &mut pixels, &mut len, &mut width, &mut height, &mut bytes_per_row) };
+
+    if !err.is_null() {
+        // SAFETY: err is a heap-allocated UTF-8 C string from the shim; we own it.
+        let msg = unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned();
+        unsafe { porthole_sck_free_error(err) };
+        return Err(PortholeError::new(ErrorCode::CapabilityMissing, msg));
+    }
+
+    if pixels.is_null() || len == 0 {
+        return Err(PortholeError::new(ErrorCode::InternalError, "screenshot shim returned no pixels"));
+    }
+
+    // SAFETY: the shim guarantees `pixels` points to `len` valid bytes when
+    // it returns NULL error and non-null pixels. We copy into a Rust-owned
+    // Vec before freeing the C buffer so ownership transfer is clean.
+    let owned = unsafe { std::slice::from_raw_parts(pixels, len).to_vec() };
+    unsafe { porthole_sck_free_screenshot(pixels) };
+
+    Ok(ScreenshotPixels {
+        pixels: owned,
+        width,
+        height,
+        bytes_per_row,
+    })
 }
 
 struct CallbackState {
