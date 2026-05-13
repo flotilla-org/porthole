@@ -144,6 +144,13 @@ slot and payload range, and `acquire_latest` resolves the newest ring entry.
 This proves the metadata/control shape before exposing a shared ring mapping,
 wake primitive, or platform-native synchronization field.
 
+The CPU path also now has a producer claim/fill/commit API. Producers can claim
+a writable slot from the pool, fill the mapped bytes directly, and commit the
+metadata ring entry without first allocating a separate frame-sized buffer. The
+slot manager reserves outstanding claims so multiple producer-side claims cannot
+alias the same writable slot. The existing slice-based publish API is just a
+compatibility wrapper over that shape for callers that already own bytes.
+
 For CPU memory buffers, this means preallocated shared-memory slots rather than
 one mmap file per frame. For IOSurface or dmabuf, it means registering a small
 swapchain of native buffers. For D3D, it means registering shared resources and
@@ -403,6 +410,7 @@ CPU baseline:
 
 - Reduce avoidable copies where possible.
 - Move toward reusable CPU shared-memory slots.
+- Prefer claim/fill/commit into managed slots over producer-owned frame buffers.
 - Keep BGRA working with explicit stride, format, color, timestamp, and damage
   defaults.
 

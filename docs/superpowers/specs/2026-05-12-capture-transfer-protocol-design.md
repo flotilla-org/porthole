@@ -247,6 +247,16 @@ V1 uses local CPU shared memory. The producer copies ScreenCaptureKit output int
 bounded shared-memory slots owned by the capture-transfer library. Cross-process
 consumers receive file descriptors for those slots with `SCM_RIGHTS`.
 
+CPU producers do not need to allocate an owned frame buffer before publishing.
+The capture-transfer library exposes a claim/fill/commit path: claim a writable
+slot, write directly into the mapped payload range, then commit the frame
+metadata into the ring. Outstanding claims reserve their pool slot locally so a
+producer cannot receive the same writable range twice before commit. The older
+`publish(&[u8])` style remains a convenience wrapper for callers that already
+own bytes, but it is not the transport shape we should optimize around.
+Porthole's macOS adapter still owns frames as `Vec<u8>` today; removing that
+adapter-level copy is the next integration step for the CPU path.
+
 Frame payload metadata is range-based:
 
 ```text
