@@ -74,6 +74,16 @@ pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEve
 /// that *do* want the window raised must call `focus()` explicitly first
 /// (the standard order for terminal automation: focus → wait stable → text).
 ///
+/// Multi-window caveat: `post_to_pid` targets a *process*, not a window.
+/// Apps with multiple windows (terminals running multiple shells, browsers,
+/// editors with split panes) route keyboard input to whichever window the
+/// app considers its key window — the OS doesn't expose per-window keyboard
+/// delivery for synthetic events (unlike mouse events, which can carry a
+/// window-id event field). Callers targeting a specific window of a
+/// multi-window app must call `focus()` first so the app pins that window
+/// as key. Peekaboo's `BackgroundInputDriver` lives with the same
+/// constraint.
+///
 /// Explicit empty flags defend against modifier-state leakage from any
 /// prior `key Ctrl-X`-style event whose up could have lagged.
 pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
