@@ -52,21 +52,52 @@ pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEve
     Ok(())
 }
 
+/// Inject `text` into `surface` as synthetic Unicode keystrokes, one codepoint
+/// at a time, posted directly to the owning process via `CGEventPostToPid`.
+///
+/// Why per-character instead of one event with the full string as overlay:
+/// `CGEventKeyboardSetUnicodeString` on a single keycode-0 event is racy on
+/// macOS Tahoe — the OS can coalesce or silently drop the overlay when the
+/// synthetic event source state accumulates over a session, which is what
+/// the kitty-image-tests harness was hitting (first ~3 calls landed, then
+/// silent drops). Per-character matches every well-known reference for
+/// macOS text injection (Peekaboo's `TypeService`, Hammerspoon's
+/// `hs.eventtap.keyStrokes`, WebDriver, PyAutoGUI).
+///
+/// Why `post_to_pid` instead of `post(CGEventTapLocation::HID)`:
+/// HID-tap delivery depends on which window has OS-level keyboard focus at
+/// the moment each event lands. That's racy when callers haven't pinned
+/// focus first (and even when they have — focus transitions are async on
+/// modern macOS). Posting to the target process's pid routes the event
+/// directly to it without contending with whatever else the user is doing.
+/// Side benefit: `text()` no longer steals focus from the user, so callers
+/// that *do* want the window raised must call `focus()` explicitly first
+/// (the standard order for terminal automation: focus → wait stable → text).
+///
+/// Explicit empty flags defend against modifier-state leakage from any
+/// prior `key Ctrl-X`-style event whose up could have lagged.
 pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
     ensure_accessibility_granted(adapter)?;
-    close_focus::focus(adapter, surface).await?;
+    let pid = surface
+        .pid
+        .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "text: surface has no pid"))? as i32;
     let source = event_source()?;
+    let empty_flags = CGEventFlags::empty();
+    let mut buf = [0u16; 2];
 
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
-        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text event create failed"))?;
-    down.set_string_from_utf16_unchecked(&units);
-    down.post(CGEventTapLocation::HID);
+    for ch in text.chars() {
+        let units = ch.encode_utf16(&mut buf);
+        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text down event create failed"))?;
+        down.set_flags(empty_flags);
+        down.set_string_from_utf16_unchecked(units);
+        down.post_to_pid(pid);
 
-    let up = CGEvent::new_keyboard_event(source, 0, false)
-        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text up event create failed"))?;
-    up.set_string_from_utf16_unchecked(&units);
-    up.post(CGEventTapLocation::HID);
+        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
+            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "text up event create failed"))?;
+        up.set_flags(empty_flags);
+        up.post_to_pid(pid);
+    }
     Ok(())
 }
 
