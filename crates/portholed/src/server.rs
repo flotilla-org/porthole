@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(frame.timestamp_ns, 123_456_789);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
-        assert_eq!(frame.clock_domain, "unknown");
+        assert_eq!(frame.clock_domain, "unix_time");
         assert_eq!(frame.color_space, "unknown");
         assert_eq!(frame.sync_kind, "cpu_copy_complete");
         assert_eq!(frame.damage_kind, "full_frame");

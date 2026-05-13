@@ -7,7 +7,10 @@ use std::{
 use async_trait::async_trait;
 use porthole_core::{
     ErrorCode, PortholeError,
-    adapter::{VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession},
+    adapter::{
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
+    },
     surface::SurfaceInfo,
 };
 use tokio::sync::mpsc;
@@ -115,6 +118,8 @@ fn screenshot_window_blocking(cg_window_id: u32) -> Result<ScreenshotPixels, Por
 struct CallbackState {
     tx: mpsc::Sender<Result<VideoCaptureFrame, String>>,
     sequence: AtomicU64,
+    dropped_before_publish: AtomicU64,
+    producer_drop_count: AtomicU64,
 }
 
 // SAFETY: CallbackState is shared with SCK callback threads through an opaque C
@@ -151,6 +156,8 @@ fn start_video_capture_blocking(cg_window_id: u32) -> Result<MacVideoCaptureSess
     let state = Box::new(CallbackState {
         tx: tx.clone(),
         sequence: AtomicU64::new(if initial_frame.is_some() { 2 } else { 1 }),
+        dropped_before_publish: AtomicU64::new(0),
+        producer_drop_count: AtomicU64::new(0),
     });
     let state_ptr = Box::into_raw(state);
     let mut raw_handle = ptr::null_mut();
@@ -235,15 +242,61 @@ fn capture_initial_window_frame(cg_window_id: u32) -> Result<VideoCaptureFrame, 
         .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0);
 
+    let metadata = frame_metadata(CaptureFrameSource::CoreGraphicsSeed, 1, 0, 0);
     Ok(VideoCaptureFrame {
         sequence: 1,
         timestamp_ns,
+        timestamp_clock: metadata.timestamp_clock,
         width,
         height,
         stride,
         pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+        color_space: metadata.color_space,
+        sync_kind: metadata.sync_kind,
+        damage_kind: metadata.damage_kind,
+        damage_base_sequence: metadata.damage_base_sequence,
+        dropped_before_publish: metadata.dropped_before_publish,
+        producer_drop_count: metadata.producer_drop_count,
         bytes,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CaptureFrameSource {
+    CoreGraphicsSeed,
+    ScreenCaptureKitLive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CaptureFrameMetadata {
+    timestamp_clock: VideoCaptureTimestampClock,
+    color_space: VideoCaptureColorSpace,
+    sync_kind: VideoCaptureSyncKind,
+    damage_kind: VideoCaptureDamageKind,
+    damage_base_sequence: u64,
+    dropped_before_publish: u64,
+    producer_drop_count: u64,
+}
+
+fn frame_metadata(
+    source: CaptureFrameSource,
+    sequence: u64,
+    dropped_before_publish: u64,
+    producer_drop_count: u64,
+) -> CaptureFrameMetadata {
+    let (timestamp_clock, sync_kind) = match source {
+        CaptureFrameSource::CoreGraphicsSeed => (VideoCaptureTimestampClock::UnixTime, VideoCaptureSyncKind::CpuCopyComplete),
+        CaptureFrameSource::ScreenCaptureKitLive => (VideoCaptureTimestampClock::MediaTime, VideoCaptureSyncKind::SckSampleReady),
+    };
+    CaptureFrameMetadata {
+        timestamp_clock,
+        color_space: VideoCaptureColorSpace::Unknown,
+        sync_kind,
+        damage_kind: VideoCaptureDamageKind::FullFrame,
+        damage_base_sequence: sequence,
+        dropped_before_publish,
+        producer_drop_count,
+    }
 }
 
 struct MacVideoCaptureSession {
@@ -294,16 +347,38 @@ extern "C" fn frame_callback(ctx: *mut c_void, frame: *const SckFrame) {
     }
     let bytes = unsafe { std::slice::from_raw_parts(frame.data, frame.len) }.to_vec();
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
+    let dropped_before_publish = state.dropped_before_publish.swap(0, Ordering::Relaxed);
+    let producer_drop_count = state.producer_drop_count.load(Ordering::Relaxed);
+    let metadata = frame_metadata(
+        CaptureFrameSource::ScreenCaptureKitLive,
+        sequence,
+        dropped_before_publish,
+        producer_drop_count,
+    );
     // Capacity is intentionally small; slow consumers drop frames and catch the next one.
-    let _ = state.tx.try_send(Ok(VideoCaptureFrame {
+    if state.tx.try_send(Ok(VideoCaptureFrame {
         sequence,
         timestamp_ns: frame.timestamp_ns,
+        timestamp_clock: metadata.timestamp_clock,
         width: frame.width,
         height: frame.height,
         stride: frame.stride,
         pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+        color_space: metadata.color_space,
+        sync_kind: metadata.sync_kind,
+        damage_kind: metadata.damage_kind,
+        damage_base_sequence: metadata.damage_base_sequence,
+        dropped_before_publish: metadata.dropped_before_publish,
+        producer_drop_count: metadata.producer_drop_count,
         bytes,
-    }));
+    }))
+    .is_err()
+    {
+        state
+            .dropped_before_publish
+            .fetch_add(dropped_before_publish.saturating_add(1), Ordering::Relaxed);
+        state.producer_drop_count.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 extern "C" fn error_callback(ctx: *mut c_void, message: *const c_char) {
@@ -313,4 +388,49 @@ extern "C" fn error_callback(ctx: *mut c_void, message: *const c_char) {
     let state = unsafe { &*(ctx.cast::<CallbackState>()) };
     let message = unsafe { CStr::from_ptr(message) }.to_string_lossy().into_owned();
     let _ = state.tx.try_send(Err(message));
+}
+
+#[cfg(test)]
+mod tests {
+    use porthole_core::adapter::{
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureSyncKind, VideoCaptureTimestampClock,
+    };
+
+    use super::{CaptureFrameMetadata, CaptureFrameSource, frame_metadata};
+
+    #[test]
+    fn seed_frame_metadata_uses_unix_time_and_cpu_completion() {
+        let metadata = frame_metadata(CaptureFrameSource::CoreGraphicsSeed, 1, 0, 0);
+
+        assert_eq!(
+            metadata,
+            CaptureFrameMetadata {
+                timestamp_clock: VideoCaptureTimestampClock::UnixTime,
+                color_space: VideoCaptureColorSpace::Unknown,
+                sync_kind: VideoCaptureSyncKind::CpuCopyComplete,
+                damage_kind: VideoCaptureDamageKind::FullFrame,
+                damage_base_sequence: 1,
+                dropped_before_publish: 0,
+                producer_drop_count: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn live_frame_metadata_uses_media_time_and_sck_ready() {
+        let metadata = frame_metadata(CaptureFrameSource::ScreenCaptureKitLive, 4, 2, 3);
+
+        assert_eq!(
+            metadata,
+            CaptureFrameMetadata {
+                timestamp_clock: VideoCaptureTimestampClock::MediaTime,
+                color_space: VideoCaptureColorSpace::Unknown,
+                sync_kind: VideoCaptureSyncKind::SckSampleReady,
+                damage_kind: VideoCaptureDamageKind::FullFrame,
+                damage_base_sequence: 4,
+                dropped_before_publish: 2,
+                producer_drop_count: 3,
+            }
+        );
+    }
 }

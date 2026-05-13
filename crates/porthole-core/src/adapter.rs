@@ -113,14 +113,50 @@ pub enum VideoCapturePixelFormat {
     Bgra8Unorm,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCaptureTimestampClock {
+    Unknown,
+    UnixTime,
+    MediaTime,
+    HostTime,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCaptureColorSpace {
+    Unknown,
+    Srgb,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCaptureSyncKind {
+    Unknown,
+    CpuCopyComplete,
+    SckSampleReady,
+    NativeTimeline,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VideoCaptureDamageKind {
+    Unknown,
+    FullFrame,
+    None,
+}
+
 #[derive(Clone, Debug)]
 pub struct VideoCaptureFrame {
     pub sequence: u64,
     pub timestamp_ns: u64,
+    pub timestamp_clock: VideoCaptureTimestampClock,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
     pub pixel_format: VideoCapturePixelFormat,
+    pub color_space: VideoCaptureColorSpace,
+    pub sync_kind: VideoCaptureSyncKind,
+    pub damage_kind: VideoCaptureDamageKind,
+    pub damage_base_sequence: u64,
+    pub dropped_before_publish: u64,
+    pub producer_drop_count: u64,
     pub bytes: Vec<u8>,
 }
 

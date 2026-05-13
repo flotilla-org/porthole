@@ -17,7 +17,10 @@ use capture_transfer::{
     video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
-    adapter::{Adapter, VideoCaptureFrame, VideoCapturePixelFormat},
+    adapter::{
+        Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
+    },
     surface::SurfaceInfo,
 };
 use porthole_protocol::capture_sessions::{
@@ -364,33 +367,66 @@ fn publish_capture_frame_to_video(
     frame: &VideoCaptureFrame,
 ) -> Result<(), CaptureRegistryError> {
     video
-        .publish(
-            track_id,
-            VideoFrameDesc {
-                sequence: frame.sequence,
-                timestamp_ns: frame.timestamp_ns,
-                width: frame.width,
-                height: frame.height,
-                stride: frame.stride,
-                pixel_format: capture_pixel_format(frame.pixel_format),
-                clock_domain: ClockDomain::Unknown,
-                color_space: ColorSpace::Unknown,
-                sync_kind: FrameSyncKind::CpuCopyComplete,
-                damage_kind: DamageKind::FullFrame,
-                damage_base_sequence: frame.sequence,
-                dropped_before_publish: 0,
-                producer_drop_count: 0,
-                evicted_count: 0,
-                consumer_skipped_count: 0,
-            },
-            &frame.bytes,
-        )
+        .publish(track_id, video_frame_desc_from_capture(frame), &frame.bytes)
         .map_err(CaptureRegistryError::from_capture)
+}
+
+fn video_frame_desc_from_capture(frame: &VideoCaptureFrame) -> VideoFrameDesc {
+    VideoFrameDesc {
+        sequence: frame.sequence,
+        timestamp_ns: frame.timestamp_ns,
+        width: frame.width,
+        height: frame.height,
+        stride: frame.stride,
+        pixel_format: capture_pixel_format(frame.pixel_format),
+        clock_domain: capture_clock_domain(frame.timestamp_clock),
+        color_space: capture_color_space(frame.color_space),
+        sync_kind: capture_sync_kind(frame.sync_kind),
+        damage_kind: capture_damage_kind(frame.damage_kind),
+        damage_base_sequence: frame.damage_base_sequence,
+        dropped_before_publish: frame.dropped_before_publish,
+        producer_drop_count: frame.producer_drop_count,
+        evicted_count: 0,
+        consumer_skipped_count: 0,
+    }
 }
 
 fn capture_pixel_format(format: VideoCapturePixelFormat) -> PixelFormat {
     match format {
         VideoCapturePixelFormat::Bgra8Unorm => PixelFormat::Bgra8Unorm,
+    }
+}
+
+fn capture_clock_domain(domain: VideoCaptureTimestampClock) -> ClockDomain {
+    match domain {
+        VideoCaptureTimestampClock::Unknown => ClockDomain::Unknown,
+        VideoCaptureTimestampClock::UnixTime => ClockDomain::UnixTime,
+        VideoCaptureTimestampClock::MediaTime => ClockDomain::MediaTime,
+        VideoCaptureTimestampClock::HostTime => ClockDomain::HostTime,
+    }
+}
+
+fn capture_color_space(color_space: VideoCaptureColorSpace) -> ColorSpace {
+    match color_space {
+        VideoCaptureColorSpace::Unknown => ColorSpace::Unknown,
+        VideoCaptureColorSpace::Srgb => ColorSpace::Srgb,
+    }
+}
+
+fn capture_sync_kind(sync_kind: VideoCaptureSyncKind) -> FrameSyncKind {
+    match sync_kind {
+        VideoCaptureSyncKind::Unknown => FrameSyncKind::Unknown,
+        VideoCaptureSyncKind::CpuCopyComplete => FrameSyncKind::CpuCopyComplete,
+        VideoCaptureSyncKind::SckSampleReady => FrameSyncKind::SckSampleReady,
+        VideoCaptureSyncKind::NativeTimeline => FrameSyncKind::NativeTimeline,
+    }
+}
+
+fn capture_damage_kind(damage_kind: VideoCaptureDamageKind) -> DamageKind {
+    match damage_kind {
+        VideoCaptureDamageKind::Unknown => DamageKind::Unknown,
+        VideoCaptureDamageKind::FullFrame => DamageKind::FullFrame,
+        VideoCaptureDamageKind::None => DamageKind::None,
     }
 }
 
@@ -464,5 +500,48 @@ fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
         DamageKind::None => "none",
         DamageKind::InlineRects => "inline_rects",
         DamageKind::SidecarRects => "sidecar_rects",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use capture_transfer::model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat};
+    use porthole_core::adapter::{
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
+    };
+
+    use crate::capture_registry::video_frame_desc_from_capture;
+
+    #[test]
+    fn video_frame_desc_from_capture_preserves_capture_metadata() {
+        let frame = VideoCaptureFrame {
+            sequence: 7,
+            timestamp_ns: 123,
+            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
+            width: 2,
+            height: 1,
+            stride: 8,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: VideoCaptureColorSpace::Srgb,
+            sync_kind: VideoCaptureSyncKind::SckSampleReady,
+            damage_kind: VideoCaptureDamageKind::FullFrame,
+            damage_base_sequence: 3,
+            dropped_before_publish: 2,
+            producer_drop_count: 5,
+            bytes: vec![0; 8],
+        };
+
+        let desc = video_frame_desc_from_capture(&frame);
+
+        assert_eq!(desc.sequence, 7);
+        assert_eq!(desc.pixel_format, PixelFormat::Bgra8Unorm);
+        assert_eq!(desc.clock_domain, ClockDomain::MediaTime);
+        assert_eq!(desc.color_space, ColorSpace::Srgb);
+        assert_eq!(desc.sync_kind, FrameSyncKind::SckSampleReady);
+        assert_eq!(desc.damage_kind, DamageKind::FullFrame);
+        assert_eq!(desc.damage_base_sequence, 3);
+        assert_eq!(desc.dropped_before_publish, 2);
+        assert_eq!(desc.producer_drop_count, 5);
     }
 }
