@@ -211,12 +211,16 @@ Each video frame must carry:
 - track id
 - monotonically increasing sequence number
 - timestamp
+- timestamp clock domain
 - width
 - height
 - stride
 - pixel format
 - colorspace or `unknown`
+- sync kind, initially `cpu_copy_complete` for copied CPU payloads
+- damage kind and damage base sequence, initially full-frame
 - damage regions, initially optional and usually full-frame
+- basic loss counters
 - payload kind, initially `cpu_shm`
 - payload length
 
@@ -224,6 +228,17 @@ The first implementation should support the smallest practical pixel-format set.
 It is acceptable to start with BGRA or RGBA if that is what the ScreenCaptureKit
 copy path and SDL upload path can use cleanly. The metadata should still model
 format and stride honestly.
+
+The CPU shared-memory implementation carries conservative metadata defaults.
+CoreGraphics seed frames use a Unix-time timestamp clock. Live ScreenCaptureKit
+frames use the media-time clock reported by the sample buffer. Color space is
+`unknown` until the producer can report it explicitly. CPU-copied frames use
+`cpu_copy_complete` or `sck_sample_ready` as their sync kind; neither implies a
+future native GPU timeline. Damage defaults to `full_frame` with
+`damage_base_sequence` equal to the frame sequence until SCK dirty rects or
+accumulated damage are implemented. Loss counters are surfaced as scalar
+metadata so consumers can distinguish normal latest-frame skips from a reliable
+recording cursor.
 
 ## Shared-Memory Transport
 
