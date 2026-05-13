@@ -62,6 +62,15 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
         // tight rowstride (no padding), so we can hand `pixels` straight to
         // the PNG encoder.
         let shot = crate::sck_capture::screenshot_window(adapter, cg_window_id).await?;
+        // Pin the tight-rowstride invariant: the shim guarantees
+        // bytes_per_row == width * 4, and the PNG encoder below depends on
+        // it. A future shim change that introduces padding would silently
+        // corrupt the output; this catches it in debug builds.
+        debug_assert_eq!(
+            shot.bytes_per_row as usize,
+            (shot.width as usize).saturating_mul(4),
+            "SCK screenshot must have tight rowstride"
+        );
         let width = shot.width;
         let height = shot.height;
         let rgba = shot.pixels;

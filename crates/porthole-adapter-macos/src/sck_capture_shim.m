@@ -149,7 +149,7 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
       return porthole_sck_copy_error(@"timed out waiting for ScreenCaptureKit shareable content");
     }
     if (contentError != nil) {
-      return porthole_sck_copy_error(contentError.localizedDescription);
+      return porthole_sck_copy_nserror(contentError, @"SCShareableContent enumeration failed");
     }
 
     SCWindow *target = nil;
@@ -167,11 +167,17 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
     CGFloat scale = 1.0;
     CGRect rect = target.frame;
     if (@available(macOS 14.0, *)) {
+      // infoForFilter: is documented as 14.0+ but is empirically flaky on
+      // 14.0/14.1 and can return nil. Treat nil as "no info available" and
+      // fall through to target.frame + scale 1.0 rather than letting an
+      // unconditional rect = info.contentRect zero-out the dimensions.
       SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
-      if (info.pointPixelScale > 0) {
-        scale = info.pointPixelScale;
+      if (info != nil) {
+        if (info.pointPixelScale > 0) {
+          scale = info.pointPixelScale;
+        }
+        rect = info.contentRect;
       }
-      rect = info.contentRect;
     }
     size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
     size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
@@ -290,6 +296,11 @@ char *porthole_sck_screenshot_window(uint32_t cgWindowId,
     __block SCShareableContent *content = nil;
     __block NSError *contentError = nil;
     dispatch_semaphore_t contentSem = dispatch_semaphore_create(0);
+    // onScreenWindowsOnly:YES skips minimized windows — they're not in the
+    // shareable content set on Tahoe. A caller trying to screenshot a
+    // minimized window will surface as "no ScreenCaptureKit window for
+    // CGWindowID X" rather than a more specific message; this is by
+    // design (you can't screenshot a window that isn't being rendered).
     [SCShareableContent getShareableContentExcludingDesktopWindows:YES
                                                onScreenWindowsOnly:YES
                                                  completionHandler:^(SCShareableContent *shareableContent, NSError *error) {
@@ -301,7 +312,7 @@ char *porthole_sck_screenshot_window(uint32_t cgWindowId,
       return porthole_sck_copy_error(@"timed out waiting for ScreenCaptureKit shareable content");
     }
     if (contentError != nil) {
-      return porthole_sck_copy_error(contentError.localizedDescription);
+      return porthole_sck_copy_nserror(contentError, @"SCShareableContent enumeration failed");
     }
 
     SCWindow *target = nil;
@@ -312,17 +323,23 @@ char *porthole_sck_screenshot_window(uint32_t cgWindowId,
       }
     }
     if (target == nil) {
-      return porthole_sck_copy_error([NSString stringWithFormat:@"no ScreenCaptureKit window for CGWindowID %u", cgWindowId]);
+      return porthole_sck_copy_error([NSString stringWithFormat:@"no ScreenCaptureKit window for CGWindowID %u (window may be minimized or off-screen)", cgWindowId]);
     }
 
     SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
     CGFloat scale = 1.0;
     CGRect rect = target.frame;
+    // infoForFilter: is documented as 14.0+ but is empirically flaky on
+    // 14.0/14.1 and can return nil. Treat nil as "no info available" and
+    // fall through to target.frame + scale 1.0 rather than letting an
+    // unconditional rect = info.contentRect zero-out the dimensions.
     SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
-    if (info.pointPixelScale > 0) {
-      scale = info.pointPixelScale;
+    if (info != nil) {
+      if (info.pointPixelScale > 0) {
+        scale = info.pointPixelScale;
+      }
+      rect = info.contentRect;
     }
-    rect = info.contentRect;
     size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
     size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
 

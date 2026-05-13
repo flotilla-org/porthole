@@ -51,8 +51,11 @@ unsafe extern "C" {
     fn porthole_sck_free_screenshot(pixels: *mut u8);
 }
 
-/// One-shot BGRA8 screenshot via SCScreenshotManager. Caller owns the
-/// returned `pixels` Vec; the C buffer is freed before this returns.
+/// One-shot RGBA8 screenshot via SCScreenshotManager. Pixels are laid out
+/// `[R, G, B, A]` per element with a tight row stride (`bytes_per_row ==
+/// width * 4`), suitable for direct hand-off to the `image` crate's PNG
+/// encoder. Caller owns the returned `pixels` Vec; the C buffer is freed
+/// before this returns.
 pub struct ScreenshotPixels {
     pub pixels: Vec<u8>,
     pub width: u32,
