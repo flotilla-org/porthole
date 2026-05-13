@@ -17,7 +17,7 @@ use capture_transfer::{
         VideoTrackDesc,
     },
     state::SessionState,
-    video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
+    video::{AcquiredVideoFrame, ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
     adapter::{
@@ -106,7 +106,7 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let mut video = VideoSlotManager::new(3);
+        let mut video = VideoSlotManager::new_reusable_pool(3);
         video
             .publish(
                 track_id,
@@ -200,7 +200,7 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let mut video = VideoSlotManager::new(3);
+        let mut video = VideoSlotManager::new_reusable_pool(3);
         publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
 
         let registry = self.clone();
@@ -305,12 +305,17 @@ impl CaptureRegistry {
             consumer_skipped_count: frame.desc.consumer_skipped_count,
             len: frame.bytes().len(),
         };
-        // The fd is a cloned kernel reference to this frame's immutable backing
-        // file. After SCM_RIGHTS transfer, daemon-side pinning is no longer
-        // needed for consumer readability; pruning may unlink the path, but the
-        // receiver's fd remains valid until it closes it.
+        Ok(LatestFrameReply { response, fd, frame })
+    }
+
+    fn release_frame(&self, session_id: &str, frame: AcquiredVideoFrame) -> Result<(), CaptureRegistryError> {
+        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        let session = inner
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
         session.video.release(frame);
-        Ok(LatestFrameReply { response, fd })
+        Ok(())
     }
 
     fn publish_capture_frame(&self, session_id: &str, frame: VideoCaptureFrame) -> Result<(), CaptureRegistryError> {
@@ -337,6 +342,7 @@ impl CaptureRegistry {
 struct LatestFrameReply {
     response: LatestVideoFrameResponse,
     fd: std::os::fd::OwnedFd,
+    frame: AcquiredVideoFrame,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -463,14 +469,23 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let request: LatestVideoFrameRequest =
         serde_json::from_str(line.trim_end()).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
     let reply = registry.latest_frame(&request)?;
-    fdpass::send_fd(&stream, reply.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-    writeln!(
-        stream,
-        "{}",
-        serde_json::to_string(&reply.response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?
-    )
-    .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-    Ok(())
+    let LatestFrameReply { response, fd, frame } = reply;
+    let send_result = (|| {
+        fdpass::send_fd(&stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+        writeln!(
+            stream,
+            "{}",
+            serde_json::to_string(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?
+        )
+        .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+        stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+
+        let mut release_line = String::new();
+        let _ = reader.read_line(&mut release_line);
+        Ok(())
+    })();
+    let release_result = registry.release_frame(&request.session_id, frame);
+    send_result.and(release_result)
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
@@ -517,13 +532,94 @@ fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use capture_transfer::model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat};
+    use capture_transfer::{
+        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
+        video::{VideoFrameDesc, VideoSlotManager},
+    };
     use porthole_core::adapter::{
         VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
         VideoCaptureTimestampClock,
     };
+    use porthole_protocol::capture_sessions::LatestVideoFrameRequest;
 
-    use crate::capture_registry::video_frame_desc_from_capture;
+    use crate::capture_registry::{CaptureRegistry, CaptureSession, video_frame_desc_from_capture};
+
+    fn test_desc(sequence: u64) -> VideoFrameDesc {
+        VideoFrameDesc {
+            sequence,
+            timestamp_ns: sequence,
+            width: 1,
+            height: 1,
+            stride: 4,
+            pixel_format: PixelFormat::Bgra8Unorm,
+            payload_offset: 0,
+            payload_len: 0,
+            payload_map_len: 0,
+            clock_domain: ClockDomain::UnixTime,
+            color_space: ColorSpace::Unknown,
+            sync_kind: FrameSyncKind::CpuCopyComplete,
+            damage_kind: DamageKind::FullFrame,
+            damage_base_sequence: sequence,
+            dropped_before_publish: 0,
+            producer_drop_count: 0,
+            evicted_count: 0,
+            consumer_skipped_count: 0,
+        }
+    }
+
+    #[test]
+    fn latest_frame_reply_keeps_frame_pinned_until_release() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        let mut video = VideoSlotManager::new_reusable_pool(1);
+        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video,
+                _capture_task: None,
+            },
+        );
+
+        let reply = registry
+            .latest_frame(&LatestVideoFrameRequest {
+                session_id: session_id.clone(),
+                track_id: track_id.get(),
+            })
+            .unwrap();
+
+        let pinned = registry
+            .inner
+            .lock()
+            .unwrap()
+            .sessions
+            .get(&session_id)
+            .unwrap()
+            .video
+            .pinned_frame_count();
+        assert_eq!(pinned, 1);
+
+        registry.release_frame(&session_id, reply.frame).unwrap();
+
+        let pinned = registry
+            .inner
+            .lock()
+            .unwrap()
+            .sessions
+            .get(&session_id)
+            .unwrap()
+            .video
+            .pinned_frame_count();
+        assert_eq!(pinned, 0);
+    }
 
     #[test]
     fn video_frame_desc_from_capture_preserves_capture_metadata() {

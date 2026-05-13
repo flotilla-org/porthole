@@ -246,8 +246,7 @@ V1 uses local CPU shared memory. The producer copies ScreenCaptureKit output int
 bounded shared-memory slots owned by the capture-transfer library. Cross-process
 consumers receive file descriptors for those slots with `SCM_RIGHTS`.
 
-Frame payload metadata is range-based even when the first daemon path still uses
-one immutable file per frame:
+Frame payload metadata is range-based:
 
 ```text
 payload_offset
@@ -256,13 +255,17 @@ payload_map_len
 ```
 
 Consumers must validate `payload_offset + payload_len <= payload_map_len` before
-reading. In-process producers may use reusable pool slots today because
-`ft_consumer_release_video_frame` is a real release point. Daemon-backed capture
-sessions still use immutable per-frame files: the current one-shot fd request
-does not tell the daemon when a remote consumer has finished reading, so reusing
-that slot immediately after sending the fd would be unsafe. Cross-process
-reusable pools need an explicit lease/release, cursor watermark, or native fence
-protocol before they become the daemon default.
+reading. In-process producers use `ft_consumer_release_video_frame` as the
+release point. Daemon-backed consumers use the fd-side-channel connection as the
+initial frame lease: the daemon keeps the acquired frame pinned after sending
+the fd and metadata, and releases it when the consumer closes that connection.
+The capture-transfer daemon client therefore keeps the socket alive inside the
+acquired `DaemonFrame` and closes it only after unmapping the payload.
+
+This connection-lifetime lease is intentionally a first step. A future streaming
+protocol should replace it with explicit frame lease ids, cursor watermarks, or
+native release fences, especially once long-lived subscriptions, ordered
+cursors, or GPU-backed payloads exist.
 
 Interactive consumers use latest-frame semantics:
 

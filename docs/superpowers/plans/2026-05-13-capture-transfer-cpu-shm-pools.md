@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add reusable fixed-size CPU shared-memory pool slots for in-process consumers, while keeping daemon-backed sessions on immutable per-frame files until cross-process release semantics exist.
+**Goal:** Add reusable fixed-size CPU shared-memory pool slots for in-process consumers, while initially keeping daemon-backed sessions on immutable per-frame files until cross-process release semantics exist.
 
-**Architecture:** `VideoSlotManager` can run in immutable per-frame mode or reusable-pool mode. Reusable mode owns one CPU shared-memory pool per video track; each pool is a single mmap-backed file divided into fixed-size slots. Publishing copies pixels into an available slot, records `payload_offset`, `payload_len`, and `payload_map_len`, and latest acquisition returns a slice into the pool. The daemon wire also carries offset and map length, but daemon sessions keep using immutable per-frame storage because the one-shot fd API has no remote release point. This is not a shared ring/control-block protocol.
+**Architecture:** `VideoSlotManager` can run in immutable per-frame mode or reusable-pool mode. Reusable mode owns one CPU shared-memory pool per video track; each pool is a single mmap-backed file divided into fixed-size slots. Publishing copies pixels into an available slot, records `payload_offset`, `payload_len`, and `payload_map_len`, and latest acquisition returns a slice into the pool. The daemon wire also carries offset and map length. This is not a shared ring/control-block protocol.
 
 **Tech Stack:** Rust workspace, Unix mmap/fd cloning, serde JSON daemon structs, C ABI header.
 
@@ -18,7 +18,7 @@ This plan implements the next CPU-memory step from the architecture refinement s
 - fixed-size producer-chosen slots inside that region
 - explicit payload offset/length/mapping metadata
 - existing latest-lossy API behavior preserved
-- daemon sessions remain immutable per-frame for safety
+- daemon sessions require a separate lease/release slice before using reusable pools
 
 This plan does not implement:
 
