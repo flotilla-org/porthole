@@ -13,7 +13,9 @@ What has shipped on `main`:
 - macOS adapter for launch (process + artifact), input (key/text/click/scroll), wait (Stable / Dirty / Exists / Gone / TitleMatches), screenshot, focus, close, attention, displays, search, attach, replace, snapshot_geometry.
 - HTTP-over-UDS daemon (`portholed`) and CLI (`porthole`) talking via Unix Domain Socket.
 - System-permissions slice: `porthole onboard` flow, `/info` permission status, `/system-permissions/request` route, capability-aware error mapping (`SystemPermissionNeeded`, `SystemPermissionRequestFailed`).
-- Dev bundle script (`scripts/dev-bundle.sh`) producing an ad-hoc-signed `.app` for stable TCC identity across rebuilds.
+- Dev bundle script (`scripts/dev-bundle.sh`) producing an Apple Development
+  signed `.app` for stable TCC identity across rebuilds; ad-hoc signing is a
+  hard failure because it invalidates TCC grants on rebuild.
 - CI: `cargo build --workspace --locked` / `cargo test --workspace --locked` / `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo +nightly-2026-03-12 fmt --check`.
 
 What's known missing or rough:
