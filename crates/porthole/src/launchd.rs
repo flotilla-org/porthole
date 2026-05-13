@@ -98,16 +98,20 @@ pub fn bootout(plist_path: &Path) -> Result<(), LaunchctlError> {
 /// versions, or a fast race where the daemon's already up again).
 pub fn kickstart_kill() -> Result<(), LaunchctlError> {
     let target = service_target();
-    run_launchctl_kickstart(&["kickstart", "-k", &target])?;
-    run_launchctl_kickstart(&["kickstart", &target])?;
+    run_launchctl_kickstart("kickstart -k", &["kickstart", "-k", &target])?;
+    run_launchctl_kickstart("kickstart", &["kickstart", &target])?;
     Ok(())
 }
 
-fn run_launchctl_kickstart(args: &[&str]) -> Result<(), LaunchctlError> {
+/// Run a `launchctl kickstart[ -k]` invocation. `action` is the human-meaningful
+/// step label that goes into the error on failure — distinct values for the two
+/// invocations in `kickstart_kill` so a failure in the safety-net second step
+/// doesn't look identical to a failure in the kill step.
+fn run_launchctl_kickstart(action: &'static str, args: &[&str]) -> Result<(), LaunchctlError> {
     let output = Command::new("launchctl").args(args).output()?;
     if !output.status.success() {
         return Err(LaunchctlError::NonZero {
-            action: "kickstart",
+            action,
             code: output.status.code(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });

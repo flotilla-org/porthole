@@ -48,12 +48,14 @@ pub enum InstallError {
     Launchctl(#[from] LaunchctlError),
     #[error("HOME env var not set")]
     NoHome,
-    #[error("$HOME is on an external volume (plist resolves to {plist_canonical}); macOS launchd refuses to bootstrap user LaunchAgents from /Volumes/* and returns EIO.\n\n\
+    #[error(
+        "$HOME is on an external volume (plist resolves to {plist_canonical}); macOS launchd refuses to bootstrap user LaunchAgents from /Volumes/* and returns EIO.\n\n\
 The plist has been written to {plist_in_home}. To finish the install, relocate it to the boot volume (one-time sudo):\n\n  \
 sudo install -m 644 -o root -g wheel \\\n    {plist_in_home} \\\n    /Library/LaunchAgents/\n  \
 rm {plist_in_home}\n  \
 launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/{plist_filename}\n\n\
-The relocated plist runs as you (not root) because it's in LaunchAgents, not LaunchDaemons. Bundle and CLI stay where they are.")]
+The relocated plist runs as you (not root) because it's in LaunchAgents, not LaunchDaemons. Bundle and CLI stay where they are."
+    )]
     PlistRequiresSystemRelocation {
         plist_in_home: PathBuf,
         plist_canonical: PathBuf,
@@ -323,15 +325,18 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), InstallError> {
 ///
 /// Returns `None` if the path can't be canonicalized (caller's plist write
 /// would have failed first) or the canonical path doesn't live under
-/// `/Volumes/` — both are non-error outcomes. `Path::starts_with` is
-/// component-aware so `/VolumesNotAMatch/foo` doesn't false-positive.
+/// `/Volumes/` — both are non-error outcomes.
 fn canonical_plist_under_volumes(plist_path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(plist_path).ok()?;
-    if canonical.starts_with("/Volumes/") {
-        Some(canonical)
-    } else {
-        None
-    }
+    if path_under_volumes(&canonical) { Some(canonical) } else { None }
+}
+
+/// True if `path` lives under the `/Volumes/` mount-point prefix.
+/// `Path::starts_with` is component-aware so `/VolumesNotAMatch/foo`
+/// doesn't false-positive. Split out so the predicate is testable without
+/// having to manufacture a real /Volumes/* path on disk.
+fn path_under_volumes(path: &Path) -> bool {
+    path.starts_with("/Volumes/")
 }
 
 fn xml_escape(s: &str) -> String {
@@ -504,24 +509,38 @@ mod tests {
     }
 
     #[test]
-    fn canonical_plist_under_volumes_flags_external_home() {
-        let tmp = tempfile::tempdir().unwrap();
-        let fake_volumes = tmp.path().join("Volumes/MiniHomeX/Library/LaunchAgents");
-        fs::create_dir_all(&fake_volumes).unwrap();
-        let plist = fake_volumes.join("org.flotilla.porthole.plist");
-        fs::write(&plist, "x").unwrap();
+    fn path_under_volumes_flags_paths_under_volumes_prefix() {
+        // Positive case — the actual rule launchd enforces.
+        assert!(path_under_volumes(Path::new(
+            "/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents"
+        )));
+        assert!(path_under_volumes(Path::new("/Volumes/x")));
+    }
 
-        // Build a /Volumes/-prefixed path by symlinking. We can't actually
-        // touch /Volumes in tests, so simulate via a hand-built absolute
-        // path string and rely on the function's behavior with a real path
-        // that canonicalize-resolves to /Volumes/. The test is asserting
-        // the shape: if a path canonicalizes to under /Volumes/, the helper
-        // flags it.
-        //
-        // We test the actual /Volumes/ check via the path-prefix-only test
-        // below; this test pins that canonicalize is being called (the file
-        // must exist for it to succeed).
-        assert!(canonical_plist_under_volumes(&plist).is_none(), "real tempdir path shouldn't be under /Volumes/");
+    #[test]
+    fn path_under_volumes_rejects_non_volumes_paths() {
+        // Boot volume paths must NOT trigger.
+        assert!(!path_under_volumes(Path::new("/Users/x/Library/LaunchAgents")));
+        assert!(!path_under_volumes(Path::new("/Library/LaunchAgents")));
+        assert!(!path_under_volumes(Path::new("/System/Volumes/Data/Users/x")));
+    }
+
+    #[test]
+    fn path_under_volumes_uses_component_aware_prefix() {
+        // `/VolumesNotAMatch/foo` is not under `/Volumes/`. String-prefix
+        // would false-positive here; Path::starts_with must not.
+        assert!(!path_under_volumes(Path::new("/VolumesNotAMatch/foo")));
+    }
+
+    #[test]
+    fn canonical_plist_under_volumes_returns_none_for_boot_volume_path() {
+        // Integration check on the canonicalize half: a real tempdir file
+        // (which lives on the boot volume) must canonicalize to a non-/Volumes/
+        // path, so the helper returns None.
+        let tmp = tempfile::tempdir().unwrap();
+        let plist = tmp.path().join("x.plist");
+        fs::write(&plist, "x").unwrap();
+        assert_eq!(canonical_plist_under_volumes(&plist), None);
     }
 
     #[test]
@@ -540,9 +559,18 @@ mod tests {
         };
         let msg = err.to_string();
         // The three commands the user needs to run, in order.
-        assert!(msg.contains("sudo install -m 644 -o root -g wheel"), "missing sudo install line, got: {msg}");
-        assert!(msg.contains("rm /Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"), "missing rm line, got: {msg}");
-        assert!(msg.contains("launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/org.flotilla.porthole.plist"), "missing bootstrap line, got: {msg}");
+        assert!(
+            msg.contains("sudo install -m 644 -o root -g wheel"),
+            "missing sudo install line, got: {msg}"
+        );
+        assert!(
+            msg.contains("rm /Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"),
+            "missing rm line, got: {msg}"
+        );
+        assert!(
+            msg.contains("launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/org.flotilla.porthole.plist"),
+            "missing bootstrap line, got: {msg}"
+        );
         // The why, so the user understands what they're doing.
         assert!(msg.contains("external volume"), "missing 'external volume' explanation, got: {msg}");
         assert!(msg.contains("EIO"), "missing EIO mention, got: {msg}");
