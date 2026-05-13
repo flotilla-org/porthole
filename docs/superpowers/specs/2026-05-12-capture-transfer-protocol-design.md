@@ -253,9 +253,12 @@ slot, write directly into the mapped payload range, then commit the frame
 metadata into the ring. Outstanding claims reserve their pool slot locally so a
 producer cannot receive the same writable range twice before commit. The older
 `publish(&[u8])` style remains a convenience wrapper for callers that already
-own bytes, but it is not the transport shape we should optimize around.
-Porthole's macOS adapter still owns frames as `Vec<u8>` today; removing that
-adapter-level copy is the next integration step for the CPU path.
+own bytes, but it is not the transport shape we should optimize around. Porthole
+now has a publisher-style live capture path for macOS SCK callbacks: callback
+bytes are handed to the daemon as a borrowed frame view and copied directly into
+the claimed shared-memory slot. The owned `VideoCaptureFrame { bytes: Vec<u8> }`
+path remains as a compatibility/fallback path, and the CoreGraphics startup seed
+can still allocate while it repacks rows.
 
 Frame payload metadata is range-based:
 

@@ -150,6 +150,12 @@ metadata ring entry without first allocating a separate frame-sized buffer. The
 slot manager reserves outstanding claims so multiple producer-side claims cannot
 alias the same writable slot. The existing slice-based publish API is just a
 compatibility wrapper over that shape for callers that already own bytes.
+Porthole's macOS live SCK path uses this through a publisher interface: the
+callback supplies a borrowed frame view, and the daemon claims a slot and copies
+the callback bytes directly into the shared-memory payload. This removes the
+per-live-frame `Vec<u8>` allocation from the SCK callback path. The owned
+`VideoCaptureFrame` path remains for adapters that have not implemented the
+publisher interface and for startup/fallback paths.
 
 For CPU memory buffers, this means preallocated shared-memory slots rather than
 one mmap file per frame. For IOSurface or dmabuf, it means registering a small

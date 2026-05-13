@@ -20,9 +20,10 @@ use capture_transfer::{
     video::{AcquiredVideoFrame, ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
+    ErrorCode, PortholeError,
     adapter::{
-        Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
-        VideoCaptureTimestampClock,
+        Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
+        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind, VideoCaptureTimestampClock,
     },
     surface::SurfaceInfo,
 };
@@ -53,6 +54,76 @@ struct CaptureSession {
     pixel_format: PixelFormat,
     video: VideoSlotManager,
     _capture_task: Option<tokio::task::JoinHandle<()>>,
+    _capture_handle: Option<CaptureSessionHandle>,
+}
+
+struct CaptureSessionHandle {
+    _inner: Box<dyn VideoCaptureSession>,
+}
+
+impl std::fmt::Debug for CaptureSessionHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("CaptureSessionHandle").field(&"<video-capture-session>").finish()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FirstFrameInfo {
+    width: u32,
+    height: u32,
+    stride: u32,
+    pixel_format: PixelFormat,
+}
+
+#[derive(Debug)]
+struct RegistryVideoFramePublisher {
+    registry: CaptureRegistry,
+    session_id: String,
+    first_frame_tx: Mutex<Option<tokio::sync::oneshot::Sender<FirstFrameInfo>>>,
+}
+
+impl RegistryVideoFramePublisher {
+    fn new(registry: CaptureRegistry, session_id: String, first_frame_tx: tokio::sync::oneshot::Sender<FirstFrameInfo>) -> Self {
+        Self {
+            registry,
+            session_id,
+            first_frame_tx: Mutex::new(Some(first_frame_tx)),
+        }
+    }
+}
+
+impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
+    fn publish_frame(&self, frame: VideoCaptureFrameView<'_>) -> Result<(), PortholeError> {
+        let mut inner = self
+            .registry
+            .inner
+            .lock()
+            .map_err(|_| PortholeError::new(ErrorCode::InternalError, "capture registry lock poisoned"))?;
+        let session = inner
+            .sessions
+            .get_mut(&self.session_id)
+            .ok_or_else(|| PortholeError::new(ErrorCode::InternalError, format!("unknown capture session {}", self.session_id)))?;
+        session.width = frame.metadata.width;
+        session.height = frame.metadata.height;
+        session.stride = frame.metadata.stride;
+        session.pixel_format = capture_pixel_format(frame.metadata.pixel_format);
+        publish_capture_frame_view_to_video(&mut session.video, session.track_id, frame)
+            .map_err(|error| PortholeError::new(ErrorCode::InternalError, error.to_string()))?;
+        if let Some(tx) = self
+            .first_frame_tx
+            .lock()
+            .map_err(|_| PortholeError::new(ErrorCode::InternalError, "capture first-frame lock poisoned"))?
+            .take()
+        {
+            let _ = tx.send(FirstFrameInfo {
+                width: session.width,
+                height: session.height,
+                stride: session.stride,
+                pixel_format: session.pixel_format,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl CaptureRegistry {
@@ -147,6 +218,7 @@ impl CaptureRegistry {
             pixel_format: PixelFormat::Bgra8Unorm,
             video,
             _capture_task: None,
+            _capture_handle: None,
         };
         self.inner
             .lock()
@@ -163,6 +235,109 @@ impl CaptureRegistry {
     }
 
     pub async fn create_surface_session(
+        &self,
+        adapter: Arc<dyn Adapter>,
+        surface: SurfaceInfo,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        match self.create_surface_session_with_publisher(adapter.clone(), surface.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(CaptureRegistryError::Porthole(error)) if error.code == ErrorCode::AdapterUnsupported => {}
+            Err(error) => return Err(error),
+        }
+
+        self.create_surface_session_with_owned_frames(adapter, surface).await
+    }
+
+    async fn create_surface_session_with_publisher(
+        &self,
+        adapter: Arc<dyn Adapter>,
+        surface: SurfaceInfo,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        let fd_socket_path = self.fd_socket_path()?;
+        let session_id = Uuid::new_v4().to_string();
+        let mut state = SessionState::new();
+        let source_id = state
+            .register_source(SourceDesc {
+                kind: SourceKind::Window,
+                label: surface.title.clone().unwrap_or_else(|| surface.id.to_string()),
+            })
+            .map_err(CaptureRegistryError::from_capture)?;
+        let track_id = state
+            .register_track(
+                source_id,
+                TrackDesc::Video(VideoTrackDesc {
+                    width: 0,
+                    height: 0,
+                    pixel_format: PixelFormat::Bgra8Unorm,
+                }),
+            )
+            .map_err(CaptureRegistryError::from_capture)?;
+
+        self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?.sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(3),
+                _capture_task: None,
+                _capture_handle: None,
+            },
+        );
+
+        let (first_frame_tx, first_frame_rx) = tokio::sync::oneshot::channel();
+        let publisher = Arc::new(RegistryVideoFramePublisher::new(self.clone(), session_id.clone(), first_frame_tx));
+        let capture = match adapter.start_video_capture_publisher(&surface, publisher).await {
+            Ok(capture) => capture,
+            Err(error) => {
+                self.remove_session(&session_id);
+                return Err(CaptureRegistryError::from_porthole(error));
+            }
+        };
+        self.inner
+            .lock()
+            .map_err(|_| CaptureRegistryError::Poisoned)?
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.clone()))?
+            ._capture_handle = Some(CaptureSessionHandle { _inner: capture });
+
+        let first_frame = match tokio::time::timeout(std::time::Duration::from_secs(5), first_frame_rx).await {
+            Ok(Ok(first_frame)) => first_frame,
+            Ok(Err(_)) => {
+                self.remove_session(&session_id);
+                return Err(CaptureRegistryError::Capture(
+                    "capture publisher ended before first frame".to_string(),
+                ));
+            }
+            Err(_) => {
+                self.remove_session(&session_id);
+                return Err(CaptureRegistryError::Capture(
+                    "timed out waiting for first capture frame".to_string(),
+                ));
+            }
+        };
+        tracing::debug!(
+            session_id = %session_id,
+            width = first_frame.width,
+            height = first_frame.height,
+            stride = first_frame.stride,
+            pixel_format = ?first_frame.pixel_format,
+            "capture publisher produced first frame"
+        );
+
+        Ok(CreateCaptureSessionResponse {
+            session_id,
+            source_id: source_id.get(),
+            track_id: track_id.get(),
+            fd_socket_path,
+        })
+    }
+
+    async fn create_surface_session_with_owned_frames(
         &self,
         adapter: Arc<dyn Adapter>,
         surface: SurfaceInfo,
@@ -232,6 +407,7 @@ impl CaptureRegistry {
             pixel_format,
             video,
             _capture_task: Some(task),
+            _capture_handle: None,
         };
         self.inner
             .lock()
@@ -245,6 +421,12 @@ impl CaptureRegistry {
             track_id: track_id.get(),
             fd_socket_path,
         })
+    }
+
+    fn remove_session(&self, session_id: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.sessions.remove(session_id);
+        }
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<CaptureSessionResponse, CaptureRegistryError> {
@@ -387,32 +569,47 @@ fn publish_capture_frame_to_video(
     track_id: TrackId,
     frame: &VideoCaptureFrame,
 ) -> Result<(), CaptureRegistryError> {
-    video
-        .publish(track_id, video_frame_desc_from_capture(frame), &frame.bytes)
-        .map_err(CaptureRegistryError::from_capture)
+    publish_capture_frame_view_to_video(video, track_id, frame.as_view())
 }
 
+fn publish_capture_frame_view_to_video(
+    video: &mut VideoSlotManager,
+    track_id: TrackId,
+    frame: VideoCaptureFrameView<'_>,
+) -> Result<(), CaptureRegistryError> {
+    let mut claim = video
+        .claim_video_slot(track_id, video_frame_desc_from_capture_metadata(frame.metadata), frame.bytes.len())
+        .map_err(CaptureRegistryError::from_capture)?;
+    claim.copy_from_slice(frame.bytes);
+    video.commit_video_slot(claim).map_err(CaptureRegistryError::from_capture)
+}
+
+#[cfg(test)]
 fn video_frame_desc_from_capture(frame: &VideoCaptureFrame) -> VideoFrameDesc {
+    video_frame_desc_from_capture_metadata(frame.metadata())
+}
+
+fn video_frame_desc_from_capture_metadata(metadata: VideoCaptureFrameMetadata) -> VideoFrameDesc {
     VideoFrameDesc {
-        sequence: frame.sequence,
-        timestamp_ns: frame.timestamp_ns,
-        width: frame.width,
-        height: frame.height,
-        stride: frame.stride,
-        pixel_format: capture_pixel_format(frame.pixel_format),
+        sequence: metadata.sequence,
+        timestamp_ns: metadata.timestamp_ns,
+        width: metadata.width,
+        height: metadata.height,
+        stride: metadata.stride,
+        pixel_format: capture_pixel_format(metadata.pixel_format),
         pool_id: 0,
         slot_id: 0,
         slot_generation: 0,
         payload_offset: 0,
         payload_len: 0,
         payload_map_len: 0,
-        clock_domain: capture_clock_domain(frame.timestamp_clock),
-        color_space: capture_color_space(frame.color_space),
-        sync_kind: capture_sync_kind(frame.sync_kind),
-        damage_kind: capture_damage_kind(frame.damage_kind),
-        damage_base_sequence: frame.damage_base_sequence,
-        dropped_before_publish: frame.dropped_before_publish,
-        producer_drop_count: frame.producer_drop_count,
+        clock_domain: capture_clock_domain(metadata.timestamp_clock),
+        color_space: capture_color_space(metadata.color_space),
+        sync_kind: capture_sync_kind(metadata.sync_kind),
+        damage_kind: capture_damage_kind(metadata.damage_kind),
+        damage_base_sequence: metadata.damage_base_sequence,
+        dropped_before_publish: metadata.dropped_before_publish,
+        producer_drop_count: metadata.producer_drop_count,
         evicted_count: 0,
         consumer_skipped_count: 0,
     }
@@ -546,12 +743,14 @@ mod tests {
         video::{VideoFrameDesc, VideoSlotManager},
     };
     use porthole_core::adapter::{
-        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
-        VideoCaptureTimestampClock,
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
+        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSyncKind, VideoCaptureTimestampClock,
     };
     use porthole_protocol::capture_sessions::LatestVideoFrameRequest;
 
-    use crate::capture_registry::{CaptureRegistry, CaptureSession, video_frame_desc_from_capture};
+    use crate::capture_registry::{
+        CaptureRegistry, CaptureSession, RegistryVideoFramePublisher, publish_capture_frame_view_to_video, video_frame_desc_from_capture,
+    };
 
     fn test_desc(sequence: u64) -> VideoFrameDesc {
         VideoFrameDesc {
@@ -598,6 +797,7 @@ mod tests {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video,
                 _capture_task: None,
+                _capture_handle: None,
             },
         );
 
@@ -663,5 +863,90 @@ mod tests {
         assert_eq!(desc.damage_base_sequence, 3);
         assert_eq!(desc.dropped_before_publish, 2);
         assert_eq!(desc.producer_drop_count, 5);
+    }
+
+    #[test]
+    fn borrowed_capture_frame_view_publishes_into_video_slots() {
+        let mut video = VideoSlotManager::new_reusable_pool(2);
+        let track = capture_transfer::model::TrackId::new(1);
+        let pixels = [9, 8, 7, 6, 5, 4, 3, 2];
+        let metadata = VideoCaptureFrameMetadata {
+            sequence: 11,
+            timestamp_ns: 456,
+            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
+            width: 2,
+            height: 1,
+            stride: 8,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: VideoCaptureColorSpace::Srgb,
+            sync_kind: VideoCaptureSyncKind::SckSampleReady,
+            damage_kind: VideoCaptureDamageKind::FullFrame,
+            damage_base_sequence: 10,
+            dropped_before_publish: 3,
+            producer_drop_count: 4,
+        };
+
+        publish_capture_frame_view_to_video(&mut video, track, VideoCaptureFrameView { metadata, bytes: &pixels }).unwrap();
+
+        let frame = video.acquire_latest(capture_transfer::video::ConsumerId::new(1), track).unwrap();
+        assert_eq!(frame.desc.sequence, 11);
+        assert_eq!(frame.desc.damage_base_sequence, 10);
+        assert_eq!(frame.bytes(), pixels);
+    }
+
+    #[test]
+    fn registry_frame_publisher_updates_session_and_signals_first_frame() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(2),
+                _capture_task: None,
+                _capture_handle: None,
+            },
+        );
+        let (first_tx, mut first_rx) = tokio::sync::oneshot::channel();
+        let publisher = RegistryVideoFramePublisher::new(registry.clone(), session_id.clone(), first_tx);
+        let pixels = [3, 2, 1, 0];
+        let metadata = VideoCaptureFrameMetadata {
+            sequence: 1,
+            timestamp_ns: 10,
+            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
+            width: 1,
+            height: 1,
+            stride: 4,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: VideoCaptureColorSpace::Unknown,
+            sync_kind: VideoCaptureSyncKind::SckSampleReady,
+            damage_kind: VideoCaptureDamageKind::FullFrame,
+            damage_base_sequence: 1,
+            dropped_before_publish: 0,
+            producer_drop_count: 0,
+        };
+
+        publisher.publish_frame(VideoCaptureFrameView { metadata, bytes: &pixels }).unwrap();
+
+        let first = first_rx.try_recv().unwrap();
+        assert_eq!(first.width, 1);
+        assert_eq!(first.height, 1);
+        let mut inner = registry.inner.lock().unwrap();
+        let session = inner.sessions.get_mut(&session_id).unwrap();
+        assert_eq!(session.width, 1);
+        assert_eq!(session.height, 1);
+        assert_eq!(session.stride, 4);
+        let frame = session
+            .video
+            .acquire_latest(capture_transfer::video::ConsumerId::new(1), track_id)
+            .unwrap();
+        assert_eq!(frame.bytes(), pixels);
     }
 }

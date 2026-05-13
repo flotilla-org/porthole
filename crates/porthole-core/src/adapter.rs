@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 
@@ -160,9 +160,99 @@ pub struct VideoCaptureFrame {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoCaptureFrameMetadata {
+    pub sequence: u64,
+    pub timestamp_ns: u64,
+    pub timestamp_clock: VideoCaptureTimestampClock,
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixel_format: VideoCapturePixelFormat,
+    pub color_space: VideoCaptureColorSpace,
+    pub sync_kind: VideoCaptureSyncKind,
+    pub damage_kind: VideoCaptureDamageKind,
+    pub damage_base_sequence: u64,
+    pub dropped_before_publish: u64,
+    pub producer_drop_count: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoCaptureFrameView<'a> {
+    pub metadata: VideoCaptureFrameMetadata,
+    pub bytes: &'a [u8],
+}
+
+impl VideoCaptureFrame {
+    #[must_use]
+    pub const fn metadata(&self) -> VideoCaptureFrameMetadata {
+        VideoCaptureFrameMetadata {
+            sequence: self.sequence,
+            timestamp_ns: self.timestamp_ns,
+            timestamp_clock: self.timestamp_clock,
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            pixel_format: self.pixel_format,
+            color_space: self.color_space,
+            sync_kind: self.sync_kind,
+            damage_kind: self.damage_kind,
+            damage_base_sequence: self.damage_base_sequence,
+            dropped_before_publish: self.dropped_before_publish,
+            producer_drop_count: self.producer_drop_count,
+        }
+    }
+
+    #[must_use]
+    pub fn as_view(&self) -> VideoCaptureFrameView<'_> {
+        VideoCaptureFrameView {
+            metadata: self.metadata(),
+            bytes: &self.bytes,
+        }
+    }
+}
+
+#[cfg(test)]
+mod video_capture_tests {
+    use super::{
+        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCapturePixelFormat, VideoCaptureSyncKind,
+        VideoCaptureTimestampClock,
+    };
+
+    #[test]
+    fn owned_video_capture_frame_exposes_borrowed_view() {
+        let frame = VideoCaptureFrame {
+            sequence: 9,
+            timestamp_ns: 123,
+            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
+            width: 2,
+            height: 1,
+            stride: 8,
+            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
+            color_space: VideoCaptureColorSpace::Srgb,
+            sync_kind: VideoCaptureSyncKind::SckSampleReady,
+            damage_kind: VideoCaptureDamageKind::FullFrame,
+            damage_base_sequence: 8,
+            dropped_before_publish: 1,
+            producer_drop_count: 2,
+            bytes: vec![1, 2, 3, 4],
+        };
+
+        let view = frame.as_view();
+
+        assert_eq!(view.metadata.sequence, 9);
+        assert_eq!(view.metadata.damage_base_sequence, 8);
+        assert_eq!(view.bytes, &[1, 2, 3, 4]);
+    }
+}
+
 #[async_trait]
 pub trait VideoCaptureSession: Send {
     async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError>;
+}
+
+pub trait VideoCaptureFramePublisher: Send + Sync {
+    fn publish_frame(&self, frame: VideoCaptureFrameView<'_>) -> Result<(), PortholeError>;
 }
 
 #[async_trait]
@@ -177,6 +267,17 @@ pub trait Adapter: Send + Sync {
         Err(PortholeError::new(
             ErrorCode::AdapterUnsupported,
             "adapter does not support live video capture",
+        ))
+    }
+
+    async fn start_video_capture_publisher(
+        &self,
+        _surface: &SurfaceInfo,
+        _publisher: Arc<dyn VideoCaptureFramePublisher>,
+    ) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "adapter does not support publisher-based live video capture",
         ))
     }
 
