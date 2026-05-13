@@ -224,7 +224,9 @@ void porthole_sck_stop(void *rawHandle) {
     });
     dispatch_semaphore_t stopSem = dispatch_semaphore_create(0);
     [handle.stream stopCaptureWithCompletionHandler:^(NSError *error) {
-      (void)error;
+      if (error != nil) {
+        NSLog(@"Porthole ScreenCaptureKit stop failed: %@", error.localizedDescription);
+      }
       dispatch_semaphore_signal(stopSem);
     }];
     dispatch_semaphore_wait(stopSem, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));

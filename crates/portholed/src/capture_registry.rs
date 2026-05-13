@@ -97,6 +97,8 @@ impl CaptureRegistry {
         // SessionState gives us typed id allocation and validation here; the
         // current capture-session registry stores the resulting ids directly
         // until event replay is exposed over the daemon boundary.
+        // TODO: retain or replay these events once daemon consumers subscribe
+        // to generic session setup instead of synthesizing attach events.
 
         let mut video = VideoSlotManager::new(3);
         video
@@ -177,6 +179,8 @@ impl CaptureRegistry {
         // SessionState gives us typed id allocation and validation here; the
         // current capture-session registry stores the resulting ids directly
         // until event replay is exposed over the daemon boundary.
+        // TODO: retain or replay these events once daemon consumers subscribe
+        // to generic session setup instead of synthesizing attach events.
 
         let mut video = VideoSlotManager::new(3);
         publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
