@@ -140,6 +140,8 @@ pub enum VideoCaptureDamageKind {
     Unknown,
     FullFrame,
     None,
+    // TODO: expose inline and sidecar rect damage when the publisher path grows
+    // variable-length damage metadata.
 }
 
 #[derive(Clone, Debug)]

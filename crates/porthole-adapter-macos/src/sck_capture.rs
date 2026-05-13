@@ -135,7 +135,7 @@ struct PublisherCallbackState {
 
 // SAFETY: CallbackState is shared with SCK callback threads through an opaque C
 // ctx pointer. Its fields are thread-safe, and the object is immutable after
-// construction except for the atomic sequence counter.
+// construction except for atomic telemetry counters.
 unsafe impl Send for CallbackState {}
 // SAFETY: See the Send impl; callbacks only take shared references to state.
 unsafe impl Sync for CallbackState {}
@@ -500,9 +500,7 @@ extern "C" fn frame_callback(ctx: *mut c_void, frame: *const SckFrame) {
         }))
         .is_err()
     {
-        state
-            .dropped_before_publish
-            .fetch_add(dropped_before_publish.saturating_add(1), Ordering::Relaxed);
+        restore_failed_publish_drop_run(&state.dropped_before_publish, dropped_before_publish);
         state.producer_drop_count.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -552,11 +550,16 @@ extern "C" fn publisher_frame_callback(ctx: *mut c_void, frame: *const SckFrame)
     };
     if let Err(error) = state.publisher.publish_frame(view) {
         let _ = state.error_tx.try_send(Err(error.to_string()));
-        state
-            .dropped_before_publish
-            .fetch_add(dropped_before_publish.saturating_add(1), Ordering::Relaxed);
+        restore_failed_publish_drop_run(&state.dropped_before_publish, dropped_before_publish);
         state.producer_drop_count.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn restore_failed_publish_drop_run(counter: &AtomicU64, claimed_drop_run: u64) {
+    // The preceding swap gives exactly one callback ownership of the observed
+    // drop run. If publishing fails, put that run back and include this failed
+    // frame so the next successful publish reports all missed frames.
+    counter.fetch_add(claimed_drop_run.saturating_add(1), Ordering::Relaxed);
 }
 
 extern "C" fn error_callback(ctx: *mut c_void, message: *const c_char) {
@@ -592,7 +595,7 @@ mod tests {
 
     use super::{
         CaptureFrameMetadata, CaptureFrameSource, K_CV_PIXEL_FORMAT_TYPE_32_BGRA, PublisherCallbackState, SckFrame, frame_metadata,
-        publisher_frame_callback,
+        publisher_frame_callback, restore_failed_publish_drop_run,
     };
 
     #[derive(Debug, Default)]
@@ -674,5 +677,17 @@ mod tests {
         assert_eq!(frames[0].0.width, 2);
         assert_eq!(frames[0].0.sync_kind, VideoCaptureSyncKind::SckSampleReady);
         assert_eq!(frames[0].1, pixels);
+    }
+
+    #[test]
+    fn failed_publish_drop_restore_does_not_double_count_racing_claims() {
+        let counter = std::sync::atomic::AtomicU64::new(2);
+
+        let first_claim = counter.swap(0, std::sync::atomic::Ordering::Relaxed);
+        let second_claim = counter.swap(0, std::sync::atomic::Ordering::Relaxed);
+        restore_failed_publish_drop_run(&counter, first_claim);
+        restore_failed_publish_drop_run(&counter, second_claim);
+
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), 4);
     }
 }
