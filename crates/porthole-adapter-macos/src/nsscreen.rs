@@ -1,42 +1,39 @@
-//! CGDirectDisplayID → NSScreen.backingScaleFactor lookup.
+//! CGDirectDisplayID → backing scale factor lookup, via CoreGraphics only.
 //!
-//! `CGDisplayPixelsWide` on modern macOS returns the logical width of the
-//! active display mode (i.e., points), not the backing pixel count, so it
-//! cannot be used to compute the backing scale factor. `NSScreen.back-
-//! ingScaleFactor` is the authoritative source — this module bridges the
-//! CGDirectDisplayID we have to the matching `NSScreen` and reads it.
+//! `CGDisplayPixelsWide`/`CGDisplayPixelsHigh` on modern macOS return the
+//! logical width/height of the active display mode (i.e., points), not the
+//! backing pixel count — so they can't be used directly. But the *display
+//! mode* object exposes both logical (`width`/`height`) and physical
+//! (`pixel_width`/`pixel_height`) sizes, and the ratio is the backing scale.
+//! That's enough; no NSScreen lookup needed.
+//!
+//! Why all-CG and not NSScreen: on macOS Tahoe (26 / Darwin 25),
+//! `[NSScreen screens]` returns a Swift `[NSScreen]` array bridged to
+//! NSArray via `_ContiguousArrayStorage`. The bridge's `count` *and*
+//! `countByEnumeratingWithState:objects:count:` selectors return
+//! `NSInteger` (signed, encoding `q`), but `objc2-foundation 0.2.2`
+//! declares both with `NSUInteger` (unsigned, `Q`). Runtime encoding
+//! validation panics on every call — and crucially it panics on
+//! *both* `.count()` and `.iter()`, so there's no way to enumerate the
+//! array safely with this bindings version. The CG path sidesteps the
+//! whole Swift-array-bridge surface.
 
 #![cfg(target_os = "macos")]
 
-use objc2_app_kit::NSScreen;
-use objc2_foundation::{MainThreadMarker, NSNumber, NSString};
+use core_graphics::display::CGDisplay;
 
 /// Look up the backing scale factor for a display. Returns 1.0 if the
-/// screen can't be found (e.g., just disconnected between our display
-/// enumeration and this call).
+/// display is gone or has no active mode (just-disconnected race), or if
+/// the mode reports zero logical width (defensive).
 pub fn backing_scale_factor_for(display_id: u32) -> f64 {
-    // SAFETY: NSScreen enumeration is safe to call from background threads
-    // on macOS in practice. We construct the marker to satisfy the type
-    // system; the underlying Obj-C calls are thread-safe for read-only
-    // display queries.
-    let mtm = unsafe { MainThreadMarker::new_unchecked() };
-
-    unsafe {
-        let screens = NSScreen::screens(mtm);
-        let count = screens.count();
-        for i in 0..count {
-            let screen = screens.objectAtIndex(i);
-            let device_description = screen.deviceDescription();
-            let screen_number_key = NSString::from_str("NSScreenNumber");
-            let value = device_description.objectForKey(&*screen_number_key);
-            let Some(value) = value else { continue };
-            // Cast AnyObject → NSNumber to read the numeric display ID.
-            let number: objc2::rc::Retained<NSNumber> = objc2::rc::Retained::cast(value);
-            let this_id = number.unsignedIntValue();
-            if this_id == display_id {
-                return screen.backingScaleFactor();
-            }
-        }
-        1.0
+    let display = CGDisplay::new(display_id);
+    let Some(mode) = display.display_mode() else {
+        return 1.0;
+    };
+    let logical = mode.width();
+    let physical = mode.pixel_width();
+    if logical == 0 {
+        return 1.0;
     }
+    physical as f64 / logical as f64
 }

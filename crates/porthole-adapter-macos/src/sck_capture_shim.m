@@ -109,6 +109,18 @@ static char *porthole_sck_copy_error(NSString *message) {
   return copy;
 }
 
+// Like porthole_sck_copy_error but includes NSError domain+code so the
+// caller can disambiguate generic "failed to start stream" messages
+// (which SCK uses for several distinct underlying conditions).
+static char *porthole_sck_copy_nserror(NSError *error, NSString *context) {
+  NSString *full = [NSString stringWithFormat:@"%@: %@ (domain=%@ code=%ld)",
+                                                context,
+                                                error.localizedDescription ?: @"(no description)",
+                                                error.domain ?: @"(no domain)",
+                                                (long)error.code];
+  return porthole_sck_copy_error(full);
+}
+
 char *porthole_sck_start_window(uint32_t cgWindowId,
                                 PortholeSckFrameCallback frameCallback,
                                 PortholeSckErrorCallback errorCallback,
@@ -137,7 +149,7 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
       return porthole_sck_copy_error(@"timed out waiting for ScreenCaptureKit shareable content");
     }
     if (contentError != nil) {
-      return porthole_sck_copy_error(contentError.localizedDescription);
+      return porthole_sck_copy_nserror(contentError, @"SCShareableContent enumeration failed");
     }
 
     SCWindow *target = nil;
@@ -155,11 +167,17 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
     CGFloat scale = 1.0;
     CGRect rect = target.frame;
     if (@available(macOS 14.0, *)) {
+      // infoForFilter: is documented as 14.0+ but is empirically flaky on
+      // 14.0/14.1 and can return nil. Treat nil as "no info available" and
+      // fall through to target.frame + scale 1.0 rather than letting an
+      // unconditional rect = info.contentRect zero-out the dimensions.
       SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
-      if (info.pointPixelScale > 0) {
-        scale = info.pointPixelScale;
+      if (info != nil) {
+        if (info.pointPixelScale > 0) {
+          scale = info.pointPixelScale;
+        }
+        rect = info.contentRect;
       }
-      rect = info.contentRect;
     }
     size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
     size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
@@ -241,4 +259,165 @@ void porthole_sck_stop(void *rawHandle) {
 
 void porthole_sck_free_error(char *message) {
   free(message);
+}
+
+// One-shot window screenshot via SCScreenshotManager (macOS 14+). Replaces
+// the legacy CGWindowListCreateImage path which returns null on macOS Tahoe
+// (26 / Darwin 25) even with Screen Recording granted.
+//
+// On success: writes a heap-allocated RGBA8 pixel buffer to *outPixels (caller
+// must call porthole_sck_free_screenshot to release), its length, dimensions,
+// and row stride to the corresponding out-parameters, and returns NULL.
+// On failure: returns a heap-allocated UTF-8 error string (caller must call
+// porthole_sck_free_error). All out-parameters are left zeroed.
+//
+// We render the captured CGImage through a CGBitmapContext with
+// kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big to normalize the
+// pixel format — CGImageGetDataProvider's raw bytes aren't guaranteed
+// RGBA across macOS versions, but the bitmap context's output is. Tight
+// rowstride (width*4, no padding) makes the buffer suitable for direct
+// hand-off to a PNG encoder on the Rust side.
+char *porthole_sck_screenshot_window(uint32_t cgWindowId,
+                                     uint8_t **outPixels,
+                                     size_t *outLen,
+                                     uint32_t *outWidth,
+                                     uint32_t *outHeight,
+                                     uint32_t *outBytesPerRow) {
+  if (outPixels == NULL || outLen == NULL || outWidth == NULL || outHeight == NULL || outBytesPerRow == NULL) {
+    return porthole_sck_copy_error(@"missing screenshot output pointer");
+  }
+  *outPixels = NULL;
+  *outLen = 0;
+  *outWidth = 0;
+  *outHeight = 0;
+  *outBytesPerRow = 0;
+
+  if (@available(macOS 14.0, *)) {
+    __block SCShareableContent *content = nil;
+    __block NSError *contentError = nil;
+    dispatch_semaphore_t contentSem = dispatch_semaphore_create(0);
+    // onScreenWindowsOnly:YES skips minimized windows — they're not in the
+    // shareable content set on Tahoe. A caller trying to screenshot a
+    // minimized window will surface as "no ScreenCaptureKit window for
+    // CGWindowID X" rather than a more specific message; this is by
+    // design (you can't screenshot a window that isn't being rendered).
+    [SCShareableContent getShareableContentExcludingDesktopWindows:YES
+                                               onScreenWindowsOnly:YES
+                                                 completionHandler:^(SCShareableContent *shareableContent, NSError *error) {
+                                                   content = shareableContent;
+                                                   contentError = error;
+                                                   dispatch_semaphore_signal(contentSem);
+                                                 }];
+    if (dispatch_semaphore_wait(contentSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+      return porthole_sck_copy_error(@"timed out waiting for ScreenCaptureKit shareable content");
+    }
+    if (contentError != nil) {
+      return porthole_sck_copy_nserror(contentError, @"SCShareableContent enumeration failed");
+    }
+
+    SCWindow *target = nil;
+    for (SCWindow *window in content.windows) {
+      if (window.windowID == cgWindowId) {
+        target = window;
+        break;
+      }
+    }
+    if (target == nil) {
+      return porthole_sck_copy_error([NSString stringWithFormat:@"no ScreenCaptureKit window for CGWindowID %u (window may be minimized or off-screen)", cgWindowId]);
+    }
+
+    SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+    CGFloat scale = 1.0;
+    CGRect rect = target.frame;
+    // infoForFilter: is documented as 14.0+ but is empirically flaky on
+    // 14.0/14.1 and can return nil. Treat nil as "no info available" and
+    // fall through to target.frame + scale 1.0 rather than letting an
+    // unconditional rect = info.contentRect zero-out the dimensions.
+    SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
+    if (info != nil) {
+      if (info.pointPixelScale > 0) {
+        scale = info.pointPixelScale;
+      }
+      rect = info.contentRect;
+    }
+    size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
+    size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
+
+    SCStreamConfiguration *config = [SCStreamConfiguration new];
+    config.width = width;
+    config.height = height;
+    config.pixelFormat = kCVPixelFormatType_32BGRA;
+    config.showsCursor = NO;
+    config.capturesAudio = NO;
+
+    __block CGImageRef capturedImage = NULL;
+    __block NSError *captureError = nil;
+    dispatch_semaphore_t captureSem = dispatch_semaphore_create(0);
+    [SCScreenshotManager captureImageWithFilter:filter
+                                  configuration:config
+                              completionHandler:^(CGImageRef _Nullable image, NSError *_Nullable error) {
+                                if (error != nil) {
+                                  captureError = error;
+                                } else if (image != NULL) {
+                                  capturedImage = CGImageRetain(image);
+                                }
+                                dispatch_semaphore_signal(captureSem);
+                              }];
+    if (dispatch_semaphore_wait(captureSem, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) {
+      return porthole_sck_copy_error(@"timed out capturing screenshot via ScreenCaptureKit");
+    }
+    if (captureError != nil) {
+      return porthole_sck_copy_nserror(captureError, @"SCScreenshotManager captureImageWithFilter failed");
+    }
+    if (capturedImage == NULL) {
+      return porthole_sck_copy_error(@"ScreenCaptureKit returned no image");
+    }
+
+    size_t imgWidth = CGImageGetWidth(capturedImage);
+    size_t imgHeight = CGImageGetHeight(capturedImage);
+    if (imgWidth == 0 || imgHeight == 0 || imgWidth > UINT32_MAX || imgHeight > UINT32_MAX) {
+      CGImageRelease(capturedImage);
+      return porthole_sck_copy_error(@"ScreenCaptureKit returned an image with invalid dimensions");
+    }
+
+    size_t bytesPerRow = imgWidth * 4;
+    size_t totalBytes = bytesPerRow * imgHeight;
+    uint8_t *pixels = malloc(totalBytes);
+    if (pixels == NULL) {
+      CGImageRelease(capturedImage);
+      return porthole_sck_copy_error(@"failed to allocate screenshot pixel buffer");
+    }
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    if (colorSpace == NULL) {
+      free(pixels);
+      CGImageRelease(capturedImage);
+      return porthole_sck_copy_error(@"failed to create RGB color space");
+    }
+    CGContextRef ctx = CGBitmapContextCreate(pixels, imgWidth, imgHeight, 8, bytesPerRow, colorSpace,
+                                             kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(colorSpace);
+    if (ctx == NULL) {
+      free(pixels);
+      CGImageRelease(capturedImage);
+      return porthole_sck_copy_error(@"failed to create screenshot bitmap context");
+    }
+
+    CGContextDrawImage(ctx, CGRectMake(0, 0, imgWidth, imgHeight), capturedImage);
+    CGContextRelease(ctx);
+    CGImageRelease(capturedImage);
+
+    *outPixels = pixels;
+    *outLen = totalBytes;
+    *outWidth = (uint32_t)imgWidth;
+    *outHeight = (uint32_t)imgHeight;
+    *outBytesPerRow = (uint32_t)bytesPerRow;
+    return NULL;
+  } else {
+    return porthole_sck_copy_error(@"SCScreenshotManager requires macOS 14.0 or newer");
+  }
+}
+
+void porthole_sck_free_screenshot(uint8_t *pixels) {
+  free(pixels);
 }

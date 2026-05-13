@@ -18,11 +18,6 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
 
     #[cfg(target_os = "macos")]
     {
-        use core_graphics::{
-            geometry::{CGPoint, CGRect, CGSize},
-            window::{create_image, kCGWindowImageBoundsIgnoreFraming, kCGWindowImageDefault, kCGWindowListOptionIncludingWindow},
-        };
-
         let pid = surface
             .pid
             .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "surface has no pid; cannot locate CGWindowID"))?
@@ -61,44 +56,24 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
             locate_cg_window_id(pid, surface.title.as_deref())?
         };
 
-        // An empty rect tells CG to use the window's own bounds when combined with
-        // kCGWindowListOptionIncludingWindow.
-        let zero_rect = CGRect::new(&CGPoint::new(0.0, 0.0), &CGSize::new(0.0, 0.0));
-        let image = match create_image(
-            zero_rect,
-            kCGWindowListOptionIncludingWindow,
-            cg_window_id,
-            kCGWindowImageBoundsIgnoreFraming | kCGWindowImageDefault,
-        ) {
-            Some(img) => img,
-            None => {
-                return Err(PortholeError::new(
-                    ErrorCode::SystemPermissionNeeded,
-                    "CGWindowListCreateImage returned null — likely missing Screen Recording permission",
-                ));
-            }
-        };
-
-        let width = image.width() as u32;
-        let height = image.height() as u32;
-        let bytes_per_row = image.bytes_per_row();
-        let data = image.data();
-
-        let bgra: &[u8] = data.bytes();
-        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-        for row in 0..height as usize {
-            let row_start = row * bytes_per_row;
-            for col in 0..width as usize {
-                let px = row_start + col * 4;
-                let b = bgra[px];
-                let g = bgra[px + 1];
-                let r = bgra[px + 2];
-                let a = bgra[px + 3];
-                rgba.extend_from_slice(&[r, g, b, a]);
-            }
-        }
-        drop(data);
-        drop(image);
+        // ScreenCaptureKit one-shot. Replaces the legacy CGWindowListCreate-
+        // Image path which returns null on macOS Tahoe (26 / Darwin 25) even
+        // with Screen Recording granted. The shim renders into RGBA8 with
+        // tight rowstride (no padding), so we can hand `pixels` straight to
+        // the PNG encoder.
+        let shot = crate::sck_capture::screenshot_window(adapter, cg_window_id).await?;
+        // Pin the tight-rowstride invariant: the shim guarantees
+        // bytes_per_row == width * 4, and the PNG encoder below depends on
+        // it. A future shim change that introduces padding would silently
+        // corrupt the output; this catches it in debug builds.
+        debug_assert_eq!(
+            shot.bytes_per_row as usize,
+            (shot.width as usize).saturating_mul(4),
+            "SCK screenshot must have tight rowstride"
+        );
+        let width = shot.width;
+        let height = shot.height;
+        let rgba = shot.pixels;
 
         let mut png_bytes = Vec::new();
         {
