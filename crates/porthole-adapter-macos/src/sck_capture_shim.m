@@ -152,9 +152,15 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
     }
 
     SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
-    SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
-    CGFloat scale = info.pointPixelScale > 0 ? info.pointPixelScale : 1.0;
-    CGRect rect = info.contentRect;
+    CGFloat scale = 1.0;
+    CGRect rect = target.frame;
+    if (@available(macOS 14.0, *)) {
+      SCShareableContentInfo *info = [SCShareableContent infoForFilter:filter];
+      if (info.pointPixelScale > 0) {
+        scale = info.pointPixelScale;
+      }
+      rect = info.contentRect;
+    }
     size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
     size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
 

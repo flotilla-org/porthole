@@ -84,6 +84,10 @@ fn start_video_capture_blocking(cg_window_id: u32) -> Result<MacVideoCaptureSess
     });
     let state_ptr = Box::into_raw(state);
     let mut raw_handle = ptr::null_mut();
+    if let Some(frame) = initial_frame {
+        // Queue the seed frame before SCK starts so consumers observe sequence 1 before live callbacks.
+        let _ = tx.try_send(Ok(frame));
+    }
     let error = unsafe {
         porthole_sck_start_window(
             cg_window_id,
@@ -110,10 +114,6 @@ fn start_video_capture_blocking(cg_window_id: u32) -> Result<MacVideoCaptureSess
             "ScreenCaptureKit did not return a stream handle",
         ));
     }
-    if let Some(frame) = initial_frame {
-        let _ = tx.try_send(Ok(frame));
-    }
-
     Ok(MacVideoCaptureSession {
         raw_handle,
         state: state_ptr,
@@ -224,6 +224,7 @@ extern "C" fn frame_callback(ctx: *mut c_void, frame: *const SckFrame) {
     }
     let bytes = unsafe { std::slice::from_raw_parts(frame.data, frame.len) }.to_vec();
     let sequence = state.sequence.fetch_add(1, Ordering::Relaxed);
+    // Capacity is intentionally small; slow consumers drop frames and catch the next one.
     let _ = state.tx.try_send(Ok(VideoCaptureFrame {
         sequence,
         timestamp_ns: frame.timestamp_ns,
