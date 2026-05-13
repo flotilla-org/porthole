@@ -136,6 +136,15 @@ mod tests {
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
+        assert_eq!(frame.clock_domain, "unknown");
+        assert_eq!(frame.color_space, "unknown");
+        assert_eq!(frame.sync_kind, "cpu_copy_complete");
+        assert_eq!(frame.damage_kind, "full_frame");
+        assert_eq!(frame.damage_base_sequence, 1);
+        assert_eq!(frame.dropped_before_publish, 0);
+        assert_eq!(frame.producer_drop_count, 0);
+        assert_eq!(frame.evicted_count, 0);
+        assert_eq!(frame.consumer_skipped_count, 0);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();
@@ -178,6 +187,11 @@ mod tests {
         assert_eq!(frame.timestamp_ns, 123_456_789);
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
+        assert_eq!(frame.clock_domain, "unknown");
+        assert_eq!(frame.color_space, "unknown");
+        assert_eq!(frame.sync_kind, "cpu_copy_complete");
+        assert_eq!(frame.damage_kind, "full_frame");
+        assert_eq!(frame.damage_base_sequence, 1);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();

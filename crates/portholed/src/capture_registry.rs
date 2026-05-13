@@ -12,7 +12,7 @@ use std::{
 
 use capture_transfer::{
     fdpass,
-    model::{PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId, VideoTrackDesc},
+    model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId, VideoTrackDesc},
     state::SessionState,
     video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
@@ -112,6 +112,15 @@ impl CaptureRegistry {
                     height: 1,
                     stride: 8,
                     pixel_format: PixelFormat::Bgra8Unorm,
+                    clock_domain: ClockDomain::Unknown,
+                    color_space: ColorSpace::Unknown,
+                    sync_kind: FrameSyncKind::CpuCopyComplete,
+                    damage_kind: DamageKind::FullFrame,
+                    damage_base_sequence: 1,
+                    dropped_before_publish: 0,
+                    producer_drop_count: 0,
+                    evicted_count: 0,
+                    consumer_skipped_count: 0,
                 },
                 &[0, 64, 128, 255, 255, 64, 128, 255],
             )
@@ -273,6 +282,15 @@ impl CaptureRegistry {
             height: frame.desc.height,
             stride: frame.desc.stride,
             pixel_format: pixel_format_name(frame.desc.pixel_format).to_string(),
+            clock_domain: clock_domain_name(frame.desc.clock_domain).to_string(),
+            color_space: color_space_name(frame.desc.color_space).to_string(),
+            sync_kind: sync_kind_name(frame.desc.sync_kind).to_string(),
+            damage_kind: damage_kind_name(frame.desc.damage_kind).to_string(),
+            damage_base_sequence: frame.desc.damage_base_sequence,
+            dropped_before_publish: frame.desc.dropped_before_publish,
+            producer_drop_count: frame.desc.producer_drop_count,
+            evicted_count: frame.desc.evicted_count,
+            consumer_skipped_count: frame.desc.consumer_skipped_count,
             len: frame.bytes().len(),
         };
         // The fd is a cloned kernel reference to this frame's immutable backing
@@ -355,6 +373,15 @@ fn publish_capture_frame_to_video(
                 height: frame.height,
                 stride: frame.stride,
                 pixel_format: capture_pixel_format(frame.pixel_format),
+                clock_domain: ClockDomain::Unknown,
+                color_space: ColorSpace::Unknown,
+                sync_kind: FrameSyncKind::CpuCopyComplete,
+                damage_kind: DamageKind::FullFrame,
+                damage_base_sequence: frame.sequence,
+                dropped_before_publish: 0,
+                producer_drop_count: 0,
+                evicted_count: 0,
+                consumer_skipped_count: 0,
             },
             &frame.bytes,
         )
@@ -402,5 +429,40 @@ fn pixel_format_name(format: PixelFormat) -> &'static str {
     match format {
         PixelFormat::Bgra8Unorm => "bgra8_unorm",
         PixelFormat::Rgba8Unorm => "rgba8_unorm",
+    }
+}
+
+fn clock_domain_name(domain: ClockDomain) -> &'static str {
+    match domain {
+        ClockDomain::Unknown => "unknown",
+        ClockDomain::UnixTime => "unix_time",
+        ClockDomain::MediaTime => "media_time",
+        ClockDomain::HostTime => "host_time",
+    }
+}
+
+fn color_space_name(color_space: ColorSpace) -> &'static str {
+    match color_space {
+        ColorSpace::Unknown => "unknown",
+        ColorSpace::Srgb => "srgb",
+    }
+}
+
+fn sync_kind_name(sync_kind: FrameSyncKind) -> &'static str {
+    match sync_kind {
+        FrameSyncKind::Unknown => "unknown",
+        FrameSyncKind::CpuCopyComplete => "cpu_copy_complete",
+        FrameSyncKind::SckSampleReady => "sck_sample_ready",
+        FrameSyncKind::NativeTimeline => "native_timeline",
+    }
+}
+
+fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
+    match damage_kind {
+        DamageKind::Unknown => "unknown",
+        DamageKind::FullFrame => "full_frame",
+        DamageKind::None => "none",
+        DamageKind::InlineRects => "inline_rects",
+        DamageKind::SidecarRects => "sidecar_rects",
     }
 }
