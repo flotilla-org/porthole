@@ -81,6 +81,20 @@ pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> 
     let pid = surface
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "text: surface has no pid"))? as i32;
+
+    // Confirm the target process is alive before we start posting events.
+    // `CGEvent.post_to_pid` returns no status — once we hand events off they
+    // either land or vanish, and we can't tell the difference. Checking once
+    // up-front turns "process died yesterday, every char silently dropped"
+    // into a clear SurfaceDead error. Matches Peekaboo's BackgroundInput-
+    // Driver, which guards every action with the same pattern.
+    if !is_pid_alive(pid) {
+        return Err(PortholeError::new(
+            ErrorCode::SurfaceDead,
+            format!("text: target process {pid} is not running"),
+        ));
+    }
+
     let source = event_source()?;
     let empty_flags = CGEventFlags::empty();
     let mut buf = [0u16; 2];
@@ -99,6 +113,25 @@ pub async fn text(adapter: &MacOsAdapter, surface: &SurfaceInfo, text: &str) -> 
         up.post_to_pid(pid);
     }
     Ok(())
+}
+
+/// True if `pid` names a running process the caller could signal — used as a
+/// lightweight pre-flight before pid-routed event posting. Treats `EPERM` as
+/// "alive" since it implies the process exists but is privilege-protected;
+/// matches Peekaboo's `isProcessAlive` so behavior is consistent across
+/// macOS automation tools.
+fn is_pid_alive(pid: i32) -> bool {
+    // SAFETY: kill(pid, 0) sends no signal; it only tests existence and
+    // signal permission. No preconditions on the pid value beyond it
+    // being an int.
+    let rc = unsafe { libc::kill(pid, 0) };
+    if rc == 0 {
+        return true;
+    }
+    // SAFETY: errno is a thread-local; reading it after a libc call is
+    // standard.
+    let errno = unsafe { *libc::__error() };
+    errno == libc::EPERM
 }
 
 pub async fn click(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
