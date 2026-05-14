@@ -110,17 +110,29 @@ impl InputPipeline {
     /// Look up the surface's current display's backing scale factor.
     /// Used to convert physical-pixel coordinates to the logical points the
     /// adapter expects. Errors if the surface's display has been disconnected
-    /// between snapshot and lookup — better to fail loudly than silently
-    /// apply a wrong scale.
+    /// between snapshot and lookup, or reports a non-positive / non-finite
+    /// scale — better to fail loudly than silently produce `±inf` coords
+    /// that bypass the input-finite check (which already ran on the caller's
+    /// pre-conversion values).
+    ///
+    /// `snapshot_geometry` and `displays` are independent OS queries; running
+    /// them with `try_join!` avoids paying the round-trip cost serially on
+    /// every physical-units request.
     async fn surface_scale(&self, info: &SurfaceInfo) -> Result<f64, PortholeError> {
-        let snap = self.adapter.snapshot_geometry(info).await?;
-        let displays = self.adapter.displays().await?;
-        displays.iter().find(|d| d.id == snap.display_id).map(|d| d.scale).ok_or_else(|| {
+        let (snap, displays) = tokio::try_join!(self.adapter.snapshot_geometry(info), self.adapter.displays())?;
+        let display = displays.iter().find(|d| d.id == snap.display_id).ok_or_else(|| {
             PortholeError::new(
-                ErrorCode::CapabilityMissing,
+                ErrorCode::InternalError,
                 format!("display {} not found while resolving scale", snap.display_id.as_str()),
             )
-        })
+        })?;
+        if !display.scale.is_finite() || display.scale <= 0.0 {
+            return Err(PortholeError::new(
+                ErrorCode::InternalError,
+                format!("display {} reports invalid scale {}", display.id.as_str(), display.scale),
+            ));
+        }
+        Ok(display.scale)
     }
 
     async fn to_logical_click(&self, spec: &ClickSpec, units: CoordUnits, info: &SurfaceInfo) -> Result<ClickSpec, PortholeError> {
@@ -384,9 +396,10 @@ mod tests {
     #[tokio::test]
     async fn place_physical_units_halve_on_2x_display() {
         // 2x Retina: caller passes physical pixels, adapter must see logical
-        // points (half of physical). The InMemoryAdapter's snapshot_geometry
-        // returns display_id "disp_test"; we seed `displays()` to claim that
-        // display has scale 2.
+        // points (half of physical). `set_test_scale_for_snapshot` seeds
+        // `next_displays` with a single display whose id matches the
+        // InMemoryAdapter's default snapshot_geometry display_id
+        // ("in-mem-display-0") so the pipeline's scale lookup resolves.
         let (adapter, handles, id) = setup().await;
         adapter.set_test_scale_for_snapshot(2.0).await;
         let pipeline = InputPipeline::new(adapter.clone(), handles);
@@ -440,6 +453,30 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].1.x, 400.0);
         assert_eq!(calls[0].1.y, 300.0);
+    }
+
+    #[tokio::test]
+    async fn physical_units_with_zero_scale_errors_rather_than_dividing() {
+        // Pathological display state (scale=0) must not produce ±inf coords
+        // that skip the input finite-check; surface_scale guards against it.
+        let (adapter, handles, id) = setup().await;
+        adapter.set_test_scale_for_snapshot(0.0).await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let err = pipeline
+            .place(
+                &id,
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 100.0,
+                },
+                CoordUnits::Physical,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InternalError);
+        assert!(err.message.contains("invalid scale"), "got: {}", err.message);
     }
 
     #[tokio::test]
