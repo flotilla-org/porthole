@@ -41,6 +41,19 @@ impl DaemonClient {
         self.send_and_parse(req).await
     }
 
+    pub async fn delete_empty(&self, path: &str) -> Result<(), ClientError> {
+        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
+        let req = Request::builder().method(Method::DELETE).uri(uri).body(Full::new(Bytes::new()))?;
+        let res = self.http.request(req).await?;
+        let status = res.status();
+        let body = res.into_body().collect().await?.to_bytes();
+        if !status.is_success() {
+            let wire: WireError = serde_json::from_slice(&body).map_err(ClientError::from)?;
+            return Err(ClientError::Api(wire));
+        }
+        Ok(())
+    }
+
     /// Block until /info responds successfully, with exponential backoff up to
     /// `timeout`. Used after a daemon restart (kickstart) — the UDS socket
     /// briefly disappears while launchd brings the new process up.

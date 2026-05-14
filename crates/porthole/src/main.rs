@@ -523,6 +523,8 @@ enum CaptureSessionCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Close a capture session and stop its producer.
+    Close { session_id: String },
 }
 
 impl From<ButtonArg> for ClickButton {
@@ -912,6 +914,7 @@ async fn main() -> std::process::ExitCode {
                 )
                 .await
             }
+            CaptureSessionCommand::Close { session_id } => porthole::commands::capture_session::close(&client, &session_id).await,
         },
         Command::Search {
             app_name,

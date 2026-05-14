@@ -5,6 +5,8 @@ pub struct CreateCaptureSessionResponse {
     pub session_id: String,
     pub source_id: u64,
     pub track_id: u64,
+    pub status: String,
+    pub status_message: Option<String>,
     pub fd_socket_path: String,
 }
 
@@ -13,6 +15,8 @@ pub struct CaptureSessionResponse {
     pub session_id: String,
     pub source_id: u64,
     pub track_id: u64,
+    pub status: String,
+    pub status_message: Option<String>,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
