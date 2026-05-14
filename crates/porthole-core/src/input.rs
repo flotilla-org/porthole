@@ -1,5 +1,31 @@
 use serde::{Deserialize, Serialize};
 
+/// Coordinate unit system used by positional inputs (`click`, `scroll`, `place`).
+///
+/// macOS Cocoa APIs (and porthole's adapter layer) speak in **logical points**:
+/// the unit a CGImage of a Retina screen reports as `width` / `bytes_per_row /
+/// 4`'s ratio is *not* the same as what `NSWindow.frame` reports. A 2× Retina
+/// display reports the same window as 1400 *logical* but 2800 *physical*
+/// across these two surfaces.
+///
+/// Clients that source coordinates from physical-pixel sources — terminal
+/// `CSI 16t` / `CSI 14t` reports (kitty etc. report physical px), porthole's
+/// own `screenshot` output dimensions, raw `CGImage.width` — would otherwise
+/// have to find their surface's display scale, divide, and pass logical.
+/// `Physical` lets the daemon do that conversion at the boundary using the
+/// surface's current display, so a window moving between mixed-DPI displays
+/// can't desync the caller's cached scale factor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoordUnits {
+    /// Logical points (Cocoa native). Default — preserves pre-flag behaviour.
+    #[default]
+    Logical,
+    /// Physical pixels. Daemon converts by dividing by the surface's current
+    /// display backing scale factor before applying.
+    Physical,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum Modifier {

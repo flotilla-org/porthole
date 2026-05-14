@@ -12,7 +12,7 @@ use porthole::{
 };
 use porthole_core::{
     display::Rect,
-    input::{ClickButton, Modifier},
+    input::{ClickButton, CoordUnits, Modifier},
     placement::{Anchor, DisplayTarget, PlacementSpec},
     wait::WaitCondition,
 };
@@ -271,6 +271,12 @@ enum Command {
         count: u8,
         #[arg(long = "mod", value_enum)]
         modifiers: Vec<ModifierArg>,
+        /// Coordinate units for x/y. Default `logical` (Cocoa points).
+        /// `physical` divides x/y by the surface's display scale before
+        /// applying — useful with terminal pixel reports or `screenshot`
+        /// output dimensions.
+        #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
+        units: UnitsArg,
         #[arg(long)]
         session: Option<String>,
     },
@@ -285,6 +291,12 @@ enum Command {
         delta_x: f64,
         #[arg(long, default_value_t = 0.0)]
         delta_y: f64,
+        /// Coordinate units for x/y. Default `logical` (Cocoa points).
+        /// `physical` divides x/y by the surface's display scale. Note
+        /// that `delta_x`/`delta_y` are wheel-line counts, not pixels, so
+        /// they are never scaled.
+        #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
+        units: UnitsArg,
         #[arg(long)]
         session: Option<String>,
     },
@@ -318,7 +330,8 @@ enum Command {
     },
     /// In-place resize/move a surface. Surface identity is preserved — the
     /// inner process keeps running, unlike `replace`. Coordinates are in
-    /// global screen points.
+    /// global screen points by default; pass `--units physical` to specify
+    /// in pixels (daemon divides by the surface's display scale).
     Place {
         surface_id: String,
         #[arg(long)]
@@ -329,6 +342,10 @@ enum Command {
         w: f64,
         #[arg(long)]
         h: f64,
+        /// Coordinate units for x/y/w/h. Default `logical` (Cocoa points).
+        /// `physical` divides all four by the surface's display scale.
+        #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
+        units: UnitsArg,
         #[arg(long)]
         session: Option<String>,
     },
@@ -469,6 +486,26 @@ enum ButtonArg {
     Left,
     Right,
     Middle,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default)]
+enum UnitsArg {
+    /// Logical points (Cocoa native) — the default, matches pre-flag behaviour.
+    #[default]
+    Logical,
+    /// Physical pixels — daemon divides by the surface's display scale before
+    /// applying. Useful when sourcing coordinates from terminal `CSI 16t/14t`
+    /// reports or porthole's own `screenshot` output dimensions.
+    Physical,
+}
+
+impl From<UnitsArg> for CoordUnits {
+    fn from(u: UnitsArg) -> Self {
+        match u {
+            UnitsArg::Logical => CoordUnits::Logical,
+            UnitsArg::Physical => CoordUnits::Physical,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -768,6 +805,7 @@ async fn main() -> std::process::ExitCode {
             button,
             count,
             modifiers,
+            units,
             session,
         } => {
             click_cmd::run(
@@ -779,6 +817,7 @@ async fn main() -> std::process::ExitCode {
                     button: button.into(),
                     count,
                     modifiers: modifiers.into_iter().map(Modifier::from).collect(),
+                    units: units.into(),
                     session,
                 },
             )
@@ -790,6 +829,7 @@ async fn main() -> std::process::ExitCode {
             y,
             delta_x,
             delta_y,
+            units,
             session,
         } => {
             scroll_cmd::run(
@@ -800,6 +840,7 @@ async fn main() -> std::process::ExitCode {
                     y,
                     delta_x,
                     delta_y,
+                    units: units.into(),
                     session,
                 },
             )
@@ -842,8 +883,9 @@ async fn main() -> std::process::ExitCode {
             y,
             w,
             h,
+            units,
             session,
-        } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, session).await,
+        } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, units.into(), session).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
         Command::CaptureSession { command } => match command {
