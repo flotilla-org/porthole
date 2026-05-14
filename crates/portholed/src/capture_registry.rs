@@ -55,13 +55,16 @@ struct CaptureSession {
     pixel_format: PixelFormat,
     video: VideoSlotManager,
     capture_task: Option<tokio::task::JoinHandle<()>>,
-    _capture_handle: Option<CaptureSessionHandle>,
+    startup_cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Drop for CaptureSession {
     fn drop(&mut self) {
         if let Some(task) = self.capture_task.take() {
             task.abort();
+        }
+        if let Some(cancel) = self.startup_cancel.take() {
+            let _ = cancel.send(());
         }
     }
 }
@@ -70,6 +73,7 @@ impl Drop for CaptureSession {
 enum CaptureSessionLifecycle {
     Starting,
     Ready,
+    Closed(String),
     Failed(String),
 }
 
@@ -78,25 +82,16 @@ impl CaptureSessionLifecycle {
         match self {
             Self::Starting => "starting",
             Self::Ready => "ready",
+            Self::Closed(_) => "closed",
             Self::Failed(_) => "failed",
         }
     }
 
     fn status_message(&self) -> Option<String> {
         match self {
-            Self::Failed(message) => Some(message.clone()),
+            Self::Closed(message) | Self::Failed(message) => Some(message.clone()),
             Self::Starting | Self::Ready => None,
         }
-    }
-}
-
-struct CaptureSessionHandle {
-    _inner: Box<dyn VideoCaptureSession>,
-}
-
-impl std::fmt::Debug for CaptureSessionHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("CaptureSessionHandle").field(&"<video-capture-session>").finish()
     }
 }
 
@@ -255,7 +250,7 @@ impl CaptureRegistry {
             pixel_format: PixelFormat::Bgra8Unorm,
             video,
             capture_task: None,
-            _capture_handle: None,
+            startup_cancel: None,
         };
         self.inner
             .lock()
@@ -312,6 +307,7 @@ impl CaptureRegistry {
             )
             .map_err(CaptureRegistryError::from_capture)?;
 
+        let (startup_cancel_tx, startup_cancel_rx) = tokio::sync::oneshot::channel();
         self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?.sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -324,7 +320,7 @@ impl CaptureRegistry {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(3),
                 capture_task: None,
-                _capture_handle: None,
+                startup_cancel: Some(startup_cancel_tx),
             },
         );
 
@@ -337,29 +333,50 @@ impl CaptureRegistry {
                 return Err(CaptureRegistryError::from_porthole(error));
             }
         };
+        let task = tokio::spawn(run_capture_session_monitor(self.clone(), session_id.clone(), capture));
+        {
+            let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+            let Some(session) = inner.sessions.get_mut(&session_id) else {
+                task.abort();
+                return Err(CaptureRegistryError::Closed {
+                    session_id,
+                    message: "capture session closed during startup".to_string(),
+                });
+            };
+            session.capture_task = Some(task);
+        }
+
+        let first_frame = tokio::select! {
+            result = tokio::time::timeout(std::time::Duration::from_secs(5), first_frame_rx) => match result {
+                Ok(Ok(first_frame)) => first_frame,
+                Ok(Err(_)) => {
+                    self.remove_session(&session_id);
+                    return Err(CaptureRegistryError::Capture(
+                        "capture publisher ended before first frame".to_string(),
+                    ));
+                }
+                Err(_) => {
+                    self.remove_session(&session_id);
+                    return Err(CaptureRegistryError::Capture(
+                        "timed out waiting for first capture frame".to_string(),
+                    ));
+                }
+            },
+            _ = startup_cancel_rx => {
+                return Err(self.startup_terminal_error(&session_id));
+            }
+        };
+
         self.inner
             .lock()
             .map_err(|_| CaptureRegistryError::Poisoned)?
             .sessions
             .get_mut(&session_id)
-            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.clone()))?
-            ._capture_handle = Some(CaptureSessionHandle { _inner: capture });
-
-        let first_frame = match tokio::time::timeout(std::time::Duration::from_secs(5), first_frame_rx).await {
-            Ok(Ok(first_frame)) => first_frame,
-            Ok(Err(_)) => {
-                self.remove_session(&session_id);
-                return Err(CaptureRegistryError::Capture(
-                    "capture publisher ended before first frame".to_string(),
-                ));
-            }
-            Err(_) => {
-                self.remove_session(&session_id);
-                return Err(CaptureRegistryError::Capture(
-                    "timed out waiting for first capture frame".to_string(),
-                ));
-            }
-        };
+            .ok_or_else(|| CaptureRegistryError::Closed {
+                session_id: session_id.clone(),
+                message: "capture session closed during startup".to_string(),
+            })?
+            .startup_cancel = None;
         tracing::debug!(
             session_id = %session_id,
             width = first_frame.width,
@@ -423,23 +440,7 @@ impl CaptureRegistry {
         let mut video = VideoSlotManager::new_reusable_pool(3);
         publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
 
-        let registry = self.clone();
-        let task_session_id = session_id.clone();
-        let task = tokio::spawn(async move {
-            loop {
-                match capture.next_frame().await {
-                    Ok(Some(frame)) => {
-                        let _ = registry.publish_capture_frame(&task_session_id, frame);
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        tracing::warn!(session_id = %task_session_id, error = %error, "capture stream stopped with error");
-                        registry.mark_session_failed(&task_session_id, error.to_string());
-                        break;
-                    }
-                }
-            }
-        });
+        let task = tokio::spawn(run_capture_session_monitor(self.clone(), session_id.clone(), capture));
 
         let session = CaptureSession {
             source_id,
@@ -451,7 +452,7 @@ impl CaptureRegistry {
             pixel_format,
             video,
             capture_task: Some(task),
-            _capture_handle: None,
+            startup_cancel: None,
         };
         self.inner
             .lock()
@@ -489,7 +490,52 @@ impl CaptureRegistry {
         if let Ok(mut inner) = self.inner.lock()
             && let Some(session) = inner.sessions.get_mut(session_id)
         {
+            if let Some(cancel) = session.startup_cancel.take() {
+                let _ = cancel.send(());
+            }
             session.lifecycle = CaptureSessionLifecycle::Failed(message);
+        }
+    }
+
+    fn mark_session_closed(&self, session_id: &str, message: String) {
+        if let Ok(mut inner) = self.inner.lock()
+            && let Some(session) = inner.sessions.get_mut(session_id)
+        {
+            if let Some(cancel) = session.startup_cancel.take() {
+                let _ = cancel.send(());
+            }
+            session.lifecycle = CaptureSessionLifecycle::Closed(message);
+        }
+    }
+
+    fn startup_terminal_error(&self, session_id: &str) -> CaptureRegistryError {
+        let Ok(inner) = self.inner.lock() else {
+            return CaptureRegistryError::Poisoned;
+        };
+        match inner.sessions.get(session_id).map(|session| &session.lifecycle) {
+            Some(CaptureSessionLifecycle::Failed(message)) => CaptureRegistryError::Failed {
+                session_id: session_id.to_string(),
+                message: message.clone(),
+            },
+            Some(CaptureSessionLifecycle::Closed(message)) => CaptureRegistryError::Closed {
+                session_id: session_id.to_string(),
+                message: message.clone(),
+            },
+            Some(CaptureSessionLifecycle::Starting | CaptureSessionLifecycle::Ready) => {
+                tracing::warn!(
+                    session_id,
+                    lifecycle = ?inner.sessions.get(session_id).map(|session| &session.lifecycle),
+                    "startup cancellation fired while session was not terminal"
+                );
+                CaptureRegistryError::Closed {
+                    session_id: session_id.to_string(),
+                    message: "capture session closed during startup".to_string(),
+                }
+            }
+            None => CaptureRegistryError::Closed {
+                session_id: session_id.to_string(),
+                message: "capture session closed during startup".to_string(),
+            },
         }
     }
 
@@ -532,6 +578,12 @@ impl CaptureRegistry {
             }
             CaptureSessionLifecycle::Failed(message) => {
                 return Err(CaptureRegistryError::Failed {
+                    session_id: request.session_id.clone(),
+                    message: message.clone(),
+                });
+            }
+            CaptureSessionLifecycle::Closed(message) => {
+                return Err(CaptureRegistryError::Closed {
                     session_id: request.session_id.clone(),
                     message: message.clone(),
                 });
@@ -608,6 +660,25 @@ impl CaptureRegistry {
     }
 }
 
+async fn run_capture_session_monitor(registry: CaptureRegistry, task_session_id: String, mut capture: Box<dyn VideoCaptureSession>) {
+    loop {
+        match capture.next_frame().await {
+            Ok(Some(frame)) => {
+                let _ = registry.publish_capture_frame(&task_session_id, frame);
+            }
+            Ok(None) => {
+                registry.mark_session_closed(&task_session_id, "capture stream ended".to_string());
+                break;
+            }
+            Err(error) => {
+                tracing::warn!(session_id = %task_session_id, error = %error, "capture stream stopped with error");
+                registry.mark_session_failed(&task_session_id, error.to_string());
+                break;
+            }
+        }
+    }
+}
+
 struct LatestFrameReply {
     response: LatestVideoFrameResponse,
     fd: std::os::fd::OwnedFd,
@@ -627,6 +698,9 @@ pub enum CaptureRegistryError {
 
     #[error("capture session {session_id} failed: {message}")]
     Failed { session_id: String, message: String },
+
+    #[error("capture session {session_id} is closed: {message}")]
+    Closed { session_id: String, message: String },
 
     #[error("capture registry lock poisoned")]
     Poisoned,
@@ -825,19 +899,25 @@ fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
+    use async_trait::async_trait;
     use capture_transfer::{
         model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
         video::{VideoFrameDesc, VideoSlotManager},
     };
-    use porthole_core::adapter::{
-        VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
-        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSyncKind, VideoCaptureTimestampClock,
+    use porthole_core::{
+        ErrorCode, PortholeError,
+        adapter::{
+            VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
+            VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind, VideoCaptureTimestampClock,
+        },
     };
     use porthole_protocol::capture_sessions::LatestVideoFrameRequest;
 
     use crate::capture_registry::{
         CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle, RegistryVideoFramePublisher,
-        publish_capture_frame_view_to_video, video_frame_desc_from_capture,
+        publish_capture_frame_view_to_video, run_capture_session_monitor, video_frame_desc_from_capture,
     };
 
     fn test_desc(sequence: u64) -> VideoFrameDesc {
@@ -866,6 +946,25 @@ mod tests {
         }
     }
 
+    struct ScriptedVideoCaptureSession {
+        results: VecDeque<Result<Option<VideoCaptureFrame>, PortholeError>>,
+    }
+
+    impl ScriptedVideoCaptureSession {
+        fn new(results: Vec<Result<Option<VideoCaptureFrame>, PortholeError>>) -> Self {
+            Self {
+                results: VecDeque::from(results),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl VideoCaptureSession for ScriptedVideoCaptureSession {
+        async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError> {
+            self.results.pop_front().unwrap_or(Ok(None))
+        }
+    }
+
     #[test]
     fn latest_frame_reply_keeps_frame_pinned_until_release() {
         let registry = CaptureRegistry::disabled();
@@ -886,7 +985,7 @@ mod tests {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video,
                 capture_task: None,
-                _capture_handle: None,
+                startup_cancel: None,
             },
         );
 
@@ -940,7 +1039,7 @@ mod tests {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(1),
                 capture_task: None,
-                _capture_handle: None,
+                startup_cancel: None,
             },
         );
 
@@ -976,7 +1075,7 @@ mod tests {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(1),
                 capture_task: None,
-                _capture_handle: None,
+                startup_cancel: None,
             },
         );
 
@@ -991,6 +1090,190 @@ mod tests {
                 session_id: id,
                 message,
             }) if id == session_id && message == "producer stopped"
+        ));
+    }
+
+    #[test]
+    fn latest_frame_rejects_closed_session_before_track_lookup() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "closed-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Closed("capture stream ended".to_string()),
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                startup_cancel: None,
+            },
+        );
+
+        let result = registry.latest_frame(&LatestVideoFrameRequest {
+            session_id: session_id.clone(),
+            track_id: track_id.get(),
+        });
+
+        assert!(matches!(
+            result,
+            Err(CaptureRegistryError::Closed {
+                session_id: id,
+                message,
+            }) if id == session_id && message == "capture stream ended"
+        ));
+    }
+
+    #[tokio::test]
+    async fn capture_session_monitor_marks_session_closed_when_stream_ends() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "owned-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                startup_cancel: None,
+            },
+        );
+
+        run_capture_session_monitor(
+            registry.clone(),
+            session_id.clone(),
+            Box::new(ScriptedVideoCaptureSession::new(vec![Ok(None)])),
+        )
+        .await;
+
+        let inner = registry.inner.lock().unwrap();
+        let session = inner.sessions.get(&session_id).unwrap();
+        assert_eq!(
+            session.lifecycle,
+            CaptureSessionLifecycle::Closed("capture stream ended".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn close_session_sends_startup_cancel_signal() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "starting-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Starting,
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                startup_cancel: Some(cancel_tx),
+            },
+        );
+
+        registry.close_session(&session_id).unwrap();
+
+        cancel_rx.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn capture_session_monitor_marks_session_failed_on_error() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "publisher-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                startup_cancel: None,
+            },
+        );
+
+        run_capture_session_monitor(
+            registry.clone(),
+            session_id.clone(),
+            Box::new(ScriptedVideoCaptureSession::new(vec![Err(PortholeError::new(
+                ErrorCode::CapabilityMissing,
+                "source disappeared",
+            ))])),
+        )
+        .await;
+
+        let inner = registry.inner.lock().unwrap();
+        let session = inner.sessions.get(&session_id).unwrap();
+        assert_eq!(
+            session.lifecycle,
+            CaptureSessionLifecycle::Failed("capability_missing: source disappeared".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn capture_session_monitor_wakes_startup_waiter_on_error() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "publisher-starting-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Starting,
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                startup_cancel: Some(cancel_tx),
+            },
+        );
+
+        run_capture_session_monitor(
+            registry.clone(),
+            session_id.clone(),
+            Box::new(ScriptedVideoCaptureSession::new(vec![Err(PortholeError::new(
+                ErrorCode::CapabilityMissing,
+                "source disappeared",
+            ))])),
+        )
+        .await;
+
+        cancel_rx.await.unwrap();
+        assert!(matches!(
+            registry.startup_terminal_error(&session_id),
+            CaptureRegistryError::Failed {
+                session_id: id,
+                message,
+            } if id == session_id && message == "capability_missing: source disappeared"
         ));
     }
 
@@ -1073,7 +1356,7 @@ mod tests {
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(2),
                 capture_task: None,
-                _capture_handle: None,
+                startup_cancel: None,
             },
         );
         let (first_tx, mut first_rx) = tokio::sync::oneshot::channel();

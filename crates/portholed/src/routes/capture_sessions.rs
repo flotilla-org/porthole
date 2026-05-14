@@ -41,7 +41,7 @@ fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
         CaptureRegistryError::Porthole(error) => return ApiError(error.into()),
         CaptureRegistryError::Poisoned | CaptureRegistryError::Io(_) => ErrorCode::InternalError,
         CaptureRegistryError::Failed { .. } => ErrorCode::InternalError,
-        CaptureRegistryError::NotReady { .. } => ErrorCode::InvalidArgument,
+        CaptureRegistryError::NotReady { .. } | CaptureRegistryError::Closed { .. } => ErrorCode::InvalidArgument,
         CaptureRegistryError::FdSocketDisabled | CaptureRegistryError::Capture(_) => ErrorCode::InvalidArgument,
     };
     ApiError(PortholeError::new(code, error.to_string()).into())
@@ -62,5 +62,16 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn closed_capture_session_maps_to_invalid_argument() {
+        let response = capture_error_to_api(CaptureRegistryError::Closed {
+            session_id: "capture-1".to_string(),
+            message: "capture stream ended".to_string(),
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
