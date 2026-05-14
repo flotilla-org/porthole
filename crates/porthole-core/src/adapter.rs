@@ -6,6 +6,7 @@ pub use crate::display::Rect;
 use crate::{
     ErrorCode, PortholeError,
     attention::AttentionInfo,
+    content_rect::ContentRectInfo,
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
@@ -361,6 +362,12 @@ pub trait Adapter: Send + Sync {
     /// Returns display-local coords — caller (ReplacePipeline) uses both fields to
     /// inject inheritance into the replacement launch's placement.
     async fn snapshot_geometry(&self, surface: &SurfaceInfo) -> Result<GeometrySnapshot, PortholeError>;
+
+    /// Resolve the inner content rect of a surface, in **window-local logical**
+    /// units. The pipeline converts to physical when the caller asks. Adapters
+    /// return `ContentRectUnavailable` when the accessibility tree exposes the
+    /// window but no usable content child.
+    async fn content_rect(&self, surface: &SurfaceInfo) -> Result<ContentRectInfo, PortholeError>;
 
     /// The canonical string names of capabilities this adapter supports.
     /// Each entry corresponds to a verb/resource that the adapter can resolve

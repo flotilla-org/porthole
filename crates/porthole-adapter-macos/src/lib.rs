@@ -19,6 +19,7 @@ pub mod attention;
 pub mod ax;
 pub mod capture;
 pub mod close_focus;
+pub mod content_rect;
 pub mod correlation;
 pub mod cursor;
 pub mod display;
@@ -224,6 +225,13 @@ impl Adapter for MacOsAdapter {
         snapshot::snapshot_geometry(self, surface).await
     }
 
+    async fn content_rect(
+        &self,
+        surface: &porthole_core::surface::SurfaceInfo,
+    ) -> Result<porthole_core::content_rect::ContentRectInfo, porthole_core::PortholeError> {
+        content_rect::content_rect(self, surface).await
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         vec![
             "launch_process",
@@ -248,6 +256,7 @@ impl Adapter for MacOsAdapter {
             "replace",
             "auto_dismiss",
             "system_permission_prompt",
+            "content_rect",
         ]
     }
 }

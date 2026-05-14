@@ -3,6 +3,7 @@ pub mod attention;
 pub mod capture_session;
 pub mod click;
 pub mod close;
+pub mod content_rect;
 pub mod displays;
 pub mod focus;
 pub mod info;

@@ -109,6 +109,7 @@ impl IntoResponse for ApiError {
             ErrorCode::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::CloseFailed => StatusCode::CONFLICT,
             ErrorCode::LaunchReturnedExisting => StatusCode::CONFLICT,
+            ErrorCode::ContentRectUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
         };
         (status, Json(self.0)).into_response()
     }
