@@ -116,7 +116,7 @@ impl InputPipeline {
 
     /// Resolve the inner content rect of a surface. Returns the adapter's
     /// `ContentRectInfo` with rect coords converted to the caller's units.
-    /// `ax_role` and `descent` are passed through unchanged — they are debug
+    /// `role` and `descent` are passed through unchanged — they are debug
     /// fields callers use to diagnose surprises.
     pub async fn content_rect(&self, surface: &SurfaceId, units: CoordUnits) -> Result<ContentRectInfo, PortholeError> {
         let info = self.handles.require_alive(surface).await?;
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(out.rect.y, 28.0);
         assert_eq!(out.rect.w, 800.0);
         assert_eq!(out.rect.h, 572.0);
-        assert_eq!(out.ax_role, "AXScrollArea");
+        assert_eq!(out.role, "AXScrollArea");
         assert_eq!(out.descent, crate::content_rect::Descent::Contents);
         assert_eq!(adapter.content_rect_calls().await.len(), 1);
     }

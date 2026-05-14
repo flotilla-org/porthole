@@ -10,9 +10,12 @@ pub struct ContentRectQuery {
 }
 
 /// Body for `GET /surfaces/{id}/content-rect`. Returns the surface's inner
-/// content rectangle in **window-local** coordinates. `ax_role` and `descent`
+/// content rectangle in **window-local** coordinates. `role` and `descent`
 /// are debug-grade fields callers use to diagnose surprising results without
-/// needing daemon logs — they are part of the wire contract.
+/// needing daemon logs — they are part of the wire contract. `role` is the
+/// host accessibility surface's role string (AX role on macOS, AT-SPI role
+/// on Linux, UIA control type on Windows, ARIA role for webview shims). The
+/// daemon does not interpret it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ContentRectResponse {
     pub x: f64,
@@ -20,7 +23,7 @@ pub struct ContentRectResponse {
     pub w: f64,
     pub h: f64,
     pub units: CoordUnits,
-    pub ax_role: String,
+    pub role: String,
     pub descent: Descent,
 }
 
@@ -50,13 +53,13 @@ mod tests {
             w: 1400.0,
             h: 872.0,
             units: CoordUnits::Logical,
-            ax_role: "AXScrollArea".into(),
+            role: "AXScrollArea".into(),
             descent: Descent::Contents,
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: ContentRectResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(back.y, 28.0);
-        assert_eq!(back.ax_role, "AXScrollArea");
+        assert_eq!(back.role, "AXScrollArea");
         assert!(matches!(back.descent, Descent::Contents));
         assert!(matches!(back.units, CoordUnits::Logical));
     }
@@ -69,7 +72,7 @@ mod tests {
             w: 0.0,
             h: 0.0,
             units: CoordUnits::Logical,
-            ax_role: "AXGroup".into(),
+            role: "AXGroup".into(),
             descent: Descent::LargestChild,
         };
         let json = serde_json::to_string(&r).unwrap();

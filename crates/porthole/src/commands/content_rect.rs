@@ -23,7 +23,7 @@ pub async fn run(client: &DaemonClient, surface_id: String, units: CoordUnits) -
     println!("w: {}", res.w);
     println!("h: {}", res.h);
     println!("units: {units_str}");
-    println!("ax_role: {}", res.ax_role);
+    println!("role: {}", res.role);
     println!("descent: {descent_str}");
     Ok(())
 }

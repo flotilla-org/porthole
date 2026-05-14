@@ -21,9 +21,16 @@ pub enum Descent {
 ///
 /// The pipeline converts to physical pixels when the caller asked for them;
 /// adapters do not see `CoordUnits`.
+///
+/// `role` is the host accessibility surface's role string for the matched
+/// element. The macOS adapter populates it with an `AX` role
+/// (`AXScrollArea`, `AXGroup`, …); a future Linux adapter would use AT-SPI
+/// role names; Windows would use UIAutomation control types; a webview shim
+/// would use ARIA roles. The field is opaque debugging metadata for the
+/// client; the daemon does not interpret it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContentRectInfo {
     pub rect: Rect,
-    pub ax_role: String,
+    pub role: String,
     pub descent: Descent,
 }

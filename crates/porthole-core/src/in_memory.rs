@@ -493,7 +493,7 @@ impl Adapter for InMemoryAdapter {
                     w: 800.0,
                     h: 572.0,
                 },
-                ax_role: "AXScrollArea".to_string(),
+                role: "AXScrollArea".to_string(),
                 descent: Descent::Contents,
             })
         })
