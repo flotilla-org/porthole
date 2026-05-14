@@ -275,11 +275,11 @@ Consumers must validate `payload_offset + payload_len <= payload_map_len` before
 reading and must treat `pool_id`, `slot_id`, and `slot_generation` as the
 identity of the payload slot the frame metadata names. In-process producers use
 `ft_consumer_release_video_frame` as the release point. Daemon-backed consumers
-use the fd-side-channel connection as the initial frame lease: the daemon keeps
-the acquired frame pinned after sending the fd and metadata, and releases it
-when the consumer closes that connection. The capture-transfer daemon client
-therefore keeps the socket alive inside the acquired `DaemonFrame` and closes it
-only after unmapping the payload.
+use a long-lived fd-side-channel connection as the consumer control channel.
+Each acquired frame receives an explicit `lease_id`; the daemon keeps the frame
+pinned after sending the fd and metadata, then releases it when the consumer
+sends `release_video_frame` for that lease. Disconnect cleanup releases any
+outstanding leases for that connection.
 
 The implementation now has an internal per-track metadata ring. Publishing a
 frame writes the CPU slot, appends a fixed-size ring entry naming the sequence,
@@ -289,10 +289,11 @@ prototype of the future shared control structure; it is still exercised through
 the existing request/lease path rather than mapped directly by external
 consumers.
 
-This connection-lifetime lease is intentionally a first step. A future streaming
-protocol should replace it with explicit frame lease ids, cursor watermarks, or
-native release fences, especially once long-lived subscriptions, ordered
-cursors, or GPU-backed payloads exist.
+The explicit lease id is still only the first control-plane step. A future shared
+control/ring page should carry producer cursors, per-consumer cursors, release
+watermarks, wake sequence numbers, and counters directly in shared memory. The
+Unix-domain socket can then remain a setup, handle-transfer, and exceptional
+control path rather than the hot metadata path.
 
 Interactive consumers use latest-frame semantics:
 
@@ -315,11 +316,12 @@ portholed's Axum HTTP socket. Messages on the side channel should be small
 length-prefixed JSON or binary frames that describe the operation and the
 metadata. Handles travel as ancillary data with `SCM_RIGHTS`.
 
-Initial consumer-pull request:
+Initial consumer-pull flow:
 
 ```text
 consumer -> daemon: latest_video_frame { session_id, track_id }
-daemon -> consumer: video_frame_metadata { sequence, width, height, stride, format, len } + fd
+daemon -> consumer: video_frame_metadata { lease_id, sequence, width, height, stride, format, payload range } + fd
+consumer -> daemon: release_video_frame { lease_id }
 ```
 
 Reserved producer-offer flow:
