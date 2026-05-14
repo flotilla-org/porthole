@@ -8,7 +8,7 @@ use crate::{
     attention::AttentionInfo,
     content_rect::ContentRectInfo,
     display::DisplayInfo,
-    input::{ClickSpec, KeyEvent, ScrollSpec},
+    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
@@ -291,6 +291,11 @@ pub trait Adapter: Send + Sync {
     async fn click(&self, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError>;
 
     async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError>;
+
+    /// Move the pointer to a window-local point. No button state change.
+    /// Used by harnesses driving terminal mouse-reporting protocols
+    /// (`DECSET ?1003 + ?1006 + ?1016`) that emit on motion alone.
+    async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError>;
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
 

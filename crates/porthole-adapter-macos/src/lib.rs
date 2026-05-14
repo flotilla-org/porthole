@@ -8,7 +8,7 @@ use porthole_core::{
     adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot, VideoCaptureFramePublisher},
     attention::AttentionInfo,
     display::DisplayInfo,
-    input::{ClickSpec, KeyEvent, ScrollSpec},
+    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::SystemPermissionStatus,
     surface::SurfaceInfo,
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
@@ -115,6 +115,10 @@ impl Adapter for MacOsAdapter {
 
     async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
         input::scroll(self, surface, spec).await
+    }
+
+    async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
+        input::pointer_move(self, surface, spec).await
     }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
@@ -240,6 +244,7 @@ impl Adapter for MacOsAdapter {
             "input_text",
             "input_click",
             "input_scroll",
+            "input_pointer_move",
             "wait",
             "close",
             "focus",

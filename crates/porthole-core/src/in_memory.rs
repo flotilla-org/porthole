@@ -16,7 +16,7 @@ use crate::{
     attention::{AttentionInfo, CursorPos},
     content_rect::{ContentRectInfo, Descent},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},
-    input::{ClickSpec, KeyEvent, ScrollSpec},
+    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
@@ -40,6 +40,7 @@ struct Script {
     next_text_result: Option<Result<(), PortholeError>>,
     next_click_result: Option<Result<(), PortholeError>>,
     next_scroll_result: Option<Result<(), PortholeError>>,
+    next_pointer_move_result: Option<Result<(), PortholeError>>,
     next_close_result: Option<Result<(), PortholeError>>,
     next_focus_result: Option<Result<(), PortholeError>>,
     next_wait_result: Option<Result<WaitOutcome, WaitTimeout>>,
@@ -67,6 +68,7 @@ struct Script {
     text_calls: Vec<(SurfaceId, String)>,
     click_calls: Vec<(SurfaceId, ClickSpec)>,
     scroll_calls: Vec<(SurfaceId, ScrollSpec)>,
+    pointer_move_calls: Vec<(SurfaceId, PointerMoveSpec)>,
     close_calls: Vec<SurfaceId>,
     focus_calls: Vec<SurfaceId>,
     wait_calls: Vec<(SurfaceId, WaitCondition)>,
@@ -131,6 +133,9 @@ impl InMemoryAdapter {
     }
     pub async fn set_next_scroll_result(&self, v: Result<(), PortholeError>) {
         self.script.lock().await.next_scroll_result = Some(v);
+    }
+    pub async fn set_next_pointer_move_result(&self, v: Result<(), PortholeError>) {
+        self.script.lock().await.next_pointer_move_result = Some(v);
     }
     pub async fn set_next_close_result(&self, v: Result<(), PortholeError>) {
         self.script.lock().await.next_close_result = Some(v);
@@ -200,6 +205,9 @@ impl InMemoryAdapter {
     }
     pub async fn scroll_calls(&self) -> Vec<(SurfaceId, ScrollSpec)> {
         self.script.lock().await.scroll_calls.clone()
+    }
+    pub async fn pointer_move_calls(&self) -> Vec<(SurfaceId, PointerMoveSpec)> {
+        self.script.lock().await.pointer_move_calls.clone()
     }
     pub async fn close_calls(&self) -> Vec<SurfaceId> {
         self.script.lock().await.close_calls.clone()
@@ -361,6 +369,12 @@ impl Adapter for InMemoryAdapter {
         s.next_scroll_result.take().unwrap_or(Ok(()))
     }
 
+    async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
+        let mut s = self.script.lock().await;
+        s.pointer_move_calls.push((surface.id.clone(), spec.clone()));
+        s.next_pointer_move_result.take().unwrap_or(Ok(()))
+    }
+
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
         let mut s = self.script.lock().await;
         s.close_calls.push(surface.id.clone());
@@ -496,6 +510,7 @@ impl Adapter for InMemoryAdapter {
             "input_text",
             "input_click",
             "input_scroll",
+            "input_pointer_move",
             "wait",
             "close",
             "focus",

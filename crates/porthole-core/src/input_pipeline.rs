@@ -6,7 +6,7 @@ use crate::{
     content_rect::ContentRectInfo,
     display::Rect,
     handle::HandleStore,
-    input::{ClickSpec, CoordUnits, KeyEvent, ScrollSpec},
+    input::{ClickSpec, CoordUnits, KeyEvent, PointerMoveSpec, ScrollSpec},
     key_names,
     surface::{SurfaceId, SurfaceInfo},
 };
@@ -55,6 +55,12 @@ impl InputPipeline {
         let info = self.handles.require_alive(surface).await?;
         let spec = self.to_logical_scroll(spec, units, &info).await?;
         self.adapter.scroll(&info, &spec).await
+    }
+
+    pub async fn pointer_move(&self, surface: &SurfaceId, spec: &PointerMoveSpec, units: CoordUnits) -> Result<(), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        let spec = self.to_logical_pointer(spec, units, &info).await?;
+        self.adapter.pointer_move(&info, &spec).await
     }
 
     pub async fn close(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
@@ -166,6 +172,22 @@ impl InputPipeline {
             button: spec.button,
             count: spec.count,
             modifiers: spec.modifiers.clone(),
+        })
+    }
+
+    async fn to_logical_pointer(
+        &self,
+        spec: &PointerMoveSpec,
+        units: CoordUnits,
+        info: &SurfaceInfo,
+    ) -> Result<PointerMoveSpec, PortholeError> {
+        if matches!(units, CoordUnits::Logical) {
+            return Ok(spec.clone());
+        }
+        let scale = self.surface_scale(info).await?;
+        Ok(PointerMoveSpec {
+            x: spec.x / scale,
+            y: spec.y / scale,
         })
     }
 
@@ -524,6 +546,46 @@ mod tests {
         assert_eq!(calls[0].1.x, 200.0);
         assert_eq!(calls[0].1.y, 100.0);
         assert_eq!(calls[0].1.delta_y, -3.0, "delta is wheel lines, not pixels — must not scale");
+    }
+
+    #[tokio::test]
+    async fn pointer_move_logical_delegates_to_adapter() {
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        pipeline
+            .pointer_move(&id, &PointerMoveSpec { x: 100.0, y: 50.0 }, CoordUnits::Logical)
+            .await
+            .unwrap();
+        let calls = adapter.pointer_move_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.x, 100.0);
+        assert_eq!(calls[0].1.y, 50.0);
+    }
+
+    #[tokio::test]
+    async fn pointer_move_physical_units_halve_on_2x_display() {
+        let (adapter, handles, id) = setup().await;
+        adapter.set_test_scale_for_snapshot(2.0).await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        pipeline
+            .pointer_move(&id, &PointerMoveSpec { x: 1600.0, y: 800.0 }, CoordUnits::Physical)
+            .await
+            .unwrap();
+        let calls = adapter.pointer_move_calls().await;
+        assert_eq!(calls[0].1.x, 800.0);
+        assert_eq!(calls[0].1.y, 400.0);
+    }
+
+    #[tokio::test]
+    async fn pointer_move_propagates_dead_handle() {
+        let (adapter, handles, id) = setup().await;
+        handles.mark_dead(&id).await.unwrap();
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let err = pipeline
+            .pointer_move(&id, &PointerMoveSpec { x: 0.0, y: 0.0 }, CoordUnits::Logical)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::SurfaceDead);
     }
 
     #[tokio::test]

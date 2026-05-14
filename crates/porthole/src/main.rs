@@ -358,6 +358,12 @@ enum Command {
         #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
         units: UnitsArg,
     },
+    /// Pointer motion primitives. Today: just `move`. Reserved namespace
+    /// for future `drag`, etc.
+    Pointer {
+        #[command(subcommand)]
+        command: PointerCommand,
+    },
     /// Print focus / cursor / recently active.
     Attention,
     /// Print monitor list.
@@ -515,6 +521,25 @@ impl From<UnitsArg> for CoordUnits {
             UnitsArg::Physical => CoordUnits::Physical,
         }
     }
+}
+
+#[derive(Subcommand)]
+enum PointerCommand {
+    /// Move the pointer to a window-local (x, y) without pressing any button.
+    /// For driving terminal mouse-reporting protocols (`DECSET ?1003 + ?1006
+    /// + ?1016`) that emit on motion alone.
+    Move {
+        surface_id: String,
+        #[arg(long)]
+        x: f64,
+        #[arg(long)]
+        y: f64,
+        /// Coordinate units for x/y. Default `logical` (Cocoa points).
+        #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
+        units: UnitsArg,
+        #[arg(long)]
+        session: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -898,6 +923,15 @@ async fn main() -> std::process::ExitCode {
             session,
         } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, units.into(), session).await,
         Command::ContentRect { surface_id, units } => content_rect_cmd::run(&client, surface_id, units.into()).await,
+        Command::Pointer { command } => match command {
+            PointerCommand::Move {
+                surface_id,
+                x,
+                y,
+                units,
+                session,
+            } => porthole::commands::pointer::run_move(&client, surface_id, x, y, units.into(), session).await,
+        },
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
         Command::CaptureSession { command } => match command {

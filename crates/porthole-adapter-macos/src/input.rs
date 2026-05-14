@@ -7,7 +7,7 @@ use core_graphics::{
 };
 use porthole_core::{
     ErrorCode, PortholeError,
-    input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec},
+    input::{ClickButton, ClickSpec, KeyEvent, Modifier, PointerMoveSpec, ScrollSpec},
     surface::SurfaceInfo,
 };
 
@@ -201,6 +201,24 @@ pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Scroll
     )
     .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "scroll event create failed"))?;
     scroll_ev.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
+    close_focus::focus(adapter, surface).await?;
+    let source = event_source()?;
+    // Motion-only: no button state change. CGMouseButton::Left is required by
+    // the API but ignored for MouseMoved events.
+    let move_ev = CGEvent::new_mouse_event(
+        source,
+        CGEventType::MouseMoved,
+        CGPoint::new(screen_x, screen_y),
+        CGMouseButton::Left,
+    )
+    .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "pointer move event create failed"))?;
+    move_ev.post(CGEventTapLocation::HID);
     Ok(())
 }
 

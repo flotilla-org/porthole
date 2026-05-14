@@ -1,4 +1,4 @@
-use porthole_core::input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, ScrollSpec};
+use porthole_core::input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, PointerMoveSpec, ScrollSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,4 +98,53 @@ impl From<&ScrollRequest> for ScrollSpec {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScrollResponse {
     pub surface_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PointerMoveRequest {
+    pub x: f64,
+    pub y: f64,
+    /// Coordinate units for `x`, `y`. Default `logical`. `physical` triggers
+    /// daemon-side division by the surface's display scale.
+    #[serde(default)]
+    pub units: CoordUnits,
+    #[serde(default)]
+    pub session: Option<String>,
+}
+
+impl From<&PointerMoveRequest> for PointerMoveSpec {
+    fn from(r: &PointerMoveRequest) -> Self {
+        PointerMoveSpec { x: r.x, y: r.y }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PointerMoveResponse {
+    pub surface_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_move_request_roundtrip() {
+        let r = PointerMoveRequest {
+            x: 12.0,
+            y: 34.0,
+            units: CoordUnits::Physical,
+            session: None,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        let back: PointerMoveRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.x, 12.0);
+        assert!(matches!(back.units, CoordUnits::Physical));
+    }
+
+    #[test]
+    fn pointer_move_request_defaults_units_to_logical() {
+        let json = r#"{ "x": 1.0, "y": 2.0 }"#;
+        let r: PointerMoveRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(r.units, CoordUnits::Logical));
+    }
 }
