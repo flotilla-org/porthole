@@ -14,6 +14,7 @@ use crate::{
         VideoCaptureTimestampClock,
     },
     attention::{AttentionInfo, CursorPos},
+    content_rect::{ContentRectInfo, Descent},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},
     input::{ClickSpec, KeyEvent, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
@@ -50,11 +51,13 @@ struct Script {
     next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
     next_place_surface_result: Option<Result<(), PortholeError>>,
     next_snapshot_geometry: Option<Result<GeometrySnapshot, PortholeError>>,
+    next_content_rect: Option<Result<ContentRectInfo, PortholeError>>,
     next_request_system_permission_prompt: Option<Result<SystemPermissionPromptOutcome, PortholeError>>,
     next_ensure_system_permission: Option<Result<(), PortholeError>>,
     launch_artifact_calls: Vec<ArtifactLaunchSpec>,
     place_surface_calls: Vec<(SurfaceId, Rect)>,
     snapshot_geometry_calls: Vec<SurfaceId>,
+    content_rect_calls: Vec<SurfaceId>,
     search_calls: Vec<SearchQuery>,
     window_alive_calls: Vec<(u32, u32)>,
 
@@ -162,6 +165,9 @@ impl InMemoryAdapter {
     pub async fn set_next_snapshot_geometry(&self, v: Result<GeometrySnapshot, PortholeError>) {
         self.script.lock().await.next_snapshot_geometry = Some(v);
     }
+    pub async fn set_next_content_rect(&self, v: Result<ContentRectInfo, PortholeError>) {
+        self.script.lock().await.next_content_rect = Some(v);
+    }
     pub async fn set_next_request_system_permission_prompt(&self, v: Result<SystemPermissionPromptOutcome, PortholeError>) {
         self.script.lock().await.next_request_system_permission_prompt = Some(v);
     }
@@ -227,6 +233,9 @@ impl InMemoryAdapter {
     }
     pub async fn snapshot_geometry_calls(&self) -> Vec<SurfaceId> {
         self.script.lock().await.snapshot_geometry_calls.clone()
+    }
+    pub async fn content_rect_calls(&self) -> Vec<SurfaceId> {
+        self.script.lock().await.content_rect_calls.clone()
     }
 
     pub fn make_default_launch_outcome(pid: u32) -> LaunchOutcome {
@@ -459,6 +468,23 @@ impl Adapter for InMemoryAdapter {
         })
     }
 
+    async fn content_rect(&self, surface: &SurfaceInfo) -> Result<ContentRectInfo, PortholeError> {
+        let mut s = self.script.lock().await;
+        s.content_rect_calls.push(surface.id.clone());
+        s.next_content_rect.take().unwrap_or_else(|| {
+            Ok(ContentRectInfo {
+                rect: Rect {
+                    x: 0.0,
+                    y: 28.0,
+                    w: 800.0,
+                    h: 572.0,
+                },
+                ax_role: "AXScrollArea".to_string(),
+                descent: Descent::Contents,
+            })
+        })
+    }
+
     fn capabilities(&self) -> Vec<&'static str> {
         // The in-memory adapter scripts outcomes for most verbs and returns
         // defaults otherwise. It does NOT resolve OS-level focus, so
@@ -484,6 +510,7 @@ impl Adapter for InMemoryAdapter {
             "placement",
             "replace",
             "auto_dismiss",
+            "content_rect",
         ];
         if self.advertise_system_permission_prompt.load(Ordering::SeqCst) {
             caps.push("system_permission_prompt");

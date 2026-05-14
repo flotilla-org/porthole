@@ -4,9 +4,10 @@ use clap::{Parser, Subcommand};
 use porthole::{
     client::DaemonClient,
     commands::{
-        attention, click as click_cmd, close as close_cmd, displays, focus as focus_cmd, install as install_cmd,
-        interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd, replace as replace_cmd,
-        screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd, send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
+        attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays, focus as focus_cmd,
+        install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd,
+        replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd, send_keys as send_keys_cmd,
+        text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -348,6 +349,14 @@ enum Command {
         units: UnitsArg,
         #[arg(long)]
         session: Option<String>,
+    },
+    /// Print the inner content rect of a surface (window-local coords).
+    /// `units` defaults to `logical` (Cocoa points); pass `--units physical`
+    /// for Retina pixels.
+    ContentRect {
+        surface_id: String,
+        #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
+        units: UnitsArg,
     },
     /// Print focus / cursor / recently active.
     Attention,
@@ -888,6 +897,7 @@ async fn main() -> std::process::ExitCode {
             units,
             session,
         } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, units.into(), session).await,
+        Command::ContentRect { surface_id, units } => content_rect_cmd::run(&client, surface_id, units.into()).await,
         Command::Attention => attention::run(&client).await,
         Command::Displays => displays::run(&client).await,
         Command::CaptureSession { command } => match command {

@@ -22,6 +22,7 @@ pub enum ErrorCode {
     InternalError,
     CloseFailed,
     LaunchReturnedExisting,
+    ContentRectUnavailable,
 }
 
 impl fmt::Display for ErrorCode {
@@ -44,6 +45,7 @@ impl fmt::Display for ErrorCode {
             Self::InternalError => "internal_error",
             Self::CloseFailed => "close_failed",
             Self::LaunchReturnedExisting => "launch_returned_existing",
+            Self::ContentRectUnavailable => "content_rect_unavailable",
         };
         f.write_str(s)
     }
@@ -110,6 +112,11 @@ mod tests {
     #[test]
     fn launch_returned_existing_display_is_snake_case() {
         assert_eq!(ErrorCode::LaunchReturnedExisting.to_string(), "launch_returned_existing");
+    }
+
+    #[test]
+    fn content_rect_unavailable_display_is_snake_case() {
+        assert_eq!(ErrorCode::ContentRectUnavailable.to_string(), "content_rect_unavailable");
     }
 
     #[test]

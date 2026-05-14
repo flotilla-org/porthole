@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     ErrorCode, PortholeError,
     adapter::Adapter,
+    content_rect::ContentRectInfo,
     display::Rect,
     handle::HandleStore,
     input::{ClickSpec, CoordUnits, KeyEvent, ScrollSpec},
@@ -105,6 +106,25 @@ impl InputPipeline {
         let info = self.handles.require_alive(surface).await?;
         let rect = self.to_logical_rect(rect, units, &info).await?;
         self.adapter.place_surface(&info, rect).await
+    }
+
+    /// Resolve the inner content rect of a surface. Returns the adapter's
+    /// `ContentRectInfo` with rect coords converted to the caller's units.
+    /// `ax_role` and `descent` are passed through unchanged — they are debug
+    /// fields callers use to diagnose surprises.
+    pub async fn content_rect(&self, surface: &SurfaceId, units: CoordUnits) -> Result<ContentRectInfo, PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        let mut out = self.adapter.content_rect(&info).await?;
+        if matches!(units, CoordUnits::Physical) {
+            let scale = self.surface_scale(&info).await?;
+            out.rect = Rect {
+                x: out.rect.x * scale,
+                y: out.rect.y * scale,
+                w: out.rect.w * scale,
+                h: out.rect.h * scale,
+            };
+        }
+        Ok(out)
     }
 
     /// Look up the surface's current display's backing scale factor.
@@ -504,6 +524,56 @@ mod tests {
         assert_eq!(calls[0].1.x, 200.0);
         assert_eq!(calls[0].1.y, 100.0);
         assert_eq!(calls[0].1.delta_y, -3.0, "delta is wheel lines, not pixels — must not scale");
+    }
+
+    #[tokio::test]
+    async fn content_rect_logical_passes_through() {
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let out = pipeline.content_rect(&id, CoordUnits::Logical).await.unwrap();
+        // Default fake returns x=0,y=28,w=800,h=572 with role AXScrollArea.
+        assert_eq!(out.rect.x, 0.0);
+        assert_eq!(out.rect.y, 28.0);
+        assert_eq!(out.rect.w, 800.0);
+        assert_eq!(out.rect.h, 572.0);
+        assert_eq!(out.ax_role, "AXScrollArea");
+        assert_eq!(out.descent, crate::content_rect::Descent::Contents);
+        assert_eq!(adapter.content_rect_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn content_rect_physical_units_multiply_by_scale() {
+        let (adapter, handles, id) = setup().await;
+        adapter.set_test_scale_for_snapshot(2.0).await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let out = pipeline.content_rect(&id, CoordUnits::Physical).await.unwrap();
+        assert_eq!(out.rect.x, 0.0);
+        assert_eq!(out.rect.y, 56.0);
+        assert_eq!(out.rect.w, 1600.0);
+        assert_eq!(out.rect.h, 1144.0);
+    }
+
+    #[tokio::test]
+    async fn content_rect_propagates_dead_handle() {
+        let (adapter, handles, id) = setup().await;
+        handles.mark_dead(&id).await.unwrap();
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let err = pipeline.content_rect(&id, CoordUnits::Logical).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::SurfaceDead);
+    }
+
+    #[tokio::test]
+    async fn content_rect_unavailable_surfaces_as_error_code() {
+        let (adapter, handles, id) = setup().await;
+        adapter
+            .set_next_content_rect(Err(PortholeError::new(
+                ErrorCode::ContentRectUnavailable,
+                "no usable content child",
+            )))
+            .await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let err = pipeline.content_rect(&id, CoordUnits::Logical).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::ContentRectUnavailable);
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@
 pub mod adapter;
 pub mod attach_pipeline;
 pub mod attention;
+pub mod content_rect;
 pub mod display;
 pub mod error;
 pub mod handle;
@@ -20,6 +21,7 @@ pub mod wait;
 pub mod wait_pipeline;
 
 pub use attention::{AttentionInfo, CursorPos};
+pub use content_rect::{ContentRectInfo, Descent};
 pub use display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 pub use error::{ErrorCode, PortholeError};
 pub use input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, ScrollSpec};
