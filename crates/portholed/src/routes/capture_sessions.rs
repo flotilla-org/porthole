@@ -31,7 +31,7 @@ pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String
     state
         .capture
         .close_session(&id)
-        .map(|()| StatusCode::OK)
+        .map(|()| StatusCode::NO_CONTENT)
         .map_err(capture_error_to_api)
 }
 
@@ -45,4 +45,22 @@ fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
         CaptureRegistryError::FdSocketDisabled | CaptureRegistryError::Capture(_) => ErrorCode::InvalidArgument,
     };
     ApiError(PortholeError::new(code, error.to_string()).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::response::IntoResponse;
+
+    use super::*;
+
+    #[test]
+    fn failed_capture_session_maps_to_internal_error() {
+        let response = capture_error_to_api(CaptureRegistryError::Failed {
+            session_id: "capture-1".to_string(),
+            message: "producer stopped".to_string(),
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

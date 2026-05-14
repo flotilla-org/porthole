@@ -184,7 +184,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let res = router.clone().oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
 
         let req = Request::builder()
             .method(Method::GET)

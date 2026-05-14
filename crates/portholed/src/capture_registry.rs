@@ -54,13 +54,13 @@ struct CaptureSession {
     stride: u32,
     pixel_format: PixelFormat,
     video: VideoSlotManager,
-    _capture_task: Option<tokio::task::JoinHandle<()>>,
+    capture_task: Option<tokio::task::JoinHandle<()>>,
     _capture_handle: Option<CaptureSessionHandle>,
 }
 
 impl Drop for CaptureSession {
     fn drop(&mut self) {
-        if let Some(task) = self._capture_task.take() {
+        if let Some(task) = self.capture_task.take() {
             task.abort();
         }
     }
@@ -142,7 +142,9 @@ impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
         session.pixel_format = capture_pixel_format(frame.metadata.pixel_format);
         publish_capture_frame_view_to_video(&mut session.video, session.track_id, frame)
             .map_err(|error| PortholeError::new(ErrorCode::InternalError, error.to_string()))?;
-        session.lifecycle = CaptureSessionLifecycle::Ready;
+        if !matches!(session.lifecycle, CaptureSessionLifecycle::Ready) {
+            session.lifecycle = CaptureSessionLifecycle::Ready;
+        }
         if let Some(tx) = self
             .first_frame_tx
             .lock()
@@ -252,7 +254,7 @@ impl CaptureRegistry {
             stride: 8,
             pixel_format: PixelFormat::Bgra8Unorm,
             video,
-            _capture_task: None,
+            capture_task: None,
             _capture_handle: None,
         };
         self.inner
@@ -265,8 +267,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
-            status: "ready".to_string(),
-            status_message: None,
+            status: CaptureSessionLifecycle::Ready.status_name().to_string(),
+            status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
         })
     }
@@ -321,7 +323,7 @@ impl CaptureRegistry {
                 stride: 0,
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(3),
-                _capture_task: None,
+                capture_task: None,
                 _capture_handle: None,
             },
         );
@@ -371,8 +373,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
-            status: "ready".to_string(),
-            status_message: None,
+            status: CaptureSessionLifecycle::Ready.status_name().to_string(),
+            status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
         })
     }
@@ -448,7 +450,7 @@ impl CaptureRegistry {
             stride: first_frame.stride,
             pixel_format,
             video,
-            _capture_task: Some(task),
+            capture_task: Some(task),
             _capture_handle: None,
         };
         self.inner
@@ -461,8 +463,8 @@ impl CaptureRegistry {
             session_id,
             source_id: source_id.get(),
             track_id: track_id.get(),
-            status: "ready".to_string(),
-            status_message: None,
+            status: CaptureSessionLifecycle::Ready.status_name().to_string(),
+            status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
         })
     }
@@ -883,7 +885,7 @@ mod tests {
                 stride: 4,
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video,
-                _capture_task: None,
+                capture_task: None,
                 _capture_handle: None,
             },
         );
@@ -937,7 +939,7 @@ mod tests {
                 stride: 0,
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(1),
-                _capture_task: None,
+                capture_task: None,
                 _capture_handle: None,
             },
         );
@@ -953,6 +955,42 @@ mod tests {
                 session_id: id,
                 status: "starting",
             }) if id == session_id
+        ));
+    }
+
+    #[test]
+    fn latest_frame_rejects_failed_session_before_track_lookup() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "failed-session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Failed("producer stopped".to_string()),
+                width: 0,
+                height: 0,
+                stride: 0,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video: VideoSlotManager::new_reusable_pool(1),
+                capture_task: None,
+                _capture_handle: None,
+            },
+        );
+
+        let result = registry.latest_frame(&LatestVideoFrameRequest {
+            session_id: session_id.clone(),
+            track_id: track_id.get(),
+        });
+
+        assert!(matches!(
+            result,
+            Err(CaptureRegistryError::Failed {
+                session_id: id,
+                message,
+            }) if id == session_id && message == "producer stopped"
         ));
     }
 
@@ -1034,7 +1072,7 @@ mod tests {
                 stride: 0,
                 pixel_format: PixelFormat::Bgra8Unorm,
                 video: VideoSlotManager::new_reusable_pool(2),
-                _capture_task: None,
+                capture_task: None,
                 _capture_handle: None,
             },
         );
