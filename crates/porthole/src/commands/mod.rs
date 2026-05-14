@@ -13,6 +13,7 @@ pub mod key;
 pub mod launch;
 pub mod onboard;
 pub mod place;
+pub mod pointer;
 pub mod replace;
 pub mod screenshot;
 pub mod scroll;

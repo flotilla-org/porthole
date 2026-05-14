@@ -77,6 +77,15 @@ pub struct ScrollSpec {
     pub delta_y: f64,
 }
 
+/// Pointer (motion-only) primitive. `x`/`y` are window-local; the adapter
+/// converts to screen-global and posts a `MouseMoved` CGEvent with no button
+/// state.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PointerMoveSpec {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
