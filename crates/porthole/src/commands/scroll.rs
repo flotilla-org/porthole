@@ -1,3 +1,4 @@
+use porthole_core::input::CoordUnits;
 use porthole_protocol::input::{ScrollRequest, ScrollResponse};
 
 use crate::client::{ClientError, DaemonClient};
@@ -8,6 +9,7 @@ pub struct ScrollArgs {
     pub y: f64,
     pub delta_x: f64,
     pub delta_y: f64,
+    pub units: CoordUnits,
     pub session: Option<String>,
 }
 
@@ -17,6 +19,7 @@ pub async fn run(client: &DaemonClient, args: ScrollArgs) -> Result<(), ClientEr
         y: args.y,
         delta_x: args.delta_x,
         delta_y: args.delta_y,
+        units: args.units,
         session: args.session,
     };
     let res: ScrollResponse = client.post_json(&format!("/surfaces/{}/scroll", args.surface_id), &req).await?;

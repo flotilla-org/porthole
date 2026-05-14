@@ -43,8 +43,9 @@ pub async fn post_click(
     Json(req): Json<ClickRequest>,
 ) -> Result<Json<ClickResponse>, ApiError> {
     let surface_id = SurfaceId::from(id);
+    let units = req.units;
     let spec = (&req).into();
-    state.input.click(&surface_id, &spec).await?;
+    state.input.click(&surface_id, &spec, units).await?;
     Ok(Json(ClickResponse {
         surface_id: surface_id.to_string(),
     }))
@@ -56,8 +57,9 @@ pub async fn post_scroll(
     Json(req): Json<ScrollRequest>,
 ) -> Result<Json<ScrollResponse>, ApiError> {
     let surface_id = SurfaceId::from(id);
+    let units = req.units;
     let spec = (&req).into();
-    state.input.scroll(&surface_id, &spec).await?;
+    state.input.scroll(&surface_id, &spec, units).await?;
     Ok(Json(ScrollResponse {
         surface_id: surface_id.to_string(),
     }))

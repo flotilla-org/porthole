@@ -1,4 +1,4 @@
-use porthole_core::input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
+use porthole_core::input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, ScrollSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +37,10 @@ pub struct ClickRequest {
     pub count: u8,
     #[serde(default)]
     pub modifiers: Vec<Modifier>,
+    /// Coordinate units for `x`, `y`. Default `logical` (unchanged behaviour).
+    /// `physical` triggers daemon-side division by the surface's display scale.
+    #[serde(default)]
+    pub units: CoordUnits,
     #[serde(default)]
     pub session: Option<String>,
 }
@@ -70,6 +74,12 @@ pub struct ScrollRequest {
     pub delta_x: f64,
     #[serde(default)]
     pub delta_y: f64,
+    /// Coordinate units for `x`, `y`. Default `logical` (unchanged behaviour).
+    /// `physical` triggers daemon-side division by the surface's display scale.
+    /// Note: only the position scales — `delta_x`/`delta_y` are wheel-line
+    /// counts, not pixels, so they remain unchanged.
+    #[serde(default)]
+    pub units: CoordUnits,
     #[serde(default)]
     pub session: Option<String>,
 }

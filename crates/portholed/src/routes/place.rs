@@ -13,7 +13,7 @@ pub async fn post_place(
     Json(req): Json<PlaceRequest>,
 ) -> Result<Json<PlaceResponse>, ApiError> {
     let surface_id = SurfaceId::from(id);
-    state.input.place(&surface_id, req.rect).await?;
+    state.input.place(&surface_id, req.rect, req.units).await?;
     Ok(Json(PlaceResponse {
         surface_id: surface_id.to_string(),
         placed: true,

@@ -22,7 +22,7 @@ pub mod wait_pipeline;
 pub use attention::{AttentionInfo, CursorPos};
 pub use display::{DisplayId, DisplayInfo, Rect as DisplayRect};
 pub use error::{ErrorCode, PortholeError};
-pub use input::{ClickButton, ClickSpec, KeyEvent, Modifier, ScrollSpec};
+pub use input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, ScrollSpec};
 pub use permission::SystemPermissionStatus;
 pub use placement::{Anchor, DisplayTarget, GeometrySnapshot, PlacementOutcome, PlacementSpec};
 pub use search::{Candidate, SearchQuery};

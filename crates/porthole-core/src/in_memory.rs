@@ -276,6 +276,18 @@ impl InMemoryAdapter {
             focused: true,
         }]
     }
+
+    /// Pre-load `next_displays` with a single display whose id matches the
+    /// default `snapshot_geometry` display_id (`in-mem-display-0`) but with
+    /// the given backing scale. Used by pipeline tests that exercise
+    /// `CoordUnits::Physical` — one set per pipeline call (the queue is
+    /// `take()`-consumed).
+    pub async fn set_test_scale_for_snapshot(&self, scale: f64) {
+        let mut displays = Self::default_displays();
+        displays[0].scale = scale;
+        let mut s = self.script.lock().await;
+        s.next_displays = Some(Ok(displays));
+    }
 }
 
 #[async_trait]
