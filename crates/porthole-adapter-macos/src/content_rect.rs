@@ -80,6 +80,9 @@ fn try_largest_child_descent(win: AxElementRef, outer: (f64, f64)) -> Result<Opt
     let count = unsafe { CFArrayGetCount(arr) };
 
     let mut best: Option<(AxElementRef, f64)> = None;
+    // TODO(perf): each AXSize read crosses XPC; if harnesses report latency on
+    // windows with many children, switch to AXUIElementCopyMultipleAttributeValues
+    // for a single bulk fetch.
     for i in 0..count {
         let child = unsafe { CFArrayGetValueAtIndex(arr, i) } as AxElementRef;
         let Some((w, h)) = read_size(child) else { continue };
