@@ -129,10 +129,7 @@ fn read_position(el: AxElementRef) -> Option<(f64, f64)> {
 
 fn read_size(el: AxElementRef) -> Option<(f64, f64)> {
     let ptr = unsafe { crate::ax::copy_attribute_borrowed(el, "AXSize") }?;
-    let mut sz = core_graphics::geometry::CGSize {
-        width: 0.0,
-        height: 0.0,
-    };
+    let mut sz = core_graphics::geometry::CGSize { width: 0.0, height: 0.0 };
     let ok = unsafe { AXValueGetValue(ptr, K_AX_VALUE_CG_SIZE_TYPE, &raw mut sz as *mut std::ffi::c_void) };
     unsafe { crate::ax::cf_release(ptr) };
     if ok != 0 { Some((sz.width, sz.height)) } else { None }
