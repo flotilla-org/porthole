@@ -18,11 +18,11 @@
 - Modify: `crates/capture-transfer/src/video.rs`
 - Test: `crates/capture-transfer/src/video.rs`
 
-- [ ] Add a failing test that publishes two reusable-pool frames and asserts the acquired frames expose the same pool fd metadata with distinct payload offsets.
-- [ ] Add a small public metadata type for reusable CPU pool registration.
-- [ ] Add an `AcquiredVideoFrame` method that returns pool registration metadata only for reusable-pool frames.
-- [ ] Keep immutable-per-frame acquisitions returning `None`.
-- [ ] Run `cargo test -p capture-transfer video --locked`.
+- [x] Add a failing test that publishes two reusable-pool frames and asserts the acquired frames expose the same pool fd metadata with distinct payload offsets.
+- [x] Add a small public metadata type for reusable CPU pool registration.
+- [x] Add an `AcquiredVideoFrame` method that returns pool registration metadata only for reusable-pool frames.
+- [x] Keep immutable-per-frame acquisitions returning `None`.
+- [x] Run `cargo test -p capture-transfer video --locked`.
 
 ## Chunk 2: Daemon Side-Channel Pool Registration
 
@@ -33,13 +33,13 @@
 - Modify: `crates/portholed/src/server.rs`
 - Test: `crates/portholed/src/server.rs`
 
-- [ ] Add a failing server test that acquires two reusable-pool frames and observes one `register_cpu_pool` fd followed by two `video_frame` messages without per-frame fds.
-- [ ] Add server-side response message types for `register_cpu_pool` and `video_frame`.
-- [ ] Track registered pool keys per fd connection.
-- [ ] Before sending a reusable-pool frame, send `register_cpu_pool` with the pool fd if the key is not already registered.
-- [ ] Send frame metadata as a tagged `video_frame` message.
-- [ ] Preserve the immutable fallback path by sending a tagged frame response accompanied by a per-frame fd.
-- [ ] Run targeted portholed server tests.
+- [x] Add a failing server test that acquires two reusable-pool frames and observes one `register_cpu_pool` fd followed by two `video_frame` messages without per-frame fds.
+- [x] Add server-side response message types for `register_cpu_pool` and `video_frame`.
+- [x] Track registered pool keys per fd connection.
+- [x] Before sending a reusable-pool frame, send `register_cpu_pool` with the pool fd if the key is not already registered.
+- [x] Send frame metadata as a tagged `video_frame` message.
+- [x] Preserve the immutable fallback path by sending a tagged frame response accompanied by a per-frame fd.
+- [x] Run targeted portholed server tests.
 
 ## Chunk 3: Daemon Client Pool Cache
 

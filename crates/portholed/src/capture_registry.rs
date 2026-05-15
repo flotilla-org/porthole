@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     io::{BufRead, BufReader, Write},
     os::{
         fd::AsRawFd,
@@ -607,11 +607,15 @@ impl CaptureRegistry {
             .video
             .acquire_latest(consumer_id, TrackId::new(request.track_id))
             .map_err(CaptureRegistryError::from_capture)?;
-        let fd = match frame.try_clone_fd() {
-            Ok(fd) => fd,
-            Err(error) => {
-                session.video.release(frame);
-                return Err(CaptureRegistryError::from_capture(error));
+        let fd = if frame.cpu_pool_registration().is_some() {
+            None
+        } else {
+            match frame.try_clone_fd() {
+                Ok(fd) => Some(fd),
+                Err(error) => {
+                    session.video.release(frame);
+                    return Err(CaptureRegistryError::from_capture(error));
+                }
             }
         };
         let response = LatestVideoFrameResponse {
@@ -706,7 +710,7 @@ async fn run_capture_session_monitor(registry: CaptureRegistry, task_session_id:
 
 struct LatestFrameReply {
     response: LatestVideoFrameResponse,
-    fd: std::os::fd::OwnedFd,
+    fd: Option<std::os::fd::OwnedFd>,
     frame: AcquiredVideoFrame,
 }
 
@@ -857,6 +861,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let consumer_id = registry.allocate_consumer_id()?;
     let mut next_lease_id = 1_u64;
     let mut leases: BTreeMap<u64, (String, AcquiredVideoFrame)> = BTreeMap::new();
+    let mut registered_pools: BTreeSet<(u64, u64, u64)> = BTreeSet::new();
     let result = (|| {
         loop {
             let mut line = String::new();
@@ -878,15 +883,40 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                     let lease_id = next_lease_id;
                     next_lease_id = next_lease_id.wrapping_add(1).max(1);
                     response.lease_id = lease_id;
+                    if let Some(pool) = frame.cpu_pool_registration() {
+                        let pool_key = (pool.track_id.get(), pool.pool_id, pool.pool_generation);
+                        if registered_pools.insert(pool_key) {
+                            let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
+                            writeln!(
+                                stream,
+                                "{}",
+                                serde_json::json!({
+                                    "op": "register_cpu_pool",
+                                    "session_id": request.session_id,
+                                    "track_id": pool.track_id.get(),
+                                    "pool_id": pool.pool_id,
+                                    "pool_generation": pool.pool_generation,
+                                    "payload_map_len": pool.payload_map_len,
+                                    "slot_stride": pool.slot_stride,
+                                    "slot_count": pool.slot_count
+                                })
+                            )
+                            .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                            fdpass::send_fd(&stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+                        }
+                    }
                     leases.insert(lease_id, (session_id, frame));
-                    fdpass::send_fd(&stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-                    writeln!(
-                        stream,
-                        "{}",
-                        serde_json::to_string(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?
-                    )
-                    .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                    let mut frame_value =
+                        serde_json::to_value(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                    if let serde_json::Value::Object(object) = &mut frame_value {
+                        object.insert("op".to_string(), serde_json::Value::String("video_frame".to_string()));
+                    }
+                    writeln!(stream, "{frame_value}").map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
                     stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                    if let Some(fd) = fd {
+                        fdpass::send_fd(&stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+                    }
                 }
                 FdSocketRequest::ReleaseVideoFrame { lease_id } => {
                     if let Some((session_id, frame)) = leases.remove(&lease_id) {
