@@ -205,12 +205,16 @@ immediately after sending the fd because each frame owns its backing storage.
 Reusable slots cannot do that. They need explicit leases, release messages,
 consumer watermarks, or native release sync before overwrite.
 
-The current daemon CPU path uses a deliberately small first lease: one
-fd-side-channel connection owns one acquired frame, and closing that connection
-releases the daemon-side pin. That is good enough for safe reusable CPU pools in
-the prototype, but it is not the final control-plane shape. Streaming consumers,
-recording cursors, and native GPU handles should move to explicit lease ids,
-watermarks, or native release fences.
+The current daemon CPU path now uses a long-lived fd-side-channel connection per
+consumer plus explicit frame `lease_id`s. The daemon assigns one stable consumer
+id to the connection, sends frame metadata and an fd for each
+`latest_video_frame` request, and keeps the underlying acquired frame pinned
+until `release_video_frame` or disconnect cleanup. That is good enough for safe
+reusable CPU pools in the prototype, but it is not the final hot-path shape.
+Streaming consumers, recording cursors, and native GPU handles should move
+producer cursors, per-consumer cursors, release watermarks, wake sequence
+numbers, and counters into shared control memory. The socket should then be the
+setup, handle-transfer, and exceptional control channel.
 
 Pool retirement is also generational. A producer can announce a new pool or slot
 generation during resize/reconfigure, but the old generation remains live until

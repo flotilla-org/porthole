@@ -76,7 +76,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
-    use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse};
+    use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
     use tower::ServiceExt;
 
     use super::*;
@@ -134,18 +134,9 @@ mod tests {
         assert_eq!(session.height, 1);
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let request = LatestVideoFrameRequest {
-            session_id: created.session_id.clone(),
-            track_id: created.track_id,
-        };
-        writeln!(stream, "{}", serde_json::to_string(&request).unwrap()).unwrap();
-
-        let fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.width, 2);
@@ -164,13 +155,73 @@ mod tests {
         assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len as u64);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
+        release_frame_on_stream(&mut stream, frame.lease_id);
+    }
+
+    #[tokio::test]
+    async fn capture_fd_socket_serves_multiple_leased_frames_on_one_connection() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+
+        let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        assert_ne!(first.lease_id, 0);
+        release_frame_on_stream(&mut stream, first.lease_id);
+
+        let second = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        assert_ne!(second.lease_id, 0);
+        assert_ne!(second.lease_id, first.lease_id);
+        release_frame_on_stream(&mut stream, second.lease_id);
+    }
+
+    fn release_frame_on_stream(stream: &mut UnixStream, lease_id: u64) {
+        writeln!(
+            stream,
+            "{}",
+            serde_json::json!({
+                "op": "release_video_frame",
+                "lease_id": lease_id
+            })
+        )
+        .unwrap();
+    }
+
+    fn request_latest_frame_on_stream(
+        stream: &mut UnixStream,
+        reader: &mut BufReader<UnixStream>,
+        created: &CreateCaptureSessionResponse,
+    ) -> LatestVideoFrameResponse {
+        writeln!(
+            stream,
+            "{}",
+            serde_json::json!({
+                "op": "latest_video_frame",
+                "session_id": created.session_id,
+                "track_id": created.track_id
+            })
+        )
+        .unwrap();
+
+        let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(frame.session_id, created.session_id);
+        assert_eq!(frame.track_id, created.track_id);
+        assert_eq!(frame.payload_len, frame.len as u64);
 
         let mut file = File::from(fd);
         let mut bytes = Vec::new();
         file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
         file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
-        assert_eq!(bytes.len(), frame.len);
         assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
+        frame
     }
 
     #[tokio::test]
@@ -217,18 +268,9 @@ mod tests {
         assert_eq!(created.status_message, None);
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let request = LatestVideoFrameRequest {
-            session_id: created.session_id.clone(),
-            track_id: created.track_id,
-        };
-        writeln!(stream, "{}", serde_json::to_string(&request).unwrap()).unwrap();
-
-        let fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.timestamp_ns, 123_456_789);
@@ -244,13 +286,7 @@ mod tests {
         assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len as u64);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
-
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
-        file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
-        assert_eq!(bytes.len(), frame.len);
-        assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
+        release_frame_on_stream(&mut stream, frame.lease_id);
     }
 
     #[tokio::test]
