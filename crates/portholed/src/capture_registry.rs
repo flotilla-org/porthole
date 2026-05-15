@@ -714,6 +714,13 @@ struct LatestFrameReply {
     frame: AcquiredVideoFrame,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct RegisteredPoolKey {
+    track_id: u64,
+    pool_id: u64,
+    pool_generation: u64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureRegistryError {
     #[error("capture fd socket is disabled")]
@@ -861,7 +868,8 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let consumer_id = registry.allocate_consumer_id()?;
     let mut next_lease_id = 1_u64;
     let mut leases: BTreeMap<u64, (String, AcquiredVideoFrame)> = BTreeMap::new();
-    let mut registered_pools: BTreeSet<(u64, u64, u64)> = BTreeSet::new();
+    // TODO: evict retired pool generations once the side channel grows pool-retirement messages.
+    let mut registered_pools: BTreeSet<RegisteredPoolKey> = BTreeSet::new();
     let result = (|| {
         loop {
             let mut line = String::new();
@@ -884,7 +892,11 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                     next_lease_id = next_lease_id.wrapping_add(1).max(1);
                     response.lease_id = lease_id;
                     if let Some(pool) = frame.cpu_pool_registration() {
-                        let pool_key = (pool.track_id.get(), pool.pool_id, pool.pool_generation);
+                        let pool_key = RegisteredPoolKey {
+                            track_id: pool.track_id.get(),
+                            pool_id: pool.pool_id,
+                            pool_generation: pool.pool_generation,
+                        };
                         if registered_pools.insert(pool_key) {
                             let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
                             writeln!(
