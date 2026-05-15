@@ -65,6 +65,7 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs::File,
         io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
         os::unix::net::UnixStream,
@@ -136,7 +137,8 @@ mod tests {
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
-        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        let mut pools = BTreeMap::new();
+        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.width, 2);
@@ -169,15 +171,56 @@ mod tests {
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
+        let mut pools = BTreeMap::new();
 
-        let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_ne!(first.lease_id, 0);
         release_frame_on_stream(&mut stream, first.lease_id);
 
-        let second = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        let second = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_ne!(second.lease_id, 0);
         assert_ne!(second.lease_id, first.lease_id);
         release_frame_on_stream(&mut stream, second.lease_id);
+    }
+
+    #[tokio::test]
+    async fn capture_fd_socket_registers_reusable_cpu_pool_once() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+
+        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+
+        request_latest_frame(&mut stream, &created);
+        let pool = read_json_line(&mut reader);
+        assert_eq!(pool["op"], "register_cpu_pool");
+        assert_eq!(pool["session_id"], created.session_id);
+        assert_eq!(pool["track_id"], created.track_id);
+        assert_ne!(pool["pool_id"].as_u64().unwrap(), 0);
+        assert_ne!(pool["pool_generation"].as_u64().unwrap(), 0);
+        assert_eq!(pool["slot_count"], 3);
+        let _pool_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+
+        let first = read_json_line(&mut reader);
+        assert_eq!(first["op"], "video_frame");
+        let first_lease = first["lease_id"].as_u64().unwrap();
+        assert_ne!(first_lease, 0);
+        assert_eq!(first["pool_id"], pool["pool_id"]);
+        assert_eq!(first["slot_generation"], pool["pool_generation"]);
+        release_frame_on_stream(&mut stream, first_lease);
+
+        request_latest_frame(&mut stream, &created);
+        let second = read_json_line(&mut reader);
+        assert_eq!(second["op"], "video_frame");
+        let second_lease = second["lease_id"].as_u64().unwrap();
+        assert_ne!(second_lease, 0);
+        assert_eq!(second["pool_id"], pool["pool_id"]);
+        assert_eq!(second["slot_generation"], pool["pool_generation"]);
+        release_frame_on_stream(&mut stream, second_lease);
     }
 
     fn release_frame_on_stream(stream: &mut UnixStream, lease_id: u64) {
@@ -192,11 +235,7 @@ mod tests {
         .unwrap();
     }
 
-    fn request_latest_frame_on_stream(
-        stream: &mut UnixStream,
-        reader: &mut BufReader<UnixStream>,
-        created: &CreateCaptureSessionResponse,
-    ) -> LatestVideoFrameResponse {
+    fn request_latest_frame(stream: &mut UnixStream, created: &CreateCaptureSessionResponse) {
         writeln!(
             stream,
             "{}",
@@ -207,16 +246,44 @@ mod tests {
             })
         )
         .unwrap();
+    }
 
-        let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+    fn read_json_line(reader: &mut BufReader<UnixStream>) -> serde_json::Value {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
-        let frame: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        serde_json::from_str(line.trim_end()).unwrap()
+    }
+
+    fn request_latest_frame_on_stream(
+        stream: &mut UnixStream,
+        reader: &mut BufReader<UnixStream>,
+        created: &CreateCaptureSessionResponse,
+        pools: &mut BTreeMap<(u64, u64, u64), File>,
+    ) -> LatestVideoFrameResponse {
+        request_latest_frame(stream, created);
+
+        let frame = loop {
+            let value = read_json_line(reader);
+            match value["op"].as_str() {
+                Some("register_cpu_pool") => {
+                    let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+                    let key = (
+                        value["track_id"].as_u64().unwrap(),
+                        value["pool_id"].as_u64().unwrap(),
+                        value["pool_generation"].as_u64().unwrap(),
+                    );
+                    pools.insert(key, File::from(fd));
+                }
+                Some("video_frame") => break serde_json::from_value::<LatestVideoFrameResponse>(value).unwrap(),
+                other => panic!("unexpected capture fd socket response {other:?}"),
+            }
+        };
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.payload_len, frame.len as u64);
 
-        let mut file = File::from(fd);
+        let key = (frame.track_id, frame.pool_id, frame.slot_generation);
+        let file = pools.get_mut(&key).expect("frame references registered pool");
         let mut bytes = Vec::new();
         file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
         file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
@@ -270,7 +337,8 @@ mod tests {
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
-        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created);
+        let mut pools = BTreeMap::new();
+        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.timestamp_ns, 123_456_789);

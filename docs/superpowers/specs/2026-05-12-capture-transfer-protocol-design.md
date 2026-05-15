@@ -277,8 +277,11 @@ identity of the payload slot the frame metadata names. In-process producers use
 `ft_consumer_release_video_frame` as the release point. Daemon-backed consumers
 use a long-lived fd-side-channel connection as the consumer control channel.
 Each acquired frame receives an explicit `lease_id`; the daemon keeps the frame
-pinned after sending the fd and metadata, then releases it when the consumer
-sends `release_video_frame` for that lease. Disconnect cleanup releases any
+pinned after sending metadata, then releases it when the consumer sends
+`release_video_frame` for that lease. Reusable CPU pools are registered once per
+consumer connection: the daemon sends `register_cpu_pool` with the pool fd, and
+later frames name offsets and lengths inside that registered mapping. Immutable
+fallback frames can still carry a per-frame fd. Disconnect cleanup releases any
 outstanding leases for that connection.
 
 The implementation now has an internal per-track metadata ring. Publishing a
@@ -320,7 +323,8 @@ Initial consumer-pull flow:
 
 ```text
 consumer -> daemon: latest_video_frame { session_id, track_id }
-daemon -> consumer: video_frame_metadata { lease_id, sequence, width, height, stride, format, payload range } + fd
+daemon -> consumer: register_cpu_pool { pool_id, generation, map_len, slot layout } + fd  # when needed
+daemon -> consumer: video_frame_metadata { lease_id, sequence, width, height, stride, format, pool/slot/payload range }
 consumer -> daemon: release_video_frame { lease_id }
 ```
 
