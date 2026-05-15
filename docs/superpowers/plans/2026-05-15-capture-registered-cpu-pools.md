@@ -50,13 +50,13 @@
 - Modify: `crates/capture-transfer/src/ffi.rs` only if release/drop ownership requires it
 - Test: `crates/capture-transfer/src/daemon.rs`
 
-- [ ] Add a failing daemon-client test where a fake server registers one CPU pool and sends two frame messages naming different offsets in that pool.
-- [ ] Add `DaemonConsumer` pool cache keyed by `(track_id, pool_id, slot_generation)`.
-- [ ] Parse tagged side-channel messages: `register_cpu_pool` and `video_frame`.
-- [ ] On pool registration, receive and mmap the fd read-only for the registered length.
-- [ ] On frame response, resolve bytes from the cached pool mapping and validate the range.
-- [ ] Keep immutable fallback support for a frame response accompanied by a per-frame fd.
-- [ ] Run `cargo test -p capture-transfer daemon --locked`.
+- [x] Add a failing daemon-client test where a fake server registers one CPU pool and sends two frame messages naming different offsets in that pool.
+- [x] Add `DaemonConsumer` pool cache keyed by `(track_id, pool_id, slot_generation)`.
+- [x] Parse tagged side-channel messages: `register_cpu_pool` and `video_frame`.
+- [x] On pool registration, receive and mmap the fd read-only for the registered length.
+- [x] On frame response, resolve bytes from the cached pool mapping and validate the range.
+- [x] Keep immutable fallback support for a frame response accompanied by a per-frame fd.
+- [x] Run `cargo test -p capture-transfer daemon --locked`.
 
 ## Chunk 4: Docs and Gates
 
