@@ -67,9 +67,9 @@
 - Modify: `docs/superpowers/specs/2026-05-13-capture-transfer-architecture-refinement-design.md`
 - Modify: `docs/superpowers/specs/2026-05-15-capture-registered-cpu-pools-design.md`
 
-- [ ] Update existing protocol/refinement docs to say reusable CPU pools are registered once on the side channel.
-- [ ] Run `cargo +nightly-2026-03-12 fmt`.
-- [ ] Run `cargo build --workspace --locked`.
-- [ ] Run `cargo test --workspace --locked`.
-- [ ] Run `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-- [ ] Run `cargo +nightly-2026-03-12 fmt --check`.
+- [x] Update existing protocol/refinement docs to say reusable CPU pools are registered once on the side channel.
+- [x] Run `cargo +nightly-2026-03-12 fmt`.
+- [x] Run `cargo build --workspace --locked`.
+- [x] Run `cargo test --workspace --locked`.
+- [x] Run `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- [x] Run `cargo +nightly-2026-03-12 fmt --check`.

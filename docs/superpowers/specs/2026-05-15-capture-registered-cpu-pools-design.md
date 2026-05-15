@@ -1,7 +1,7 @@
 # Capture Registered CPU Pools Design
 
 Date: 2026-05-15
-Status: draft for implementation
+Status: implemented prototype
 
 ## Context
 

@@ -207,14 +207,16 @@ consumer watermarks, or native release sync before overwrite.
 
 The current daemon CPU path now uses a long-lived fd-side-channel connection per
 consumer plus explicit frame `lease_id`s. The daemon assigns one stable consumer
-id to the connection, sends frame metadata and an fd for each
-`latest_video_frame` request, and keeps the underlying acquired frame pinned
-until `release_video_frame` or disconnect cleanup. That is good enough for safe
-reusable CPU pools in the prototype, but it is not the final hot-path shape.
-Streaming consumers, recording cursors, and native GPU handles should move
-producer cursors, per-consumer cursors, release watermarks, wake sequence
-numbers, and counters into shared control memory. The socket should then be the
-setup, handle-transfer, and exceptional control channel.
+id to the connection, registers each reusable CPU pool once with
+`register_cpu_pool` plus an fd, and sends frame metadata naming offsets inside
+the registered pool for each `latest_video_frame` request. It keeps the
+underlying acquired frame pinned until `release_video_frame` or disconnect
+cleanup. Immutable fallback frames may still carry a per-frame fd. That is good
+enough for safe reusable CPU pools in the prototype, but it is not the final
+hot-path shape. Streaming consumers, recording cursors, and native GPU handles
+should move producer cursors, per-consumer cursors, release watermarks, wake
+sequence numbers, and counters into shared control memory. The socket should
+then be the setup, handle-transfer, and exceptional control channel.
 
 Pool retirement is also generational. A producer can announce a new pool or slot
 generation during resize/reconfigure, but the old generation remains live until

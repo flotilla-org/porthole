@@ -907,8 +907,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         }
                     }
                     leases.insert(lease_id, (session_id, frame));
-                    let mut frame_value =
-                        serde_json::to_value(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                    let mut frame_value = serde_json::to_value(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
                     if let serde_json::Value::Object(object) = &mut frame_value {
                         object.insert("op".to_string(), serde_json::Value::String("video_frame".to_string()));
                     }
@@ -1220,9 +1219,14 @@ mod tests {
             })
         )
         .unwrap();
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
         let mut reader = BufReader::new(client.try_clone().unwrap());
         let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(pool["op"], "register_cpu_pool");
+        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+
+        line.clear();
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
