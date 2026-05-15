@@ -284,13 +284,15 @@ later frames name offsets and lengths inside that registered mapping. Immutable
 fallback frames can still carry a per-frame fd. Disconnect cleanup releases any
 outstanding leases for that connection.
 
-The implementation now has an internal per-track metadata ring. Publishing a
-frame writes the CPU slot, appends a fixed-size ring entry naming the sequence,
-frame key, pool id, slot id, slot generation, and payload range, then latest
-acquisition resolves the newest ring entry back to the stored frame. This is a
-prototype of the future shared control structure; it is still exercised through
-the existing request/lease path rather than mapped directly by external
-consumers.
+The implementation now has an internal per-track metadata ring with explicit
+cursor/control state. Publishing a frame writes the CPU slot, appends a
+fixed-size ring entry naming the producer cursor, sequence, frame key, pool id,
+slot id, slot generation, and payload range, then latest acquisition resolves
+the newest ring entry back to the stored frame. Per-consumer cursor state tracks
+last acquired cursor, release cursor, acquired count, and skipped count in one
+place. This is a prototype of the future shared control structure; it is still
+exercised through the existing request/lease path rather than mapped directly by
+external consumers.
 
 The explicit lease id is still only the first control-plane step. A future shared
 control/ring page should carry producer cursors, per-consumer cursors, release
