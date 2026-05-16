@@ -5,7 +5,7 @@ Status: implemented prototype
 
 ## Context
 
-The daemon capture side channel now has the right consumer lifetime shape: one
+The daemon capture transfer channel now has the right consumer lifetime shape: one
 long-lived Unix-domain socket per daemon-backed consumer, stable daemon
 `ConsumerId`, explicit `lease_id`s, and disconnect cleanup. The remaining CPU
 transport cost is that every `latest_video_frame` response still passes an fd
@@ -20,7 +20,7 @@ JSON responses and into shared memory without also changing handle lifetime.
 
 ## Goals
 
-- Register daemon CPU shm pools once per side-channel connection.
+- Register daemon CPU shm pools once per capture transfer channel connection.
 - Cache pool mappings in the capture-transfer daemon client.
 - Keep `latest_video_frame` responses small: frame metadata names
   `pool_id`, `slot_id`, `slot_generation`, `payload_offset`, and
@@ -40,7 +40,7 @@ JSON responses and into shared memory without also changing handle lifetime.
 
 ## Protocol Shape
 
-The side channel remains line-delimited JSON plus `SCM_RIGHTS`.
+The capture transfer channel remains line-delimited JSON plus `SCM_RIGHTS`.
 
 Pool registration is a server message with an fd:
 
@@ -130,7 +130,7 @@ outstanding leases and disconnects the daemon consumer.
 - `capture-transfer` daemon-client test: a fake server registers one CPU pool,
   sends two frames from different offsets in that pool, and the client reads
   both without receiving a per-frame fd.
-- `portholed` side-channel test: one synthetic session acquires two frames on
+- `portholed` capture transfer channel test: one synthetic session acquires two frames on
   one connection and observes only one pool registration fd for the reusable
   pool.
 - Existing one-connection multi-lease and disconnect-cleanup tests remain green.

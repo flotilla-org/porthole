@@ -24,7 +24,7 @@ future shared structure so later mmap/atomic work is a smaller step.
   count in one place.
 - Keep current latest-frame semantics: consumers acquire newest available frame,
   slow consumers skip intermediate frames, and producers do not block.
-- Keep daemon side-channel wire shape unchanged.
+- Keep daemon capture transfer channel wire shape unchanged.
 - Preserve current payload pool, lease, and pin behavior.
 
 ## Non-Goals
@@ -32,7 +32,7 @@ future shared structure so later mmap/atomic work is a smaller step.
 - No cross-process shared control mmap in this slice.
 - No atomics, futexes, eventfd, kqueue, or wake primitive work.
 - No ordered recording cursor.
-- No binary side-channel protocol change.
+- No binary capture transfer channel protocol change.
 - No GPU synchronization or native handle transfer change.
 
 ## Model
