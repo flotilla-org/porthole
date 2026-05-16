@@ -16,6 +16,12 @@ counters live in one mechanically sympathetic control structure. This slice does
 not expose that page cross-process. It makes the in-process model look like the
 future shared structure so later mmap/atomic work is a smaller step.
 
+Follow-up work has moved the track header and video ring entries into an
+internal `VideoTrackControlPage` model. That page is still ordinary in-process
+Rust state, not shared memory, but `TrackRingControl` now writes producer cursor,
+latest sequence, capacity, and fixed ring entries through the same shape the
+future mmap control page is expected to use.
+
 ## Goals
 
 - Add an explicit in-process control model for video ring cursors.
