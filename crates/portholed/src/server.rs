@@ -150,12 +150,13 @@ mod tests {
         assert_eq!(frame.damage_base_sequence, 1);
         assert_eq!(frame.dropped_before_publish, 0);
         assert_eq!(frame.producer_drop_count, 0);
+        assert_eq!(frame.producer_cursor, 1);
         assert_eq!(frame.evicted_count, 0);
         assert_eq!(frame.consumer_skipped_count, 0);
         assert_ne!(frame.pool_id, 0);
         assert_eq!(frame.slot_id, 0);
         assert_ne!(frame.slot_generation, 0);
-        assert_eq!(frame.payload_len, frame.len as u64);
+        assert_eq!(frame.payload_len, frame.len);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
         release_frame_on_stream(&mut stream, frame.lease_id);
     }
@@ -207,6 +208,7 @@ mod tests {
 
         let first = read_json_line(&mut reader);
         assert_eq!(first["op"], "video_frame");
+        assert_eq!(first["producer_cursor"], 1);
         let first_lease = first["lease_id"].as_u64().unwrap();
         assert_ne!(first_lease, 0);
         assert_eq!(first["pool_id"], pool["pool_id"]);
@@ -216,6 +218,7 @@ mod tests {
         request_latest_frame(&mut stream, &created);
         let second = read_json_line(&mut reader);
         assert_eq!(second["op"], "video_frame");
+        assert_eq!(second["producer_cursor"], first["producer_cursor"]);
         let second_lease = second["lease_id"].as_u64().unwrap();
         assert_ne!(second_lease, 0);
         assert_eq!(second["pool_id"], pool["pool_id"]);
@@ -280,7 +283,7 @@ mod tests {
         };
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);
-        assert_eq!(frame.payload_len, frame.len as u64);
+        assert_eq!(frame.payload_len, frame.len);
 
         let key = (frame.track_id, frame.pool_id, frame.slot_generation);
         let file = pools.get_mut(&key).expect("frame references registered pool");
@@ -352,7 +355,7 @@ mod tests {
         assert_ne!(frame.pool_id, 0);
         assert_eq!(frame.slot_id, 0);
         assert_ne!(frame.slot_generation, 0);
-        assert_eq!(frame.payload_len, frame.len as u64);
+        assert_eq!(frame.payload_len, frame.len);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
         release_frame_on_stream(&mut stream, frame.lease_id);
     }

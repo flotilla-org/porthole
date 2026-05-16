@@ -30,7 +30,7 @@ before adding IOSurface, dmabuf, remote transport, or mux semantics.
 - Prove cross-language consumption through a small C ABI.
 - Use CPU shared memory as the first payload transport.
 - Pass shared-memory file descriptors with `SCM_RIGHTS` on a raw Unix-domain
-  side channel rather than trying to encode descriptors in HTTP bodies.
+  capture transfer channel rather than trying to encode descriptors in HTTP bodies.
 - Make latest-frame viewing behavior explicit: slow interactive consumers skip
   stale frames rather than blocking the producer.
 - Leave room for audio, accessibility events, metadata events, native handles,
@@ -85,7 +85,7 @@ portholed HTTP-over-UDS registry
 porthole producer integration
   ScreenCaptureKit frames copied into capture-transfer video payloads
 
-raw capture-transfer UDS side channel
+raw capture transfer channel
   framed metadata plus SCM_RIGHTS descriptors for payload handles
 
 tools/capture-viewer-sdl/
@@ -122,7 +122,7 @@ producer creates local session
 producer registers source
 producer registers video track for source
 consumer discovers session through portholed
-consumer connects to raw fd-transfer side channel
+consumer connects to raw capture transfer channel
 consumer receives replayed source and track registration events
 producer publishes video frames to the track
 consumer requests or subscribes to the latest video frame
@@ -184,7 +184,7 @@ typedef struct ft_session_descriptor {
 ```
 
 That descriptor lets a consumer use HTTP-over-UDS for registry metadata and the
-raw UDS side channel for descriptor transfer.
+raw UDS capture transfer channel for descriptor transfer.
 
 ## Event Model
 
@@ -275,7 +275,7 @@ Consumers must validate `payload_offset + payload_len <= payload_map_len` before
 reading and must treat `pool_id`, `slot_id`, and `slot_generation` as the
 identity of the payload slot the frame metadata names. In-process producers use
 `ft_consumer_release_video_frame` as the release point. Daemon-backed consumers
-use a long-lived fd-side-channel connection as the consumer control channel.
+use a long-lived capture-transfer-channel connection as the consumer control channel.
 Each acquired frame receives an explicit `lease_id`; the daemon keeps the frame
 pinned after sending metadata, then releases it when the consumer sends
 `release_video_frame` for that lease. Reusable CPU pools are registered once per
@@ -314,10 +314,10 @@ This is the correct behavior for an SDL viewer and future terminal bridge. A
 recording consumer can later add ordered cursor semantics and explicit drop
 accounting.
 
-## FD Transfer Side Channel
+## Capture Transfer Channel
 
-The fd-transfer side channel is a raw Unix-domain socket separate from
-portholed's Axum HTTP socket. Messages on the side channel should be small
+The capture transfer channel is a raw Unix-domain socket separate from
+portholed's Axum HTTP socket. Messages on the capture transfer channel should be small
 length-prefixed JSON or binary frames that describe the operation and the
 metadata. Handles travel as ancillary data with `SCM_RIGHTS`.
 
@@ -369,8 +369,8 @@ Additional consumer modes:
 
 Additional transports:
 
-- local FD-passing over raw UDS side channel
-- mux side channel
+- local FD-passing over raw UDS capture transfer channel
+- mux capture transfer channel
 - remote out-of-band frame or video data
 
 ## Testing
@@ -401,7 +401,7 @@ workarounds for missing OS permissions.
   memfd-like temporary files where available, mmap files, or a platform wrapper?
 - Should session discovery be by explicit UDS path, session id through the
   porthole daemon, or both?
-- Should the fd-transfer side channel use one long-lived connection per
+- Should the capture transfer channel use one long-lived connection per
   consumer, one connection per acquired frame, or both?
 - What is the first producer-initiated offer scenario worth implementing:
   terminal image-source registration, recorder subscription, or mux replay?

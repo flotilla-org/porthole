@@ -205,7 +205,7 @@ immediately after sending the fd because each frame owns its backing storage.
 Reusable slots cannot do that. They need explicit leases, release messages,
 consumer watermarks, or native release sync before overwrite.
 
-The current daemon CPU path now uses a long-lived fd-side-channel connection per
+The current daemon CPU path now uses a long-lived capture-transfer-channel connection per
 consumer plus explicit frame `lease_id`s. The daemon assigns one stable consumer
 id to the connection, registers each reusable CPU pool once with
 `register_cpu_pool` plus an fd, and sends frame metadata naming offsets inside

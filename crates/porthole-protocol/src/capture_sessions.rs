@@ -35,6 +35,7 @@ pub struct LatestVideoFrameResponse {
     pub session_id: String,
     pub track_id: u64,
     pub lease_id: u64,
+    pub producer_cursor: u64,
     pub sequence: u64,
     pub timestamp_ns: u64,
     pub width: u32,
@@ -56,5 +57,5 @@ pub struct LatestVideoFrameResponse {
     pub producer_drop_count: u64,
     pub evicted_count: u64,
     pub consumer_skipped_count: u64,
-    pub len: usize,
+    pub len: u64,
 }

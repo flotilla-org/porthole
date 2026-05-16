@@ -17,6 +17,7 @@ use capture_transfer::{
         VideoTrackDesc,
     },
     state::SessionState,
+    transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
     video::{AcquiredVideoFrame, ConsumerId, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
@@ -621,9 +622,10 @@ impl CaptureRegistry {
         let response = LatestVideoFrameResponse {
             session_id: request.session_id.clone(),
             track_id: request.track_id,
-            // The side-channel owns lease allocation and overwrites this before
+            // The capture transfer channel owns lease allocation and overwrites this before
             // sending. Zero is deliberately reserved as "not assigned".
             lease_id: 0,
+            producer_cursor: frame.producer_cursor(),
             sequence: frame.desc.sequence,
             timestamp_ns: frame.desc.timestamp_ns,
             width: frame.desc.width,
@@ -645,7 +647,7 @@ impl CaptureRegistry {
             producer_drop_count: frame.desc.producer_drop_count,
             evicted_count: frame.desc.evicted_count,
             consumer_skipped_count: frame.desc.consumer_skipped_count,
-            len: frame.bytes().len(),
+            len: frame.bytes().len() as u64,
         };
         Ok(LatestFrameReply { response, fd, frame })
     }
@@ -868,7 +870,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let consumer_id = registry.allocate_consumer_id()?;
     let mut next_lease_id = 1_u64;
     let mut leases: BTreeMap<u64, (String, AcquiredVideoFrame)> = BTreeMap::new();
-    // TODO: evict retired pool generations once the side channel grows pool-retirement messages.
+    // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
     let mut registered_pools: BTreeSet<RegisteredPoolKey> = BTreeSet::new();
     let result = (|| {
         loop {
@@ -879,10 +881,10 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
             if bytes == 0 {
                 break;
             }
-            let request: FdSocketRequest =
+            let request: CaptureTransferRequest =
                 serde_json::from_str(line.trim_end()).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
             match request {
-                FdSocketRequest::LatestVideoFrame { session_id, track_id } => {
+                CaptureTransferRequest::LatestVideoFrame { session_id, track_id } => {
                     let request = LatestVideoFrameRequest {
                         session_id: session_id.clone(),
                         track_id,
@@ -899,37 +901,30 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         };
                         if registered_pools.insert(pool_key) {
                             let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
-                            writeln!(
-                                stream,
-                                "{}",
-                                serde_json::json!({
-                                    "op": "register_cpu_pool",
-                                    "session_id": request.session_id,
-                                    "track_id": pool.track_id.get(),
-                                    "pool_id": pool.pool_id,
-                                    "pool_generation": pool.pool_generation,
-                                    "payload_map_len": pool.payload_map_len,
-                                    "slot_stride": pool.slot_stride,
-                                    "slot_count": pool.slot_count
-                                })
-                            )
-                            .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                            write_capture_transfer_message(
+                                &mut stream,
+                                &CaptureTransferMessage::RegisterCpuPool {
+                                    session_id: request.session_id.clone(),
+                                    track_id: pool.track_id.get(),
+                                    pool_id: pool.pool_id,
+                                    pool_generation: pool.pool_generation,
+                                    payload_map_len: pool.payload_map_len,
+                                    slot_stride: pool.slot_stride,
+                                    slot_count: pool.slot_count,
+                                },
+                            )?;
                             stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
                             fdpass::send_fd(&stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
                         }
                     }
                     leases.insert(lease_id, (session_id, frame));
-                    let mut frame_value = serde_json::to_value(&response).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-                    if let serde_json::Value::Object(object) = &mut frame_value {
-                        object.insert("op".to_string(), serde_json::Value::String("video_frame".to_string()));
-                    }
-                    writeln!(stream, "{frame_value}").map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                    write_capture_transfer_message(&mut stream, &video_frame_message_from_response(&response))?;
                     stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
                     if let Some(fd) = fd {
                         fdpass::send_fd(&stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
                     }
                 }
-                FdSocketRequest::ReleaseVideoFrame { lease_id } => {
+                CaptureTransferRequest::ReleaseVideoFrame { lease_id } => {
                     if let Some((session_id, frame)) = leases.remove(&lease_id) {
                         registry.release_frame(&session_id, frame)?;
                     }
@@ -945,11 +940,40 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     result
 }
 
-#[derive(serde::Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-enum FdSocketRequest {
-    LatestVideoFrame { session_id: String, track_id: u64 },
-    ReleaseVideoFrame { lease_id: u64 },
+fn write_capture_transfer_message(stream: &mut UnixStream, message: &CaptureTransferMessage) -> Result<(), CaptureRegistryError> {
+    let line = serde_json::to_string(message).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+    writeln!(stream, "{line}").map_err(|error| CaptureRegistryError::Io(error.to_string()))
+}
+
+fn video_frame_message_from_response(response: &LatestVideoFrameResponse) -> CaptureTransferMessage {
+    CaptureTransferMessage::VideoFrame {
+        session_id: response.session_id.clone(),
+        track_id: response.track_id,
+        lease_id: response.lease_id,
+        producer_cursor: response.producer_cursor,
+        sequence: response.sequence,
+        timestamp_ns: response.timestamp_ns,
+        width: response.width,
+        height: response.height,
+        stride: response.stride,
+        pixel_format: response.pixel_format.clone(),
+        pool_id: response.pool_id,
+        slot_id: response.slot_id,
+        slot_generation: response.slot_generation,
+        payload_offset: response.payload_offset,
+        payload_len: response.payload_len,
+        payload_map_len: response.payload_map_len,
+        clock_domain: response.clock_domain.clone(),
+        color_space: response.color_space.clone(),
+        sync_kind: response.sync_kind.clone(),
+        damage_kind: response.damage_kind.clone(),
+        damage_base_sequence: response.damage_base_sequence,
+        dropped_before_publish: response.dropped_before_publish,
+        producer_drop_count: response.producer_drop_count,
+        evicted_count: response.evicted_count,
+        consumer_skipped_count: response.consumer_skipped_count,
+        len: response.len,
+    }
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {

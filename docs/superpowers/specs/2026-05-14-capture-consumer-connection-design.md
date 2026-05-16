@@ -22,14 +22,14 @@ DPDK rings, and Disruptor-style sequence counters:
 - wake sequence numbers
 
 This slice should not expose that shared ring yet. It should make the
-side-channel connection long-lived and explicit enough that a shared control
+capture transfer channel long-lived and explicit enough that a shared control
 page can be registered later without changing the consumer identity or release
 contract.
 
 ## Goals
 
-- Use one fd-transfer side-channel connection per daemon-backed consumer.
-- Allocate one stable daemon `ConsumerId` per side-channel connection.
+- Use one capture transfer channel connection per daemon-backed consumer.
+- Allocate one stable daemon `ConsumerId` per capture transfer channel connection.
 - Replace connection-lifetime frame leases with explicit `lease_id`s.
 - Let a single connection acquire and release multiple latest frames.
 - Release all outstanding leases and disconnect the consumer when the side
@@ -48,7 +48,7 @@ contract.
 
 ## Protocol Shape
 
-The raw side-channel remains line-delimited JSON plus `SCM_RIGHTS` ancillary fd
+The raw capture transfer channel remains line-delimited JSON plus `SCM_RIGHTS` ancillary fd
 passing. A connection owns exactly one daemon consumer id.
 
 Client request:
@@ -114,10 +114,9 @@ shared control-page work.
 
 ## Testing
 
-- Daemon side-channel test: one connection can acquire, release, and acquire
+- Daemon capture transfer channel test: one connection can acquire, release, and acquire
   again.
 - Registry test: acquiring multiple frames with the same `ConsumerId` preserves
   per-consumer skip accounting.
 - Registry test: disconnecting a daemon consumer releases outstanding pins.
 - C ABI smoke remains green through `ft_consumer_connect_session`.
-
