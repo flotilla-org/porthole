@@ -119,10 +119,15 @@ Sources/PortholeHelper/
 3. `$TMPDIR/porthole-<uid>/porthole.sock`
 4. `/tmp/porthole-<uid>/porthole.sock`
 
+The Swift implementation should normalize the final file URL with
+`URL(fileURLWithPath:).standardized` so macOS `$TMPDIR` values with trailing
+slashes do not produce surprising display strings or test snapshots.
+
 `PortholeClient` uses `Network.framework` with a Unix-domain endpoint and writes
 simple HTTP/1.1 requests. It should keep the implementation deliberately small:
-one request at a time, bounded response size, JSON body decode, and clear errors
-for connection failure, non-2xx status, invalid HTTP, and invalid JSON.
+one request at a time, a 1 MiB maximum response body, JSON body decode, and
+clear errors for connection failure, non-2xx status, invalid HTTP, and invalid
+JSON.
 
 `PortholeModels` mirrors only the protocol shapes this UI needs:
 
@@ -144,6 +149,7 @@ struct SystemPermissionStatus: Decodable, Identifiable {
     let name: String
     let granted: Bool
     let purpose: String
+    var id: String { name }
 }
 
 struct SystemPermissionPromptOutcome: Decodable {
@@ -239,11 +245,16 @@ Flow:
 6. Show prompt outcome notes and open Settings.
 7. User clicks `I Granted It`.
 8. If the outcome requires daemon restart, restart the helper-owned daemon and
-   wait until `/info` responds again.
+   wait up to 10 seconds for `/info` to respond again. Use bounded polling with
+   short exponential backoff, matching the CLI's default restart timeout shape.
 9. Re-fetch `/info`.
 10. If the permission is now granted, move to the next missing permission.
 11. If still missing, keep that permission active and show a clear "still
     missing" state.
+
+If the daemon does not respond before the restart timeout, transition to
+`blocked(error)` with a "Daemon failed to restart" message and keep Restart
+Daemon plus Refresh available.
 
 The UI must not fire request calls for multiple missing permissions
 back-to-back.
@@ -252,7 +263,8 @@ back-to-back.
 
 Normal installed-helper mode should have a helper-owned `portholed` child.
 Restart means terminate that child, let `DaemonSupervisor` launch the next one,
-then wait for `/info`.
+then wait up to 10 seconds for `/info`. Timeout is not success; surface it as a
+blocked restart failure and leave manual controls available.
 
 If the helper is in `.runningExternal`, it does not own the daemon process and
 must not pretend it can restart it. For this slice:
@@ -290,6 +302,10 @@ Automated tests should cover logic and packaging, not real TCC prompts:
   --scratch-path target/swift/PortholeHelper -c debug`.
 - Existing `cargo xtask bundle --platform macos` smoke should still pass.
 - Existing repo gates from `AGENTS.md` must pass.
+
+The Swift build and bundle smoke are mandatory validation for the onboarding UI
+implementation PR, but they are not added to the global `AGENTS.md` gate list in
+this design-only slice.
 
 Manual verification can open the helper and the onboarding window. It may click
 through non-permission UI. If the flow needs real Accessibility or Screen
