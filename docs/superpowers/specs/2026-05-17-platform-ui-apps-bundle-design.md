@@ -90,7 +90,6 @@ apps/
       Resources/
     bundle/
       Info.plist
-      entitlements.plist
       Resources/
         icon.png
   windows/        # future
@@ -106,6 +105,11 @@ crates/
 `apps/macos/` is the platform app home. The Swift helper source is one part of
 that app; bundle metadata, assets, signing inputs, and packaging scripts belong
 beside it rather than under a helper-specific top-level directory.
+
+Do not add an `entitlements.plist` in the transitional bundle-foundation slice.
+The flat development bundle does not need one. Add entitlements only in the
+later hardened-runtime/notarization slice or when a concrete helper capability
+requires them.
 
 The existing root `assets/icon.png` can move into `apps/macos/bundle/Resources`
 or be copied from there. There should be one authoritative icon input for the

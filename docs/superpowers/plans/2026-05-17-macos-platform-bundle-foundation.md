@@ -16,6 +16,10 @@ This plan implements only the first slice from `docs/superpowers/specs/2026-05-1
 
 Do not add Swift helper UI here. Do not flip `CFBundleExecutable` to `PortholeHelper` in this slice. Do not change the bundle id. The output bundle must remain functionally equivalent to today's daemon-only `Porthole.app`, just built by a better path.
 
+Do not create `apps/macos/bundle/entitlements.plist` in this slice. The
+transitional flat development bundle does not need entitlements; add them only
+with a concrete hardened-runtime, notarization, or helper-capability requirement.
+
 ## File Structure
 
 - Create `.cargo/config.toml` - Cargo alias for `cargo xtask`.
