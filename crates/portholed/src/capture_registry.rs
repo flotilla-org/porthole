@@ -570,13 +570,14 @@ impl CaptureRegistry {
     #[cfg(test)]
     fn latest_frame(&self, request: &LatestVideoFrameRequest) -> Result<LatestFrameReply, CaptureRegistryError> {
         let consumer_id = self.allocate_consumer_id()?;
-        self.latest_frame_for_consumer(request, consumer_id)
+        self.latest_frame_for_consumer(request, consumer_id, true)
     }
 
     fn latest_frame_for_consumer(
         &self,
         request: &LatestVideoFrameRequest,
         consumer_id: ConsumerId,
+        include_control_page: bool,
     ) -> Result<LatestFrameReply, CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
         let session = inner
@@ -619,12 +620,16 @@ impl CaptureRegistry {
                 }
             }
         };
-        let control_page = match session.video.control_page_registration(TrackId::new(request.track_id)) {
-            Ok(registration) => Some(registration),
-            Err(error) => {
-                session.video.release(frame);
-                return Err(CaptureRegistryError::from_capture(error));
+        let control_page = if include_control_page {
+            match session.video.control_page_registration(TrackId::new(request.track_id)) {
+                Ok(registration) => Some(registration),
+                Err(error) => {
+                    session.video.release(frame);
+                    return Err(CaptureRegistryError::from_capture(error));
+                }
             }
+        } else {
+            None
         };
         let response = LatestVideoFrameResponse {
             session_id: request.session_id.clone(),
@@ -908,7 +913,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         fd,
                         frame,
                         control_page,
-                    } = registry.latest_frame_for_consumer(&request, consumer_id)?;
+                    } = registry.latest_frame_for_consumer(&request, consumer_id, !registered_control_pages.contains(&track_id))?;
                     let lease_id = next_lease_id;
                     next_lease_id = next_lease_id.wrapping_add(1).max(1);
                     response.lease_id = lease_id;
@@ -1227,9 +1232,11 @@ mod tests {
                     track_id: track_id.get(),
                 },
                 consumer,
+                true,
             )
             .unwrap();
         assert_eq!(first.response.consumer_skipped_count, 0);
+        assert!(first.control_page.is_some());
         registry.release_frame(&session_id, first.frame).unwrap();
 
         {
@@ -1246,10 +1253,12 @@ mod tests {
                     track_id: track_id.get(),
                 },
                 consumer,
+                false,
             )
             .unwrap();
         assert_eq!(second.response.sequence, 3);
         assert_eq!(second.response.consumer_skipped_count, 1);
+        assert!(second.control_page.is_none());
     }
 
     #[test]
