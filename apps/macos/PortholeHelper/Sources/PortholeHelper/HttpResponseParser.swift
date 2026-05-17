@@ -13,8 +13,10 @@ enum HttpResponseParserError: Error, Equatable {
 }
 
 enum HttpResponseParser {
+    private static let headerTerminator = Data("\r\n\r\n".utf8)
+
     static func parse(_ data: Data, maxBodyBytes: Int) throws -> ParsedHttpResponse {
-        guard let split = data.range(of: Data([13, 10, 13, 10])) else {
+        guard let split = data.range(of: headerTerminator) else {
             throw HttpResponseParserError.missingHeaderTerminator
         }
 

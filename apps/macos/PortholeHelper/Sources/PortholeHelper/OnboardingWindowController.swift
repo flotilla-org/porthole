@@ -30,7 +30,7 @@ final class OnboardingWindowController: NSWindowController {
         super.init(window: window)
         installContent()
         render()
-        refreshTask = Task { await refresh() }
+        startTask { await self.refresh() }
     }
 
     required init?(coder: NSCoder) {
@@ -127,9 +127,11 @@ final class OnboardingWindowController: NSWindowController {
         render()
         do {
             let info = try await client.info()
+            guard !Task.isCancelled else { return }
             latestInfo = info
             flow.apply(.loadedInfo(info))
         } catch {
+            guard !Task.isCancelled else { return }
             flow.apply(.loadFailed(error.localizedDescription))
         }
         render()
@@ -142,8 +144,10 @@ final class OnboardingWindowController: NSWindowController {
 
         do {
             let outcome = try await client.requestPermissionPrompt(name: permission)
+            guard !Task.isCancelled else { return }
             flow.apply(.requestSucceeded(outcome))
         } catch {
+            guard !Task.isCancelled else { return }
             flow.apply(.requestFailed(error.localizedDescription))
         }
         render()
@@ -167,8 +171,7 @@ final class OnboardingWindowController: NSWindowController {
             return
         }
 
-        flow.apply(.userConfirmedGrant(permission, requiresRestart: true))
-        render()
+        // Callers transition the reducer into .restarting before invoking this.
         supervisor.restart()
         await waitForInfo(timeoutSeconds: 10)
     }
@@ -178,12 +181,17 @@ final class OnboardingWindowController: NSWindowController {
         while Date() < deadline {
             do {
                 let info = try await client.info()
+                guard !Task.isCancelled else { return }
                 latestInfo = info
                 flow.apply(.verificationSucceeded(info))
                 render()
                 return
             } catch {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                } catch {
+                    return
+                }
             }
         }
 
@@ -313,11 +321,11 @@ final class OnboardingWindowController: NSWindowController {
     @objc private func primaryAction() {
         switch flow.state {
         case .ready:
-            refreshTask = Task { await requestActivePermission() }
+            startTask { await self.requestActivePermission() }
         case .waitingForUser(let permission, let outcome):
-            refreshTask = Task { await confirmGranted(permission: permission, outcome: outcome) }
+            startTask { await self.confirmGranted(permission: permission, outcome: outcome) }
         case .blocked:
-            refreshTask = Task { await refresh() }
+            startTask { await self.refresh() }
         default:
             break
         }
@@ -331,15 +339,24 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     @objc private func refreshAction() {
-        refreshTask = Task { await refresh() }
+        startTask { await self.refresh() }
     }
 
     @objc private func restartAction() {
         guard supervisor.restartCapability == .helperOwned else { return }
         if let permission = flow.state.activePermissionName {
-            refreshTask = Task { await restartDaemonForOnboarding(permission: permission) }
+            flow.apply(.userConfirmedGrant(permission, requiresRestart: true))
+            render()
+            startTask { await self.restartDaemonForOnboarding(permission: permission) }
         } else {
             supervisor.restart()
+        }
+    }
+
+    private func startTask(_ operation: @escaping @MainActor @Sendable () async -> Void) {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor in
+            await operation()
         }
     }
 }
