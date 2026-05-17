@@ -109,7 +109,7 @@ fn extract_child_info(child: AxElementRef, outer: (f64, f64), descent: Descent) 
     // AXRole is debug-grade; if the read fails for whatever reason, fall back
     // to "unknown" rather than failing the whole call — the rect is the
     // payload.
-    let ax_role = read_role(child).unwrap_or_else(|| "unknown".to_string());
+    let role = read_role(child).unwrap_or_else(|| "unknown".to_string());
     Ok(ContentRectInfo {
         rect: Rect {
             x: cx - outer.0,
@@ -117,7 +117,7 @@ fn extract_child_info(child: AxElementRef, outer: (f64, f64), descent: Descent) 
             w: cw,
             h: ch,
         },
-        ax_role,
+        role,
         descent,
     })
 }

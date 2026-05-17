@@ -20,7 +20,7 @@ pub async fn get_content_rect(
         w: info.rect.w,
         h: info.rect.h,
         units: q.units,
-        ax_role: info.ax_role,
+        role: info.role,
         descent: info.descent,
     }))
 }
@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(resp.w, 800.0);
         assert_eq!(resp.h, 572.0);
         assert!(matches!(resp.units, CoordUnits::Logical));
-        assert_eq!(resp.ax_role, "AXScrollArea");
+        assert_eq!(resp.role, "AXScrollArea");
         assert!(matches!(resp.descent, Descent::Contents));
         assert_eq!(adapter.content_rect_calls().await.len(), 1);
     }
@@ -137,14 +137,14 @@ mod tests {
                     w: 100.0,
                     h: 200.0,
                 },
-                ax_role: "AXGroup".into(),
+                role: "AXGroup".into(),
                 descent: Descent::LargestChild,
             }))
             .await;
         let (status, body) = get(router, &format!("/surfaces/{id}/content-rect")).await;
         assert_eq!(status, StatusCode::OK);
         let resp: ContentRectResponse = serde_json::from_value(body).unwrap();
-        assert_eq!(resp.ax_role, "AXGroup");
+        assert_eq!(resp.role, "AXGroup");
         assert!(matches!(resp.descent, Descent::LargestChild));
     }
 }
