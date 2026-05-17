@@ -151,12 +151,16 @@ pub enum OrderedAcquire {
 ```
 
 The helper finds the first retained ring entry with `producer_cursor >
-after_producer_cursor`.
+after_producer_cursor`. `VideoSlotManager` does not separately register empty
+tracks today, so a track with no published frames still uses the existing
+unknown-track error. `Empty` means the track has retained frames, but no frame
+newer than `after_producer_cursor` is currently available.
 
-- If the ring is empty, return `Empty`.
 - If `after_producer_cursor == 0`, return the oldest retained frame.
 - If the next expected cursor has been evicted, return `Lapped` with the retained
   cursor bounds and skipped count.
+- If the next expected cursor is newer than the retained latest cursor, return
+  `Empty`.
 - If the requested next frame is retained, acquire it through the existing
   `acquire_ring_entry` path so pinning, consumer cursor mirroring, control-page
   acquire stores, and lease release remain unchanged.
@@ -198,7 +202,7 @@ format, not a user-facing "recording" command that implies normal playback.
 - `capture-transfer` unit tests:
   - ordered acquire from cursor `0` returns the oldest retained frame
   - ordered acquire after a retained cursor returns the next producer cursor
-  - ordered acquire reports `Empty` on an empty ring
+  - ordered acquire reports `Empty` when no newer retained frame exists
   - ordered acquire reports `Lapped` instead of jumping to latest
   - latest-frame acquisition still skips to the newest frame
   - release after ordered acquire updates consumer release cursor

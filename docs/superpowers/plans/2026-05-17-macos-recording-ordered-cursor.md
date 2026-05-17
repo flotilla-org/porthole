@@ -18,7 +18,7 @@ Spec: `docs/superpowers/specs/2026-05-17-macos-recording-design.md`
   - Add `OrderedVideoAcquire` result enum.
   - Add `VideoSlotManager::acquire_next_after`.
   - Add ring helper for retained cursor bounds.
-  - Add unit tests for oldest/next/empty/lapped/latest unchanged/release cursor behavior.
+  - Add unit tests for oldest/next/no-newer-frame/lapped/latest unchanged/release cursor behavior.
 
 - Modify `crates/capture-transfer/src/transfer_channel.rs`
   - Add `CaptureTransferRequest::AcquireNextVideoFrame`.
@@ -78,7 +78,7 @@ Run: `cargo test -p capture-transfer acquire_next_after_zero_returns_oldest_reta
 
 Expected: compile failure because `acquire_next_after` and `OrderedVideoAcquire` do not exist.
 
-- [ ] **Step 3: Write failing tests for next retained, empty, lapped, latest unchanged, and release cursor**
+- [ ] **Step 3: Write failing tests for next retained, no newer frame, lapped, latest unchanged, and release cursor**
 
 Add tests:
 
@@ -103,10 +103,13 @@ fn acquire_next_after_retained_cursor_returns_next_frame() {
 }
 
 #[test]
-fn acquire_next_after_empty_ring_returns_empty() {
+fn acquire_next_after_latest_cursor_returns_empty() {
     let mut slots = VideoSlotManager::new_reusable_pool(3);
+    let track = TrackId::new(7);
+    publish_test_frame(&mut slots, track, 1, b"aaaa");
+
     let result = slots
-        .acquire_next_after(ConsumerId::new(11), TrackId::new(7), 0)
+        .acquire_next_after(ConsumerId::new(11), track, 1)
         .unwrap();
 
     assert_eq!(result, OrderedVideoAcquire::Empty);
@@ -119,6 +122,7 @@ fn acquire_next_after_reports_lapped_cursor() {
     publish_test_frame(&mut slots, track, 1, b"aaaa");
     publish_test_frame(&mut slots, track, 2, b"bbbb");
     publish_test_frame(&mut slots, track, 3, b"cccc");
+    publish_test_frame(&mut slots, track, 4, b"dddd");
 
     let result = slots
         .acquire_next_after(ConsumerId::new(11), track, 1)
@@ -128,8 +132,8 @@ fn acquire_next_after_reports_lapped_cursor() {
         result,
         OrderedVideoAcquire::Lapped {
             after_producer_cursor: 1,
-            oldest_available_cursor: 2,
-            latest_available_cursor: 3,
+            oldest_available_cursor: 3,
+            latest_available_cursor: 4,
             skipped_count: 1,
         }
     );
