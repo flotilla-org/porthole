@@ -5,6 +5,9 @@ final class DaemonSupervisor {
     enum State: Equatable {
         case stopped
         case running(pid: Int32)
+        // External daemons are detected before launching a child process. They
+        // are not watched yet; the roadmap tracks passive recovery for this
+        // transitional state.
         case runningExternal
         case crashed(status: Int32)
     }
@@ -13,6 +16,7 @@ final class DaemonSupervisor {
     private let cliURL: URL
     private var process: Process?
     private var shouldRestart = true
+    private var startupProbeInFlight = false
     private let onStateChange: (State) -> Void
 
     init(daemonURL: URL, cliURL: URL, onStateChange: @escaping (State) -> Void) {
@@ -23,12 +27,27 @@ final class DaemonSupervisor {
 
     func start() {
         guard process == nil else { return }
+        guard !startupProbeInFlight else { return }
         shouldRestart = true
-        if daemonIsAlreadyRunning() {
-            onStateChange(.runningExternal)
-            return
-        }
+        startupProbeInFlight = true
 
+        DispatchQueue.global(qos: .utility).async { [cliURL] in
+            let alreadyRunning = Self.daemonIsAlreadyRunning(cliURL: cliURL)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                startupProbeInFlight = false
+                guard shouldRestart else { return }
+                guard process == nil else { return }
+                if alreadyRunning {
+                    onStateChange(.runningExternal)
+                    return
+                }
+                launchDaemon()
+            }
+        }
+    }
+
+    private func launchDaemon() {
         let next = Process()
         next.executableURL = daemonURL
         next.terminationHandler = { [weak self] terminated in
@@ -58,6 +77,7 @@ final class DaemonSupervisor {
 
     func stopForQuit() {
         shouldRestart = false
+        startupProbeInFlight = false
         if let process {
             process.terminate()
         } else {
@@ -75,7 +95,7 @@ final class DaemonSupervisor {
         }
     }
 
-    private func daemonIsAlreadyRunning() -> Bool {
+    nonisolated private static func daemonIsAlreadyRunning(cliURL: URL) -> Bool {
         let probe = Process()
         probe.executableURL = cliURL
         probe.arguments = ["info"]

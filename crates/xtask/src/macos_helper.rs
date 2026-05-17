@@ -15,6 +15,8 @@ pub fn swift_build_args(release: bool) -> Vec<String> {
         "build".to_owned(),
         "--package-path".to_owned(),
         PACKAGE_PATH.to_owned(),
+        "--product".to_owned(),
+        "PortholeHelper".to_owned(),
         "--scratch-path".to_owned(),
         scratch_path().to_string_lossy().into_owned(),
         "-c".to_owned(),
