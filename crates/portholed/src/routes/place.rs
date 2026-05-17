@@ -30,22 +30,34 @@ mod tests {
     };
     use porthole_core::{
         display::Rect,
-        in_memory::InMemoryAdapter,
-        surface::{SurfaceId, SurfaceInfo},
+        memory_adapter::{MemoryAdapter, WindowSpec},
+        surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
     };
     use porthole_protocol::{error::WireError, placement::PlaceResponse};
     use tower::ServiceExt;
 
     use crate::{server::build_router, state::AppState};
 
-    async fn router_with_alive_surface() -> (axum::Router, SurfaceId, Arc<InMemoryAdapter>) {
-        let adapter = Arc::new(InMemoryAdapter::new());
+    /// Build a router whose adapter is a `MemoryAdapter` configured with one
+    /// window. The window is also inserted into the daemon's `HandleStore` so
+    /// route paths that look up the surface by id see it as alive.
+    async fn router_with_alive_window(outer: Rect) -> (axum::Router, SurfaceId, Arc<MemoryAdapter>) {
+        let mut builder = MemoryAdapter::builder();
+        let id = builder.window(WindowSpec::new(4242, 1, outer));
+        let adapter = Arc::new(builder.build());
         let state = AppState::new(adapter.clone());
-        let info = SurfaceInfo::window(SurfaceId::new(), 4242);
-        let id = info.id.clone();
+        let info = SurfaceInfo {
+            id: id.clone(),
+            kind: SurfaceKind::Window,
+            state: SurfaceState::Alive,
+            title: None,
+            app_name: None,
+            pid: Some(4242),
+            parent_surface_id: None,
+            cg_window_id: Some(1),
+        };
         state.handles.insert(info).await;
-        let router = build_router(state);
-        (router, id, adapter)
+        (build_router(state), id, adapter)
     }
 
     async fn post_json(router: axum::Router, uri: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
@@ -63,8 +75,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_place_returns_ok_and_records_adapter_call() {
-        let (router, id, adapter) = router_with_alive_surface().await;
+    async fn post_place_returns_ok_and_updates_window_state() {
+        // State-based assertion: place writes the new outer_rect onto the
+        // window; we read it back from the adapter rather than checking a
+        // record of calls.
+        let (router, id, adapter) = router_with_alive_window(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        })
+        .await;
         let (status, body) = post_json(
             router,
             &format!("/surfaces/{id}/place"),
@@ -75,22 +96,27 @@ mod tests {
         let resp: PlaceResponse = serde_json::from_value(body).unwrap();
         assert!(resp.placed);
         assert_eq!(resp.surface_id, id.to_string());
-        let calls = adapter.place_surface_calls().await;
-        assert_eq!(calls.len(), 1);
+        let snap = adapter.window(&id).expect("window in state");
         assert_eq!(
-            calls[0].1,
+            snap.outer_rect,
             Rect {
                 x: 10.0,
                 y: 20.0,
                 w: 800.0,
-                h: 600.0
+                h: 600.0,
             }
         );
     }
 
     #[tokio::test]
     async fn post_place_rejects_non_positive_size() {
-        let (router, id, _) = router_with_alive_surface().await;
+        let (router, id, _) = router_with_alive_window(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+        })
+        .await;
         let (status, body) = post_json(
             router,
             &format!("/surfaces/{id}/place"),
@@ -102,18 +128,41 @@ mod tests {
         assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
     }
 
+    /// Build a router whose surface is tracked in the HandleStore *but marked
+    /// dead* — exercises the SurfaceDead path before the request ever reaches
+    /// the adapter.
+    async fn router_with_dead_handle() -> (axum::Router, SurfaceId) {
+        let mut builder = MemoryAdapter::builder();
+        let id = builder.window(WindowSpec::new(
+            4242,
+            1,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+        ));
+        let adapter = Arc::new(builder.build());
+        let state = AppState::new(adapter);
+        let info = SurfaceInfo {
+            id: id.clone(),
+            kind: SurfaceKind::Window,
+            state: SurfaceState::Alive,
+            title: None,
+            app_name: None,
+            pid: Some(4242),
+            parent_surface_id: None,
+            cg_window_id: Some(1),
+        };
+        state.handles.insert(info).await;
+        state.handles.mark_dead(&id).await.unwrap();
+        (build_router(state), id)
+    }
+
     #[tokio::test]
     async fn post_place_returns_surface_dead_when_handle_marked_dead() {
-        let (router, id, _) = {
-            let adapter = Arc::new(InMemoryAdapter::new());
-            let state = AppState::new(adapter.clone());
-            let info = SurfaceInfo::window(SurfaceId::new(), 1);
-            let id = info.id.clone();
-            state.handles.insert(info).await;
-            state.handles.mark_dead(&id).await.unwrap();
-            let router = build_router(state);
-            (router, id, adapter)
-        };
+        let (router, id) = router_with_dead_handle().await;
         let (status, body) = post_json(
             router,
             &format!("/surfaces/{id}/place"),

@@ -12,6 +12,7 @@ pub mod input;
 pub mod input_pipeline;
 pub mod key_names;
 pub mod launch;
+pub mod memory_adapter;
 pub mod permission;
 pub mod placement;
 pub mod replace_pipeline;
