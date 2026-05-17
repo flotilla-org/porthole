@@ -1,7 +1,7 @@
 import Foundation
 import Network
 
-protocol PortholeClientProtocol {
+protocol PortholeClientProtocol: Sendable {
     func info() async throws -> InfoResponse
     func requestPermissionPrompt(name: String) async throws -> SystemPermissionPromptOutcome
 }
@@ -35,7 +35,7 @@ enum PortholeClientError: Error, Equatable {
     case httpError(statusCode: Int, wire: WireError?)
 }
 
-final class PortholeClient: PortholeClientProtocol {
+final class PortholeClient: PortholeClientProtocol, @unchecked Sendable {
     private let socketURL: URL
     private let requestTimeoutSeconds: TimeInterval
     private let maxBodyBytes = 1024 * 1024

@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var supervisor: DaemonSupervisor?
+    private var onboardingWindowController: OnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -34,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusMenuItem = status
         menu.addItem(status)
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Open Onboarding...", action: #selector(openOnboarding), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Restart Daemon", action: #selector(restartDaemon), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Quit Porthole", action: #selector(quit), keyEquivalent: "q"))
         item.menu = menu
@@ -55,6 +57,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func restartDaemon() {
         supervisor?.restart()
+    }
+
+    @objc private func openOnboarding() {
+        guard let supervisor else { return }
+        let controller = onboardingWindowController ?? OnboardingWindowController(supervisor: supervisor)
+        onboardingWindowController = controller
+        controller.showWindow(nil)
+        if #available(macOS 14.0, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     @objc private func quit() {
