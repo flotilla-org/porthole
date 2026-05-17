@@ -74,7 +74,7 @@ What's known missing or rough:
 **Goal:** Native UX for the parts of porthole that benefit from being native. macOS ships as one `Porthole.app` bundle: `CFBundleExecutable` flips from `portholed` to `PortholeHelper`, and the helper spawns `portholed` as a bundled child. Future Windows/Linux UI apps follow the same platform-app contract while using their native shell conventions.
 
 - [x] `docs/superpowers/specs/2026-05-17-platform-ui-apps-bundle-design.md` — platform UI app contract and macOS bundle build architecture.
-- [ ] Repo-native bundle builder (`cargo xtask bundle --platform macos`) that assembles `target/<profile>/Porthole.app` from checked-in macOS bundle metadata and Rust binaries.
+- [x] Repo-native bundle builder (`cargo xtask bundle --platform macos`) that assembles `target/<profile>/Porthole.app` from checked-in macOS bundle metadata and Rust binaries.
 - [ ] Swift / SwiftUI macOS helper under `apps/macos/PortholeHelper/`; build output copies `PortholeHelper`, `portholed`, and `porthole` into `Contents/MacOS/`.
 - [ ] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
 - [ ] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.

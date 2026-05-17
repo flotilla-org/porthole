@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clap = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
