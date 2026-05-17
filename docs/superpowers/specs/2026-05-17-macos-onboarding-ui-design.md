@@ -219,6 +219,10 @@ If `NSWorkspace.shared.open(url)` fails, the UI keeps the Settings path visible
 and lets the user navigate manually. The design must not depend on the URL
 remaining stable across macOS releases.
 
+If a future adapter advertises a permission name with no known deep-link mapping,
+show the daemon-provided Settings path text and omit the `Open Settings` button
+for that row. Do not guess a URL from the raw permission name.
+
 ## 9. State Machine
 
 Model onboarding as a helper-owned state machine over daemon-owned facts:
