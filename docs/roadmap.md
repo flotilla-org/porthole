@@ -79,7 +79,7 @@ What's known missing or rough:
 - [x] Swift / SwiftUI macOS helper under `apps/macos/PortholeHelper/`; build output copies `PortholeHelper`, `portholed`, and `porthole` into `Contents/MacOS/`.
 - [x] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
 - [x] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
-- [ ] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
+- [x] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
 - [ ] Notification surface for agent-permission approvals (depends on phase 2). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
 - [ ] `SMAppService.daemon(plistName:)` registration so the user gets a System Settings → General → Login Items entry. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
 - [ ] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
