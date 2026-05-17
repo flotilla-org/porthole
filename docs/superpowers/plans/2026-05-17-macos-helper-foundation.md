@@ -37,6 +37,7 @@ Those remain separate roadmap items. This slice must not create a second daemon 
 - **Swift build artifacts:** xtask uses `--scratch-path target/swift/PortholeHelper`, which is covered by the repo's existing `/target` ignore rule. Verify this before implementation so SwiftPM artifacts do not become stageable files.
 - **`codesign --deep`:** still acceptable only for this development bundle. Keep the existing comment and do not expand this into notarization work.
 - **Status item polish:** the menu bar UI is intentionally minimal. It should be functional and native, not a polished onboarding surface.
+- **LaunchAgent log name:** this slice can keep the existing `portholed.log` stdout/stderr path even when launchd starts `PortholeHelper`. The helper-spawned daemon inherits the same stream, so the file remains useful; a cleaner helper/daemon log split belongs with later product polish.
 
 ## File Structure
 
