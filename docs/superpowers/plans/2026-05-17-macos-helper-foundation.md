@@ -135,7 +135,7 @@ git commit -m "build: switch macOS bundle plist to helper mode"
 
 **Files:**
 - Create: `apps/macos/PortholeHelper/Package.swift`
-- Create: `apps/macos/PortholeHelper/Sources/PortholeHelper/main.swift`
+- Create: `apps/macos/PortholeHelper/Sources/PortholeHelper/PortholeHelperMain.swift`
 - Create: `apps/macos/PortholeHelper/Sources/PortholeHelper/AppDelegate.swift`
 - Create: `apps/macos/PortholeHelper/Sources/PortholeHelper/DaemonSupervisor.swift`
 - Create: `apps/macos/PortholeHelper/Sources/PortholeHelper/BundlePaths.swift`
@@ -204,6 +204,9 @@ final class DaemonSupervisor {
     enum State: Equatable {
         case stopped
         case running(pid: Int32)
+        // External daemons are detected before launching a child process. They
+        // are not watched yet; the roadmap tracks passive recovery for this
+        // transitional state.
         case runningExternal
         case crashed(status: Int32)
     }
@@ -212,6 +215,7 @@ final class DaemonSupervisor {
     private let cliURL: URL
     private var process: Process?
     private var shouldRestart = true
+    private var startupProbeInFlight = false
     private let onStateChange: (State) -> Void
 
     init(daemonURL: URL, cliURL: URL, onStateChange: @escaping (State) -> Void) {
@@ -222,12 +226,27 @@ final class DaemonSupervisor {
 
     func start() {
         guard process == nil else { return }
+        guard !startupProbeInFlight else { return }
         shouldRestart = true
-        if daemonIsAlreadyRunning() {
-            onStateChange(.runningExternal)
-            return
-        }
+        startupProbeInFlight = true
 
+        DispatchQueue.global(qos: .utility).async { [cliURL] in
+            let alreadyRunning = Self.daemonIsAlreadyRunning(cliURL: cliURL)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                startupProbeInFlight = false
+                guard shouldRestart else { return }
+                guard process == nil else { return }
+                if alreadyRunning {
+                    onStateChange(.runningExternal)
+                    return
+                }
+                launchDaemon()
+            }
+        }
+    }
+
+    private func launchDaemon() {
         let next = Process()
         next.executableURL = daemonURL
         next.terminationHandler = { [weak self] terminated in
@@ -257,6 +276,7 @@ final class DaemonSupervisor {
 
     func stopForQuit() {
         shouldRestart = false
+        startupProbeInFlight = false
         if let process {
             process.terminate()
         } else {
@@ -274,7 +294,7 @@ final class DaemonSupervisor {
         }
     }
 
-    private func daemonIsAlreadyRunning() -> Bool {
+    nonisolated private static func daemonIsAlreadyRunning(cliURL: URL) -> Bool {
         let probe = Process()
         probe.executableURL = cliURL
         probe.arguments = ["info"]
@@ -293,7 +313,7 @@ final class DaemonSupervisor {
 }
 ```
 
-If Swift reports actor-capture or sendability issues, keep all supervisor mutation on `@MainActor` and use `Task { @MainActor in ... }` in the termination handler. Do not introduce background shared mutable state. `stopForQuit()` intentionally lets the termination handler publish the final stopped state when a process exists, avoiding duplicate state transitions for future badge/status observers. If the bundled CLI reports an existing daemon via `porthole info`, the helper reports `.runningExternal` and does not spawn a second daemon. If the daemon binary is missing and no daemon is responding, `next.run()` reports `.crashed(status: -1)` and does not retry in a loop; the user can rebuild or use the restart menu item after fixing the bundle.
+Keep all supervisor mutation on `@MainActor`, but keep the blocking `porthole info` probe off the main actor. The background probe reports back through `Task { @MainActor in ... }`, guarded by `startupProbeInFlight` and `shouldRestart` so duplicate starts and quit-during-probe do not launch a daemon accidentally. `stopForQuit()` intentionally lets the termination handler publish the final stopped state when a process exists, avoiding duplicate state transitions for future badge/status observers. If the bundled CLI reports an existing daemon via `porthole info`, the helper reports `.runningExternal` and does not spawn a second daemon. If the daemon binary is missing and no daemon is responding, `next.run()` reports `.crashed(status: -1)` and does not retry in a loop; the user can rebuild or use the restart menu item after fixing the bundle.
 
 - [ ] **Step 4: Add status item app delegate**
 
@@ -389,7 +409,7 @@ struct PortholeHelperMain {
 Run:
 
 ```sh
-swift build --package-path apps/macos/PortholeHelper --scratch-path target/swift/PortholeHelper -c debug
+swift build --package-path apps/macos/PortholeHelper --product PortholeHelper --scratch-path target/swift/PortholeHelper -c debug
 ```
 
 Expected: PASS and `target/swift/PortholeHelper/debug/PortholeHelper` exists. This matches the xtask scratch path instead of leaving manual smoke artifacts under the Swift package's `.build/` directory.
@@ -449,6 +469,8 @@ fn swift_build_uses_package_path_and_scratch_path() {
             "build",
             "--package-path",
             "apps/macos/PortholeHelper",
+            "--product",
+            "PortholeHelper",
             "--scratch-path",
             "target/swift/PortholeHelper",
             "-c",
@@ -465,6 +487,8 @@ fn swift_build_release_uses_release_configuration() {
             "build",
             "--package-path",
             "apps/macos/PortholeHelper",
+            "--product",
+            "PortholeHelper",
             "--scratch-path",
             "target/swift/PortholeHelper",
             "-c",
