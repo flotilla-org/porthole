@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
 
         let paths = BundlePaths.current()
-        supervisor = DaemonSupervisor(daemonURL: paths.daemonURL) { [weak self] state in
+        supervisor = DaemonSupervisor(daemonURL: paths.daemonURL, cliURL: paths.cliURL) { [weak self] state in
             self?.render(state)
         }
         supervisor?.start()
@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusMenuItem?.title = "Daemon: stopped"
         case .running(let pid):
             statusMenuItem?.title = "Daemon: running (\(pid))"
+        case .runningExternal:
+            statusMenuItem?.title = "Daemon: already running"
         case .crashed(let status):
             statusMenuItem?.title = "Daemon: restarting after exit \(status)"
         }

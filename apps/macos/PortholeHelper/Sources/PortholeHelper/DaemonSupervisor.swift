@@ -5,22 +5,29 @@ final class DaemonSupervisor {
     enum State: Equatable {
         case stopped
         case running(pid: Int32)
+        case runningExternal
         case crashed(status: Int32)
     }
 
     private let daemonURL: URL
+    private let cliURL: URL
     private var process: Process?
     private var shouldRestart = true
     private let onStateChange: (State) -> Void
 
-    init(daemonURL: URL, onStateChange: @escaping (State) -> Void) {
+    init(daemonURL: URL, cliURL: URL, onStateChange: @escaping (State) -> Void) {
         self.daemonURL = daemonURL
+        self.cliURL = cliURL
         self.onStateChange = onStateChange
     }
 
     func start() {
         guard process == nil else { return }
         shouldRestart = true
+        if daemonIsAlreadyRunning() {
+            onStateChange(.runningExternal)
+            return
+        }
 
         let next = Process()
         next.executableURL = daemonURL
@@ -65,6 +72,23 @@ final class DaemonSupervisor {
             start()
         } else {
             onStateChange(.stopped)
+        }
+    }
+
+    private func daemonIsAlreadyRunning() -> Bool {
+        let probe = Process()
+        probe.executableURL = cliURL
+        probe.arguments = ["info"]
+        probe.standardOutput = FileHandle.nullDevice
+        probe.standardError = FileHandle.nullDevice
+
+        do {
+            try probe.run()
+            probe.waitUntilExit()
+            return probe.terminationStatus == 0
+        } catch {
+            NSLog("failed to probe existing daemon: \(error)")
+            return false
         }
     }
 }

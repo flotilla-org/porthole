@@ -18,4 +18,8 @@ struct BundlePaths {
     var daemonURL: URL {
         macOSURL.appendingPathComponent("portholed")
     }
+
+    var cliURL: URL {
+        macOSURL.appendingPathComponent("porthole")
+    }
 }
