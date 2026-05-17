@@ -1,8 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use xtask::macos_bundle::{
-    build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity,
-};
+use xtask::macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -25,11 +23,7 @@ fn transitional_info_plist_keeps_daemon_executable() {
 
 #[test]
 fn macos_bundle_icon_input_exists() {
-    assert!(
-        workspace_root()
-            .join("apps/macos/bundle/Resources/icon.png")
-            .is_file()
-    );
+    assert!(workspace_root().join("apps/macos/bundle/Resources/icon.png").is_file());
 }
 
 #[test]
@@ -45,10 +39,7 @@ fn build_command_for_debug_workspace() {
 
 #[test]
 fn build_command_for_release_workspace() {
-    assert_eq!(
-        build_command_args(true),
-        vec!["build", "--workspace", "--locked", "--release"]
-    );
+    assert_eq!(build_command_args(true), vec!["build", "--workspace", "--locked", "--release"]);
 }
 
 #[test]

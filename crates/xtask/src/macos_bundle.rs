@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    io,
+    fs, io,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
@@ -65,19 +64,15 @@ pub fn parse_apple_development_identity(output: &str) -> Option<String> {
             return None;
         }
         let identity = &line[start + 1..end];
-        identity
-            .starts_with("Apple Development:")
-            .then(|| identity.to_owned())
+        identity.starts_with("Apple Development:").then(|| identity.to_owned())
     })
 }
 
 pub fn validate_sign_identity(sign: Option<&str>) -> Result<Option<String>, BundleError> {
     match sign {
-        Some(identity) if identity.trim().is_empty() || identity == "-" => {
-            Err(BundleError::InvalidSigningIdentity(
-                "--sign requires an Apple Development signing identity; ad-hoc signing is not supported for Porthole dev bundles".to_owned(),
-            ))
-        }
+        Some(identity) if identity.trim().is_empty() || identity == "-" => Err(BundleError::InvalidSigningIdentity(
+            "--sign requires an Apple Development signing identity; ad-hoc signing is not supported for Porthole dev bundles".to_owned(),
+        )),
         Some(identity) => Ok(Some(identity.to_owned())),
         None => Ok(None),
     }
@@ -149,17 +144,14 @@ fn choose_sign_identity(sign: Option<&str>) -> Result<String, BundleError> {
             source,
         })?;
 
-    parse_apple_development_identity(&String::from_utf8_lossy(&output.stdout))
-        .ok_or(BundleError::MissingSigningIdentity)
+    parse_apple_development_identity(&String::from_utf8_lossy(&output.stdout)).ok_or(BundleError::MissingSigningIdentity)
 }
 
 fn ensure_file(path: &Path) -> Result<(), BundleError> {
-    path.is_file()
-        .then_some(())
-        .ok_or_else(|| BundleError::Io {
-            context: format!("missing binary: {}", path.display()),
-            source: io::Error::new(io::ErrorKind::NotFound, "file not found"),
-        })
+    path.is_file().then_some(()).ok_or_else(|| BundleError::Io {
+        context: format!("missing binary: {}", path.display()),
+        source: io::Error::new(io::ErrorKind::NotFound, "file not found"),
+    })
 }
 
 fn create_dir_all(path: &Path) -> Result<(), BundleError> {
@@ -192,13 +184,10 @@ fn copy_executable(from: &Path, to: &Path) -> Result<(), BundleError> {
 }
 
 fn run_status(command: &str, args: &[&str]) -> Result<(), BundleError> {
-    let status = Command::new(command)
-        .args(args)
-        .status()
-        .map_err(|source| BundleError::CommandIo {
-            command: format_command(command, args),
-            source,
-        })?;
+    let status = Command::new(command).args(args).status().map_err(|source| BundleError::CommandIo {
+        command: format_command(command, args),
+        source,
+    })?;
 
     if status.success() {
         Ok(())
@@ -211,8 +200,5 @@ fn run_status(command: &str, args: &[&str]) -> Result<(), BundleError> {
 }
 
 fn format_command(command: &str, args: &[&str]) -> String {
-    std::iter::once(command)
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>()
-        .join(" ")
+    std::iter::once(command).chain(args.iter().copied()).collect::<Vec<_>>().join(" ")
 }
