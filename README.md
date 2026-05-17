@@ -24,7 +24,7 @@ Recommended sequence: build the bundle, install it (daemon + CLI go in one place
 git clone https://github.com/flotilla-org/porthole
 cd porthole
 cargo build --workspace --release
-./scripts/dev-bundle.sh --release
+cargo xtask bundle --platform macos --release
 
 # 1. Install: copies Porthole.app to /Applications, symlinks the CLI into
 #    ~/.local/bin/porthole, registers a LaunchAgent so the daemon auto-starts
@@ -80,6 +80,9 @@ once after rebuilding with a certificate:
 tccutil reset Accessibility org.flotilla.porthole.dev
 tccutil reset ScreenCapture org.flotilla.porthole.dev
 ```
+
+`scripts/dev-bundle.sh` remains as a compatibility wrapper around
+`cargo xtask bundle --platform macos`.
 
 `onboard` walks through each ungranted permission one at a time: fires the OS prompt, waits for you to press Enter once you've granted in System Settings, restarts the daemon (via `launchctl kickstart -k`) so its cached AX/SR trust state refreshes, then re-reads `/info` to confirm. Serial because TCC silently coalesces simultaneous prompt requests from one process and the trust state is cached per-process; each grant needs its own daemon lifetime.
 

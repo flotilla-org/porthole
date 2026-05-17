@@ -15,9 +15,9 @@ grep -q "not supported" /tmp/porthole-dev-bundle-test-adhoc.out || {
 }
 
 if ! security find-identity -v -p codesigning 2>/dev/null | grep -q '"Apple Development:'; then
-    if ./scripts/dev-bundle.sh --refresh > /tmp/porthole-dev-bundle-test.out 2>&1; then
+    if cargo xtask bundle --platform macos > /tmp/porthole-dev-bundle-test.out 2>&1; then
         cat /tmp/porthole-dev-bundle-test.out >&2
-        echo "expected dev-bundle.sh to fail without an Apple Development signing identity" >&2
+        echo "expected cargo xtask bundle to fail without an Apple Development signing identity" >&2
         exit 1
     fi
     grep -q "Apple Development signing identity required" /tmp/porthole-dev-bundle-test.out || {
@@ -29,13 +29,15 @@ if ! security find-identity -v -p codesigning 2>/dev/null | grep -q '"Apple Deve
     exit 0
 fi
 
-./scripts/dev-bundle.sh
+cargo xtask bundle --platform macos
 codesign -v target/debug/Porthole.app
 signature="$(codesign -dv target/debug/Porthole.app 2>&1 | sed -n 's/^Signature=//p')"
 if [[ "$signature" == "adhoc" ]]; then
     echo "expected dev bundle to use Apple Development signing identity, got ad-hoc signature" >&2
     exit 1
 fi
+exec_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' target/debug/Porthole.app/Contents/Info.plist)"
+test "$exec_name" = "portholed" || { echo "expected transitional executable portholed, got $exec_name" >&2; exit 1; }
 timeout 5 ./target/debug/Porthole.app/Contents/MacOS/portholed --help > /dev/null 2>&1 || true
 ./target/debug/Porthole.app/Contents/MacOS/porthole --help > /dev/null
 test -f target/debug/Porthole.app/Contents/Resources/icon.png || { echo "icon.png missing from bundle" >&2; exit 1; }
