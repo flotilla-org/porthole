@@ -312,6 +312,12 @@ impl DaemonConsumer {
                     self.compare_control_page_shadow(&frame)?;
                     return self.daemon_frame_from_wire(frame);
                 }
+                CaptureTransferMessage::VideoFrameUnavailable { reason, .. } => {
+                    return Err(CaptureTransferError::DaemonTransport {
+                        operation: "latest-frame",
+                        message: format!("video frame unavailable: {reason}"),
+                    });
+                }
             }
         }
     }
