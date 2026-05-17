@@ -69,11 +69,13 @@ What's known missing or rough:
 
 ---
 
-## Phase 3 — `PortholeHelper.app` (Swift menu-bar app)
+## Phase 3 — platform UI apps, starting with macOS `Porthole.app`
 
-**Goal:** Native UX for the parts of porthole that benefit from being native. Same bundle as the daemon — `CFBundleExecutable` flips from `portholed` to `PortholeHelper`, helper spawns daemon as a child.
+**Goal:** Native UX for the parts of porthole that benefit from being native. macOS ships as one `Porthole.app` bundle: `CFBundleExecutable` flips from `portholed` to `PortholeHelper`, and the helper spawns `portholed` as a bundled child. Future Windows/Linux UI apps follow the same platform-app contract while using their native shell conventions.
 
-- [ ] Xcode project under `apps/porthole-helper-mac/` (Swift / SwiftUI). Build output assembles the final bundle by copying the Rust-built `portholed` and `porthole` from `target/release/` into `Contents/MacOS/`.
+- [x] `docs/superpowers/specs/2026-05-17-platform-ui-apps-bundle-design.md` — platform UI app contract and macOS bundle build architecture.
+- [ ] Repo-native bundle builder (`cargo xtask bundle --platform macos`) that assembles `target/<profile>/Porthole.app` from checked-in macOS bundle metadata and Rust binaries.
+- [ ] Swift / SwiftUI macOS helper under `apps/macos/PortholeHelper/`; build output copies `PortholeHelper`, `portholed`, and `porthole` into `Contents/MacOS/`.
 - [ ] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
 - [ ] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
 - [ ] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
