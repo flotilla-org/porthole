@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod macos_bundle;
+
 #[derive(Debug, Parser)]
 #[command(name = "xtask")]
 struct Cli {
