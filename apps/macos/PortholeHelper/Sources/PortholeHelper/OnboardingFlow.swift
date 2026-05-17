@@ -4,7 +4,7 @@ struct OnboardingFlow {
     enum State: Equatable {
         case idle
         case loadingInfo
-        case ready(info: InfoResponse, activePermission: SystemPermissionStatus?)
+        case ready(info: InfoResponse, activePermission: SystemPermissionStatus)
         case requesting(permission: String)
         case waitingForUser(permission: String, outcome: SystemPermissionPromptOutcome)
         case restarting(permission: String)
@@ -15,7 +15,7 @@ struct OnboardingFlow {
         var activePermissionName: String? {
             switch self {
             case .ready(_, let active):
-                active?.name
+                active.name
             case .requesting(let permission),
                  .waitingForUser(let permission, _),
                  .restarting(let permission),

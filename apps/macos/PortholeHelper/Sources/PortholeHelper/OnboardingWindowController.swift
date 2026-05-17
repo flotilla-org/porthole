@@ -173,10 +173,10 @@ final class OnboardingWindowController: NSWindowController {
 
         // Callers transition the reducer into .restarting before invoking this.
         supervisor.restart()
-        await waitForInfo(timeoutSeconds: 10)
+        await waitForInfo(timeoutSeconds: 10, restartPermission: permission)
     }
 
-    private func waitForInfo(timeoutSeconds: TimeInterval) async {
+    private func waitForInfo(timeoutSeconds: TimeInterval, restartPermission: String? = nil) async {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             do {
@@ -195,8 +195,12 @@ final class OnboardingWindowController: NSWindowController {
             }
         }
 
-        let permission = flow.state.activePermissionName ?? "permission"
-        flow.apply(.verificationFailed("Daemon did not report updated state while verifying \(SettingsLinks.displayName(for: permission))."))
+        if let restartPermission {
+            flow.apply(.restartTimedOut(restartPermission))
+        } else {
+            let permission = flow.state.activePermissionName ?? "permission"
+            flow.apply(.verificationFailed("Daemon did not report updated state while verifying \(SettingsLinks.displayName(for: permission))."))
+        }
         render()
     }
 
@@ -217,18 +221,11 @@ final class OnboardingWindowController: NSWindowController {
             settingsButton.isEnabled = false
             restartButton.isEnabled = false
         case .ready(_, let activePermission):
-            if let activePermission {
-                let name = SettingsLinks.displayName(for: activePermission.name)
-                statusLabel.stringValue = "\(name) permission needed"
-                detailLabel.stringValue = activePermission.purpose
-                primaryButton.title = "Request Permission"
-                primaryButton.isEnabled = true
-            } else {
-                statusLabel.stringValue = "All permissions granted"
-                detailLabel.stringValue = "No missing system permissions are advertised by the daemon."
-                primaryButton.title = "Complete"
-                primaryButton.isEnabled = false
-            }
+            let name = SettingsLinks.displayName(for: activePermission.name)
+            statusLabel.stringValue = "\(name) permission needed"
+            detailLabel.stringValue = activePermission.purpose
+            primaryButton.title = "Request Permission"
+            primaryButton.isEnabled = true
         case .requesting(let permission):
             statusLabel.stringValue = "Requesting \(SettingsLinks.displayName(for: permission))"
             detailLabel.stringValue = "macOS may show a system permission prompt."
