@@ -617,6 +617,9 @@ impl VideoTrackControlPage {
     }
 
     pub fn register_consumer_cursor(&self, consumer_id: u64) -> CaptureResult<usize> {
+        // This is a producer-side slot allocator called through VideoSlotManager's
+        // mutable track state. It is not a cross-process concurrent allocator; mapped
+        // consumers are only allowed to write their assigned release cursor.
         if consumer_id == 0 {
             return Err(invalid_control_page("consumer id must be non-zero"));
         }
@@ -680,6 +683,9 @@ impl VideoTrackControlPage {
         if entry.consumer_id != consumer_id {
             return Err(invalid_control_page("consumer cursor slot does not match consumer id"));
         }
+        // These fields are observational in this slice. They are stored independently
+        // so acquire updates cannot clobber the consumer-owned release cursor; readers
+        // must not treat the four acquire fields as one atomic snapshot.
         self.store_u64_atomic(
             self.consumer_last_acquired_cursor_offset(index),
             last_acquired_cursor,

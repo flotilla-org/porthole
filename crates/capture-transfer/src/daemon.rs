@@ -216,6 +216,9 @@ impl DaemonConsumer {
                         message: "control page map length does not fit usize".to_string(),
                     })?;
                     let fd = fdpass::recv_fd(&self.stream)?;
+                    // This maps the full page writable because POSIX fd passing gives us
+                    // whole-object access. Socket leases remain authoritative; a future
+                    // transport should narrow writable access to only this consumer slot.
                     let page = VideoTrackControlPage::map_read_write(fd, map_len)?;
                     let header = page.validate_header()?;
                     if consumer_slot >= header.consumer_capacity {

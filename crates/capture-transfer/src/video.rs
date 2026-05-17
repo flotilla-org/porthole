@@ -216,8 +216,12 @@ impl TrackRingControl {
         self.page.store_consumer_acquire_cursor(
             slot,
             consumer_id.get(),
-            snapshot.last_acquired_cursor.unwrap_or(0),
-            snapshot.last_acquired_sequence.unwrap_or(0),
+            snapshot
+                .last_acquired_cursor
+                .expect("consumer acquire snapshot has a cursor after acquire"),
+            snapshot
+                .last_acquired_sequence
+                .expect("consumer acquire snapshot has a sequence after acquire"),
             snapshot.skipped_count,
             snapshot.acquired_count,
         )
