@@ -220,7 +220,7 @@ Create `apps/macos/bundle/Info.plist` with the same transitional values currentl
     <key>CFBundleIconFile</key>
     <string>icon</string>
     <key>CFBundleVersion</key>
-    <string>0.0.0</string>
+    <string>1</string>
     <key>CFBundleShortVersionString</key>
     <string>0.0.0-dev</string>
     <key>CFBundlePackageType</key>
@@ -300,12 +300,15 @@ fn profile_name_defaults_to_debug() {
 
 #[test]
 fn build_command_for_debug_workspace() {
-    assert_eq!(build_command_args(false), vec!["build", "--workspace"]);
+    assert_eq!(build_command_args(false), vec!["build", "--workspace", "--locked"]);
 }
 
 #[test]
 fn build_command_for_release_workspace() {
-    assert_eq!(build_command_args(true), vec!["build", "--workspace", "--release"]);
+    assert_eq!(
+        build_command_args(true),
+        vec!["build", "--workspace", "--locked", "--release"]
+    );
 }
 ```
 
@@ -346,9 +349,9 @@ pub fn profile_name(release: bool) -> &'static str {
 
 pub fn build_command_args(release: bool) -> Vec<&'static str> {
     if release {
-        vec!["build", "--workspace", "--release"]
+        vec!["build", "--workspace", "--locked", "--release"]
     } else {
-        vec!["build", "--workspace"]
+        vec!["build", "--workspace", "--locked"]
     }
 }
 ```
