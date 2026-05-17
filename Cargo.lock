@@ -910,6 +910,8 @@ dependencies = [
  "async-trait",
  "base64",
  "bytes",
+ "capture-transfer",
+ "cc",
  "clap",
  "http-body-util",
  "hyper",

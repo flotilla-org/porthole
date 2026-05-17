@@ -14,6 +14,11 @@ pub mod launch;
 pub mod onboard;
 pub mod place;
 pub mod pointer;
+pub mod record;
+#[cfg(target_os = "macos")]
+mod record_av_writer;
+#[cfg(not(target_os = "macos"))]
+mod record_av_writer_stub;
 pub mod replace;
 pub mod screenshot;
 pub mod scroll;
