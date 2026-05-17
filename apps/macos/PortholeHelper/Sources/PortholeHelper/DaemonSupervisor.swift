@@ -12,8 +12,14 @@ final class DaemonSupervisor {
         case crashed(status: Int32)
     }
 
+    enum RestartCapability: Equatable {
+        case helperOwned
+        case external
+    }
+
     private let daemonURL: URL
     private let cliURL: URL
+    private(set) var currentState: State = .stopped
     private var process: Process?
     private var shouldRestart = true
     private var startupProbeInFlight = false
@@ -23,6 +29,17 @@ final class DaemonSupervisor {
         self.daemonURL = daemonURL
         self.cliURL = cliURL
         self.onStateChange = onStateChange
+    }
+
+    var restartCapability: RestartCapability {
+        switch currentState {
+        case .running:
+            .helperOwned
+        case .runningExternal:
+            .external
+        case .stopped, .crashed:
+            .helperOwned
+        }
     }
 
     func start() {
@@ -39,7 +56,7 @@ final class DaemonSupervisor {
                 guard shouldRestart else { return }
                 guard process == nil else { return }
                 if alreadyRunning {
-                    onStateChange(.runningExternal)
+                    setState(.runningExternal)
                     return
                 }
                 launchDaemon()
@@ -59,10 +76,10 @@ final class DaemonSupervisor {
         do {
             try next.run()
             process = next
-            onStateChange(.running(pid: next.processIdentifier))
+            setState(.running(pid: next.processIdentifier))
         } catch {
             NSLog("failed to launch portholed: \(error)")
-            onStateChange(.crashed(status: -1))
+            setState(.crashed(status: -1))
         }
     }
 
@@ -81,18 +98,23 @@ final class DaemonSupervisor {
         if let process {
             process.terminate()
         } else {
-            onStateChange(.stopped)
+            setState(.stopped)
         }
     }
 
     private func handleTermination(_ status: Int32) {
         process = nil
         if shouldRestart {
-            onStateChange(.crashed(status: status))
+            setState(.crashed(status: status))
             start()
         } else {
-            onStateChange(.stopped)
+            setState(.stopped)
         }
+    }
+
+    private func setState(_ state: State) {
+        currentState = state
+        onStateChange(state)
     }
 
     nonisolated private static func daemonIsAlreadyRunning(cliURL: URL) -> Bool {
