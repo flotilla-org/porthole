@@ -34,6 +34,7 @@ Those remain separate roadmap items. This slice must not create a second daemon 
 - **Startup ownership:** flipping `CFBundleExecutable` without changing install-time launchd behavior would produce an app whose helper is never started by install. The plan updates LaunchAgent program selection in the same slice.
 - **Permission-sensitive verification:** helper launch and `portholed` supervision do not require Accessibility or Screen Recording. Do not add live input/capture smoke tests to this slice; if a permission-dependent call reports missing permission, stop `BLOCKED` per `AGENTS.md`.
 - **Swift build availability:** CI runs tests on `macos-latest`, so SwiftPM build tests are acceptable there. Keep Linux-independent checks as Rust format only; do not add a Linux CI Swift requirement.
+- **Swift build artifacts:** xtask uses `--scratch-path target/swift/PortholeHelper`, which is covered by the repo's existing `/target` ignore rule. Verify this before implementation so SwiftPM artifacts do not become stageable files.
 - **`codesign --deep`:** still acceptable only for this development bundle. Keep the existing comment and do not expand this into notarization work.
 - **Status item polish:** the menu bar UI is intentionally minimal. It should be functional and native, not a polished onboarding surface.
 
@@ -264,7 +265,7 @@ final class DaemonSupervisor {
 }
 ```
 
-If Swift reports actor-capture or sendability issues, keep all supervisor mutation on `@MainActor` and use `Task { @MainActor in ... }` in the termination handler. Do not introduce background shared mutable state. `stopForQuit()` intentionally lets the termination handler publish the final stopped state when a process exists, avoiding duplicate state transitions for future badge/status observers.
+If Swift reports actor-capture or sendability issues, keep all supervisor mutation on `@MainActor` and use `Task { @MainActor in ... }` in the termination handler. Do not introduce background shared mutable state. `stopForQuit()` intentionally lets the termination handler publish the final stopped state when a process exists, avoiding duplicate state transitions for future badge/status observers. If the daemon binary is missing, `next.run()` reports `.crashed(status: -1)` and does not retry in a loop; the user can rebuild or use the restart menu item after fixing the bundle.
 
 - [ ] **Step 4: Add status item app delegate**
 
@@ -352,10 +353,10 @@ app.run()
 Run:
 
 ```sh
-swift build --package-path apps/macos/PortholeHelper -c debug
+swift build --package-path apps/macos/PortholeHelper --scratch-path target/swift/PortholeHelper -c debug
 ```
 
-Expected: PASS and `.build/debug/PortholeHelper` exists under the package.
+Expected: PASS and `target/swift/PortholeHelper/debug/PortholeHelper` exists. This matches the xtask scratch path instead of leaving manual smoke artifacts under the Swift package's `.build/` directory.
 
 - [ ] **Step 7: Commit helper source**
 
@@ -375,7 +376,23 @@ git commit -m "feat: add macOS helper app"
 - Modify: `crates/xtask/tests/macos_bundle.rs`
 - Modify: `scripts/tests/test-dev-bundle.sh`
 
-- [ ] **Step 1: Add failing xtask helper tests**
+- [ ] **Step 1: Verify Swift scratch path is ignored**
+
+Run:
+
+```sh
+git check-ignore -q target/swift/PortholeHelper
+```
+
+Expected: PASS because the repo's `/target` ignore rule covers `target/swift/`.
+
+If it fails, add this to `.gitignore` and commit it before building Swift artifacts:
+
+```gitignore
+target/swift/
+```
+
+- [ ] **Step 2: Add failing xtask helper tests**
 
 In `crates/xtask/tests/macos_bundle.rs`, add:
 
@@ -429,7 +446,7 @@ cargo test -p xtask --test macos_bundle --locked swift_build
 
 Expected: FAIL because `macos_helper` does not exist.
 
-- [ ] **Step 2: Add helper build module**
+- [ ] **Step 3: Add helper build module**
 
 Create `crates/xtask/src/macos_helper.rs`:
 
@@ -474,7 +491,7 @@ pub mod macos_bundle;
 pub mod macos_helper;
 ```
 
-- [ ] **Step 3: Verify helper tests pass**
+- [ ] **Step 4: Verify helper tests pass**
 
 Run:
 
@@ -484,7 +501,7 @@ cargo test -p xtask --test macos_bundle --locked swift_build
 
 Expected: PASS.
 
-- [ ] **Step 4: Call SwiftPM from bundle assembly**
+- [ ] **Step 5: Call SwiftPM from bundle assembly**
 
 In `crates/xtask/src/macos_bundle.rs`:
 
@@ -502,7 +519,7 @@ Use `std::process::Command` directly, not shell strings. Because `run_status` cu
 
 Keep the code simple; this is an xtask crate.
 
-- [ ] **Step 5: Update bundle smoke test expectations**
+- [ ] **Step 6: Update bundle smoke test expectations**
 
 In `scripts/tests/test-dev-bundle.sh`, change the plist expectation:
 
@@ -524,7 +541,7 @@ test -x target/debug/Porthole.app/Contents/MacOS/PortholeHelper || { echo "Porth
 
 Keep the `portholed --help` and `porthole --help` binary checks. Do not launch the helper from this shell test; `NSStatusItem` launch behavior is covered by manual/local smoke because CI may not have a user GUI session.
 
-- [ ] **Step 6: Verify bundle command**
+- [ ] **Step 7: Verify bundle command**
 
 Run:
 
@@ -541,7 +558,7 @@ Expected with signing identity:
 
 Expected without signing identity: same explicit Apple Development identity error as today before build work begins.
 
-- [ ] **Step 7: Verify bundle contents**
+- [ ] **Step 8: Verify bundle contents**
 
 Run:
 
@@ -561,7 +578,7 @@ PortholeHelper
 true
 ```
 
-- [ ] **Step 8: Commit xtask helper bundling**
+- [ ] **Step 9: Commit xtask helper bundling**
 
 ```sh
 git add crates/xtask scripts/tests/test-dev-bundle.sh
