@@ -1,7 +1,9 @@
 use std::{fs, path::PathBuf};
 
-use xtask::macos_helper::{swift_build_args, swift_build_configuration};
-use xtask::macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity};
+use xtask::{
+    macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity},
+    macos_helper::{swift_build_args, swift_build_configuration},
+};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -207,13 +207,10 @@ fn run_status(command: &str, args: &[&str]) -> Result<(), BundleError> {
 }
 
 fn run_status_owned(command: &str, args: &[String]) -> Result<(), BundleError> {
-    let status = Command::new(command)
-        .args(args)
-        .status()
-        .map_err(|source| BundleError::CommandIo {
-            command: format_command_owned(command, args),
-            source,
-        })?;
+    let status = Command::new(command).args(args).status().map_err(|source| BundleError::CommandIo {
+        command: format_command_owned(command, args),
+        source,
+    })?;
 
     if status.success() {
         Ok(())

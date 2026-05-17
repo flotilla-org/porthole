@@ -23,7 +23,5 @@ pub fn swift_build_args(release: bool) -> Vec<String> {
 }
 
 pub fn built_helper_path(release: bool) -> PathBuf {
-    scratch_path()
-        .join(swift_build_configuration(release))
-        .join("PortholeHelper")
+    scratch_path().join(swift_build_configuration(release)).join("PortholeHelper")
 }

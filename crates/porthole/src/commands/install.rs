@@ -293,11 +293,7 @@ fn path_contains(path_env: &str, dir: &Path) -> bool {
 fn startup_program_for_bundle(bundle: &Path) -> PathBuf {
     let macos = bundle.join("Contents/MacOS");
     let helper = macos.join("PortholeHelper");
-    if helper.is_file() {
-        helper
-    } else {
-        macos.join("portholed")
-    }
+    if helper.is_file() { helper } else { macos.join("portholed") }
 }
 
 fn remove_path(p: &Path) -> Result<(), InstallError> {
