@@ -18,7 +18,7 @@ use capture_transfer::{
     },
     state::SessionState,
     transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
-    video::{AcquiredVideoFrame, ConsumerId, VideoFrameDesc, VideoSlotManager},
+    video::{AcquiredVideoFrame, ConsumerId, VideoControlPageRegistration, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
     ErrorCode, PortholeError,
@@ -619,6 +619,13 @@ impl CaptureRegistry {
                 }
             }
         };
+        let control_page = match session.video.control_page_registration(TrackId::new(request.track_id)) {
+            Ok(registration) => Some(registration),
+            Err(error) => {
+                session.video.release(frame);
+                return Err(CaptureRegistryError::from_capture(error));
+            }
+        };
         let response = LatestVideoFrameResponse {
             session_id: request.session_id.clone(),
             track_id: request.track_id,
@@ -649,7 +656,12 @@ impl CaptureRegistry {
             consumer_skipped_count: frame.desc.consumer_skipped_count,
             len: frame.bytes().len() as u64,
         };
-        Ok(LatestFrameReply { response, fd, frame })
+        Ok(LatestFrameReply {
+            response,
+            fd,
+            frame,
+            control_page,
+        })
     }
 
     fn disconnect_consumer(&self, consumer_id: ConsumerId) {
@@ -714,6 +726,7 @@ struct LatestFrameReply {
     response: LatestVideoFrameResponse,
     fd: Option<std::os::fd::OwnedFd>,
     frame: AcquiredVideoFrame,
+    control_page: Option<VideoControlPageRegistration>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -872,6 +885,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let mut leases: BTreeMap<u64, (String, AcquiredVideoFrame)> = BTreeMap::new();
     // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
     let mut registered_pools: BTreeSet<RegisteredPoolKey> = BTreeSet::new();
+    let mut registered_control_pages: BTreeSet<u64> = BTreeSet::new();
     let result = (|| {
         loop {
             let mut line = String::new();
@@ -889,10 +903,30 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         session_id: session_id.clone(),
                         track_id,
                     };
-                    let LatestFrameReply { mut response, fd, frame } = registry.latest_frame_for_consumer(&request, consumer_id)?;
+                    let LatestFrameReply {
+                        mut response,
+                        fd,
+                        frame,
+                        control_page,
+                    } = registry.latest_frame_for_consumer(&request, consumer_id)?;
                     let lease_id = next_lease_id;
                     next_lease_id = next_lease_id.wrapping_add(1).max(1);
                     response.lease_id = lease_id;
+                    if let Some(control_page) = control_page.as_ref() {
+                        let track_id = control_page.track_id.get();
+                        if registered_control_pages.insert(track_id) {
+                            write_capture_transfer_message(
+                                &mut stream,
+                                &CaptureTransferMessage::RegisterVideoControlPage {
+                                    session_id: request.session_id.clone(),
+                                    track_id,
+                                    map_len: control_page.map_len,
+                                },
+                            )?;
+                            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                            fdpass::send_fd(&stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+                        }
+                    }
                     if let Some(pool) = frame.cpu_pool_registration() {
                         let pool_key = RegisteredPoolKey {
                             track_id: pool.track_id.get(),
@@ -1030,6 +1064,7 @@ mod tests {
 
     use async_trait::async_trait;
     use capture_transfer::{
+        control_page::VideoTrackControlPage,
         model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
         video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
     };
@@ -1257,6 +1292,14 @@ mod tests {
         .unwrap();
         let mut reader = BufReader::new(client.try_clone().unwrap());
         let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(control["op"], "register_video_control_page");
+        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
+        assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
+
+        line.clear();
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");

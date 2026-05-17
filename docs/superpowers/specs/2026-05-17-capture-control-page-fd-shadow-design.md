@@ -1,7 +1,7 @@
 # Capture Control Page FD Shadow Design
 
 Date: 2026-05-17
-Status: draft
+Status: implemented prototype
 
 ## Context
 
