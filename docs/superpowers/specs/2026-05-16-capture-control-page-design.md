@@ -77,6 +77,12 @@ entry at `(producer_cursor - 1) % capacity`, and updates the header. Snapshot he
 return entries in oldest-to-newest order, matching the current
 `MetadataRing::snapshot` behavior.
 
+Follow-up work hardens this internal page toward the future publication layout:
+the page now carries layout identity fields, rounds its control ring capacity to
+a power of two, uses a mask for ring indexing, stores a per-slot publication
+sequence, and exposes latest-lossy lap/resync helpers. It remains in-process
+Rust state rather than shared mmap.
+
 Consumer cursors remain per-consumer Rust state for this slice. They already
 look close to the future shared fields: last acquired cursor, release cursor,
 skipped count, and acquired count. Moving those into a shared page should be a
