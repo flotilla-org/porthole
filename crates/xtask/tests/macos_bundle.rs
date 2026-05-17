@@ -11,14 +11,15 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
-fn transitional_info_plist_keeps_daemon_executable() {
+fn helper_info_plist_uses_helper_executable() {
     let plist = fs::read_to_string(workspace_root().join("apps/macos/bundle/Info.plist")).unwrap();
     assert!(plist.contains("<key>CFBundleIdentifier</key>"));
     assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
     assert!(plist.contains("<key>CFBundleExecutable</key>"));
-    assert!(plist.contains("<string>portholed</string>"));
-    assert!(plist.contains("<key>LSBackgroundOnly</key>"));
-    assert!(!plist.contains("PortholeHelper"));
+    assert!(plist.contains("<string>PortholeHelper</string>"));
+    assert!(plist.contains("<key>LSUIElement</key>"));
+    assert!(plist.contains("<true/>"));
+    assert!(!plist.contains("<key>LSBackgroundOnly</key>"));
 }
 
 #[test]
