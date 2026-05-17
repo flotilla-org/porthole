@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-
-mod macos_bundle;
+use xtask::macos_bundle::{self, BundleOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "xtask")]
@@ -33,13 +32,18 @@ enum Platform {
 
 fn main() {
     let cli = Cli::parse();
-    match cli.command {
-        Command::Bundle(args) => {
-            println!(
-                "bundle platform={:?} profile={}",
-                args.platform,
-                if args.release { "release" } else { "debug" }
-            );
-        }
+    let result = match cli.command {
+        Command::Bundle(args) => match args.platform {
+            Platform::Macos => macos_bundle::run(BundleOptions {
+                release: args.release,
+                refresh: args.refresh,
+                sign: args.sign,
+            }),
+        },
+    };
+
+    if let Err(err) = result {
+        eprintln!("{err}");
+        std::process::exit(1);
     }
 }

@@ -10,5 +10,9 @@ repository.workspace = true
 clap = { workspace = true }
 thiserror = { workspace = true }
 
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
 [lints]
 workspace = true
