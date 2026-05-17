@@ -42,7 +42,7 @@ Those remain separate roadmap items. This slice must not create a second daemon 
 ## File Structure
 
 - Create `apps/macos/PortholeHelper/Package.swift` — SwiftPM package for the helper executable.
-- Create `apps/macos/PortholeHelper/Sources/PortholeHelper/main.swift` — AppKit entrypoint.
+- Create `apps/macos/PortholeHelper/Sources/PortholeHelper/PortholeHelperMain.swift` — AppKit entrypoint.
 - Create `apps/macos/PortholeHelper/Sources/PortholeHelper/AppDelegate.swift` — `NSApplicationDelegate`, status item setup, menu actions.
 - Create `apps/macos/PortholeHelper/Sources/PortholeHelper/DaemonSupervisor.swift` — process start/restart/quit behavior for bundled `portholed`.
 - Create `apps/macos/PortholeHelper/Sources/PortholeHelper/BundlePaths.swift` — resolves bundled `portholed`, CLI, logs, and app paths.
@@ -338,15 +338,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 - [ ] **Step 5: Add entrypoint**
 
-Create `main.swift`:
+Create `PortholeHelperMain.swift`. Do not name this file `main.swift`; Swift treats that file name as top-level code, which conflicts with the `@main` entrypoint needed for `@MainActor` initialization under Swift 6.
 
 ```swift
 import AppKit
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+@main
+struct PortholeHelperMain {
+    @MainActor
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
+    }
+}
 ```
 
 - [ ] **Step 6: Verify Swift package builds**
