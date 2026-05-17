@@ -6,8 +6,8 @@ use porthole::{
     commands::{
         attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays, focus as focus_cmd,
         install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd,
-        replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd, send_keys as send_keys_cmd,
-        text as text_cmd, wait as wait_cmd,
+        record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd,
+        send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -373,6 +373,11 @@ enum Command {
         #[command(subcommand)]
         command: CaptureSessionCommand,
     },
+    /// Record a bounded video clip.
+    Record {
+        #[command(subcommand)]
+        command: RecordCommand,
+    },
     /// Search for candidate windows.
     Search {
         #[arg(long)]
@@ -561,6 +566,26 @@ enum CaptureSessionCommand {
     Close { session_id: String },
 }
 
+#[derive(Subcommand)]
+enum RecordCommand {
+    /// Record a live capture session for an existing tracked surface.
+    Surface {
+        surface_id: String,
+        /// Recording duration, for example 250ms or 5s.
+        #[arg(long, value_parser = record_cmd::parse_record_duration)]
+        duration: std::time::Duration,
+        /// Output QuickTime movie path.
+        #[arg(long)]
+        output: PathBuf,
+        /// Continue after ordered cursor lapping and report the skipped count.
+        #[arg(long)]
+        best_effort: bool,
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 impl From<ButtonArg> for ClickButton {
     fn from(b: ButtonArg) -> Self {
         match b {
@@ -583,7 +608,7 @@ enum ConditionArg {
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
-    let client = DaemonClient::new(socket_path());
+    let mut client = DaemonClient::new(socket_path());
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
         Command::Install {
@@ -959,6 +984,27 @@ async fn main() -> std::process::ExitCode {
                 .await
             }
             CaptureSessionCommand::Close { session_id } => porthole::commands::capture_session::close(&client, &session_id).await,
+        },
+        Command::Record { command } => match command {
+            RecordCommand::Surface {
+                surface_id,
+                duration,
+                output,
+                best_effort,
+                json,
+            } => {
+                record_cmd::run(
+                    &mut client,
+                    record_cmd::RecordArgs {
+                        surface_id,
+                        duration,
+                        output,
+                        best_effort,
+                        json,
+                    },
+                )
+                .await
+            }
         },
         Command::Search {
             app_name,
