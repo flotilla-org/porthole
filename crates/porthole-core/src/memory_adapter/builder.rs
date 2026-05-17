@@ -104,6 +104,11 @@ impl MemoryAdapterBuilder {
 
     /// Add a window with the given spec. Returns the freshly-minted
     /// [`SurfaceId`] so callers can drive ops against it.
+    ///
+    /// Unlike every other builder method, this takes `&mut self` rather than
+    /// `self` because it must hand back the new `SurfaceId` — a `self → Self`
+    /// signature can't return both. The intended pattern is:
+    /// `let mut b = MemoryAdapter::builder().display(...); let id = b.window(...); let a = b.build();`
     pub fn window(&mut self, w: WindowSpec) -> SurfaceId {
         let id = SurfaceId::new();
         self.windows.push((id.clone(), w));

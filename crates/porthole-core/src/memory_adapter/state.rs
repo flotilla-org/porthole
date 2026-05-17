@@ -71,6 +71,11 @@ impl State {
     /// Pick the display whose bounds has the largest intersection with `rect`;
     /// tie-break primary; final fallback first display.
     pub fn display_for_rect(&self, rect: Rect) -> &DisplayInfo {
+        // Invariant: the builder always seeds at least one display (defaulting
+        // to a 1920×1080 primary if none configured). Direct `State`
+        // construction is `pub(super)`-only, so this guards future
+        // intra-module callers.
+        debug_assert!(!self.displays.is_empty(), "display_for_rect called on State with no displays");
         let mut best: Option<(&DisplayInfo, f64)> = None;
         for d in &self.displays {
             let area = intersection_area(d.bounds, rect);

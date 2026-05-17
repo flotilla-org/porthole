@@ -34,7 +34,7 @@ impl Adapter for MemoryAdapter {
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
         let mut s = self.state.lock().unwrap();
         let name = basename(&spec.app);
-        let surface = synthesize_window(&mut s, name.clone(), name);
+        let surface = synthesize_window(&mut s, Some(name.clone()), Some(name));
         Ok(LaunchOutcome {
             surface,
             confidence: Confidence::Strong,
@@ -156,10 +156,15 @@ impl Adapter for MemoryAdapter {
         condition: &WaitCondition,
         _deadline: std::time::Instant,
     ) -> Result<WaitOutcome, WaitTimeout> {
-        // Realism: a real wait would observe stability; the fake just returns
-        // success immediately for any condition whose target window is alive.
-        // Dead-window conditions still return success because tests asserting
-        // dead-window behaviour go through the HandleStore, not the adapter.
+        // Asymmetric on purpose: unlike every other state-validating method on
+        // this fake, `wait` cannot return `SurfaceDead`. The trait signature
+        // returns `Result<_, WaitTimeout>` (not `PortholeError`) — see
+        // `Adapter::wait` — so there is no shape in which a dead-surface error
+        // could surface here. We touch the state to keep parity with the
+        // others (and to surface lock-poisoning if it happened) but discard
+        // the result. Tests asserting dead-window behaviour reach this code
+        // path through `HandleStore::require_alive` in the daemon pipeline,
+        // not through the adapter directly.
         let _ = self.state.lock().unwrap().find_alive_by_surface_id(&surface.id);
         Ok(WaitOutcome {
             condition: wait_condition_tag(condition).to_string(),
@@ -274,8 +279,13 @@ impl Adapter for MemoryAdapter {
                 cg_window_id: w.cg_window_id,
             })
             .collect();
-        // frontmost: when explicitly true, truncate to the single focused window
-        // already filtered.
+        // frontmost: when explicitly true, `matches_query` already filtered to
+        // the focused pid. If that pid owns multiple windows, we truncate to
+        // one — but note the surviving window is insertion-order-first, not a
+        // semantic "frontmost window within app". The real macOS adapter has a
+        // meaningful ordering here; tests that depend on it should configure
+        // a single window per focused pid until this fake grows a real
+        // z-order.
         if matches!(query.frontmost, Some(true)) && out.len() > 1 {
             out.truncate(1);
         }
@@ -408,13 +418,14 @@ fn synthesize_window(s: &mut State, title: Option<String>, app_name: Option<Stri
     }
 }
 
-fn basename(path: &str) -> Option<String> {
-    Some(path.rsplit('/').next().unwrap_or(path).to_string())
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 fn minimal_png() -> Vec<u8> {
     // 1x1 transparent PNG; same canned payload as in_memory.rs to avoid
     // re-rendering surprises for tests that pattern-match the magic header.
+    // Keep in sync with `crates/porthole-core/src/in_memory.rs::minimal_png`.
     const BYTES: &[u8] = &[
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
         0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62,

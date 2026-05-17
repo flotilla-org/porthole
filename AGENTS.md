@@ -43,6 +43,6 @@ Porthole is pre-release. Wire contracts, error shapes, and public types can chan
 
 ## Testing conventions
 
-- **Core tests (`porthole-core`)** run against the `InMemoryAdapter` — fully deterministic, no OS dependency.
-- **Daemon tests (`portholed`)** use oneshot `axum::Router` calls with the in-memory adapter. No real daemon spawned except in `tests/*_e2e.rs` integration tests that spawn on a tempfile UDS.
+- **Core tests (`porthole-core`)** run against an in-memory fake adapter. New tests should prefer `MemoryAdapter` (stateful — operations mutate real in-memory desktop state; assertions read state back). Legacy `InMemoryAdapter` is retained for tests that script transient/external errors (`LaunchTimeout`, `SystemPermissionRequestFailed`) that don't surface from state — see ADR-0003 and issue #35.
+- **Daemon tests (`portholed`)** use oneshot `axum::Router` calls with one of the in-memory fakes. No real daemon spawned except in `tests/*_e2e.rs` integration tests that spawn on a tempfile UDS.
 - **macOS adapter integration tests** are `#[ignore]`'d by default and run with `cargo test -p porthole-adapter-macos -- --ignored`. They require a real desktop session and the two permissions granted.
