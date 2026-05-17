@@ -953,7 +953,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         track_id,
                     };
                     let reply = registry.latest_frame_for_consumer(&request, consumer_id, include_control_page)?;
-                    send_frame_reply(&mut stream, &request.session_id, session_id, reply, &mut connection)?;
+                    send_frame_reply(&mut stream, &request.session_id, include_control_page, reply, &mut connection)?;
                 }
                 CaptureTransferRequest::AcquireVideoFrameByCursor {
                     session_id,
@@ -966,7 +966,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         track_id,
                     };
                     let reply = registry.frame_by_cursor_for_consumer(&request, consumer_id, include_control_page, producer_cursor)?;
-                    send_frame_reply(&mut stream, &request.session_id, session_id, reply, &mut connection)?;
+                    send_frame_reply(&mut stream, &request.session_id, include_control_page, reply, &mut connection)?;
                 }
                 CaptureTransferRequest::ReleaseVideoFrame { lease_id } => {
                     if let Some((session_id, frame)) = connection.leases.remove(&lease_id) {
@@ -986,8 +986,8 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
 
 fn send_frame_reply(
     stream: &mut UnixStream,
-    response_session_id: &str,
-    lease_session_id: String,
+    session_id: &str,
+    include_control_page: bool,
     reply: LatestFrameReply,
     connection: &mut FdConnectionState,
 ) -> Result<(), CaptureRegistryError> {
@@ -1001,12 +1001,13 @@ fn send_frame_reply(
     connection.next_lease_id = connection.next_lease_id.wrapping_add(1).max(1);
     response.lease_id = lease_id;
     if let Some(control_page) = control_page.as_ref() {
+        debug_assert!(include_control_page);
         let control_track_id = control_page.track_id.get();
         connection.registered_control_pages.insert(control_track_id);
         write_capture_transfer_message(
             stream,
             &CaptureTransferMessage::RegisterVideoControlPage {
-                session_id: response_session_id.to_string(),
+                session_id: session_id.to_string(),
                 track_id: control_track_id,
                 map_len: control_page.map_len,
             },
@@ -1025,7 +1026,7 @@ fn send_frame_reply(
             write_capture_transfer_message(
                 stream,
                 &CaptureTransferMessage::RegisterCpuPool {
-                    session_id: response_session_id.to_string(),
+                    session_id: session_id.to_string(),
                     track_id: pool.track_id.get(),
                     pool_id: pool.pool_id,
                     pool_generation: pool.pool_generation,
@@ -1038,7 +1039,7 @@ fn send_frame_reply(
             fdpass::send_fd(stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
         }
     }
-    connection.leases.insert(lease_id, (lease_session_id, frame));
+    connection.leases.insert(lease_id, (session_id.to_string(), frame));
     write_capture_transfer_message(stream, &video_frame_message_from_response(&response))?;
     stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
     if let Some(fd) = fd {
