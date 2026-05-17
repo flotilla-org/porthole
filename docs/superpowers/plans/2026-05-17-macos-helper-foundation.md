@@ -184,9 +184,6 @@ struct BundlePaths {
         macOSURL.appendingPathComponent("portholed")
     }
 
-    var cliURL: URL {
-        macOSURL.appendingPathComponent("porthole")
-    }
 }
 ```
 
@@ -232,6 +229,7 @@ final class DaemonSupervisor {
             process = next
             onStateChange(.running(pid: next.processIdentifier))
         } catch {
+            NSLog("failed to launch portholed: \(error)")
             onStateChange(.crashed(status: -1))
         }
     }
@@ -247,9 +245,11 @@ final class DaemonSupervisor {
 
     func stopForQuit() {
         shouldRestart = false
-        process?.terminate()
-        process = nil
-        onStateChange(.stopped)
+        if let process {
+            process.terminate()
+        } else {
+            onStateChange(.stopped)
+        }
     }
 
     private func handleTermination(_ status: Int32) {
@@ -264,7 +264,7 @@ final class DaemonSupervisor {
 }
 ```
 
-If Swift reports actor-capture or sendability issues, keep all supervisor mutation on `@MainActor` and use `Task { @MainActor in ... }` in the termination handler. Do not introduce background shared mutable state.
+If Swift reports actor-capture or sendability issues, keep all supervisor mutation on `@MainActor` and use `Task { @MainActor in ... }` in the termination handler. Do not introduce background shared mutable state. `stopForQuit()` intentionally lets the termination handler publish the final stopped state when a process exists, avoiding duplicate state transitions for future badge/status observers.
 
 - [ ] **Step 4: Add status item app delegate**
 
@@ -397,9 +397,25 @@ fn swift_build_uses_package_path_and_scratch_path() {
             "--package-path",
             "apps/macos/PortholeHelper",
             "--scratch-path",
-            "target/swift/PortholeHelper/debug",
+            "target/swift/PortholeHelper",
             "-c",
             "debug",
+        ]
+    );
+}
+
+#[test]
+fn swift_build_release_uses_release_configuration() {
+    assert_eq!(
+        swift_build_args(true),
+        vec![
+            "build",
+            "--package-path",
+            "apps/macos/PortholeHelper",
+            "--scratch-path",
+            "target/swift/PortholeHelper",
+            "-c",
+            "release",
         ]
     );
 }
@@ -426,11 +442,10 @@ pub fn swift_build_configuration(release: bool) -> &'static str {
     if release { "release" } else { "debug" }
 }
 
-pub fn scratch_path(release: bool) -> PathBuf {
+pub fn scratch_path() -> PathBuf {
     Path::new("target")
         .join("swift")
         .join("PortholeHelper")
-        .join(swift_build_configuration(release))
 }
 
 pub fn swift_build_args(release: bool) -> Vec<String> {
@@ -439,14 +454,14 @@ pub fn swift_build_args(release: bool) -> Vec<String> {
         "--package-path".to_owned(),
         PACKAGE_PATH.to_owned(),
         "--scratch-path".to_owned(),
-        scratch_path(release).to_string_lossy().into_owned(),
+        scratch_path().to_string_lossy().into_owned(),
         "-c".to_owned(),
         swift_build_configuration(release).to_owned(),
     ]
 }
 
 pub fn built_helper_path(release: bool) -> PathBuf {
-    scratch_path(release)
+    scratch_path()
         .join(swift_build_configuration(release))
         .join("PortholeHelper")
 }
@@ -660,7 +675,7 @@ Update `docs/development.md`:
 
 ```sh
 git add crates/porthole/src/commands/install.rs README.md docs/development.md
-git commit -m "install: launch helper for helper-mode bundles"
+git commit -m "install: point LaunchAgent at helper binary when present"
 ```
 
 ## Chunk 5: Local Helper Smoke And Roadmap
