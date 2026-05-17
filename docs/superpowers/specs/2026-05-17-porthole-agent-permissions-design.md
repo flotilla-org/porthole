@@ -278,6 +278,7 @@ GET  /agent-permissions/requests
 GET  /agent-permissions/requests/{request_id}
 POST /agent-permissions/requests/{request_id}/approve
 POST /agent-permissions/requests/{request_id}/deny
+GET  /agent-permissions/grants
 POST /agent-permissions/grants/{grant_id}/revoke
 ```
 
@@ -291,6 +292,11 @@ Approve request body:
   "constraints": { "requires_frontmost": false }
 }
 ```
+
+The approve body repeats `target` and `actions` for operator confirmation and
+wire transparency. The daemon must reject mismatches and create the grant from
+the source pending request's target/action scope, not from widened approve-body
+values.
 
 Deny request body:
 
