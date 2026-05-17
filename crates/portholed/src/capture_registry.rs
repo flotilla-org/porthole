@@ -1086,6 +1086,7 @@ fn video_frame_message_from_response(response: &LatestVideoFrameResponse) -> Cap
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
     match format {
+        PixelFormat::Unknown => "unknown",
         PixelFormat::Bgra8Unorm => "bgra8_unorm",
         PixelFormat::Rgba8Unorm => "rgba8_unorm",
     }
