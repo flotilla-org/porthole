@@ -202,6 +202,8 @@ mod tests {
         assert_eq!(control["op"], "register_video_control_page");
         assert_eq!(control["session_id"], created.session_id);
         assert_eq!(control["track_id"], created.track_id);
+        assert_ne!(control["consumer_id"].as_u64().unwrap(), 0);
+        assert_eq!(control["consumer_slot"], 0);
         let control_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.validate_header().unwrap().producer_cursor, 1);
@@ -282,6 +284,7 @@ mod tests {
             let value = read_json_line(reader);
             match value["op"].as_str() {
                 Some("register_video_control_page") => {
+                    assert_ne!(value["consumer_id"].as_u64().unwrap(), 0);
                     let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
                     let page = VideoTrackControlPage::map_read_only(fd, value["map_len"].as_u64().unwrap() as usize).unwrap();
                     page.validate_header().unwrap();

@@ -648,7 +648,7 @@ impl CaptureRegistry {
             }
         };
         let control_page = if include_control_page {
-            match session.video.control_page_registration(TrackId::new(request.track_id)) {
+            match session.video.control_page_registration(TrackId::new(request.track_id), consumer_id) {
                 Ok(registration) => Some(registration),
                 Err(error) => {
                     session.video.release(frame);
@@ -1010,6 +1010,8 @@ fn send_frame_reply(
                 session_id: session_id.to_string(),
                 track_id: control_track_id,
                 map_len: control_page.map_len,
+                consumer_id: control_page.consumer_id.get(),
+                consumer_slot: control_page.consumer_slot,
             },
         )?;
         stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
@@ -1374,6 +1376,8 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(control["op"], "register_video_control_page");
+        assert_eq!(control["consumer_id"], 1);
+        assert_eq!(control["consumer_slot"], 0);
         let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
@@ -1447,6 +1451,8 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(control["op"], "register_video_control_page");
+        assert_eq!(control["consumer_id"], 1);
+        assert_eq!(control["consumer_slot"], 0);
         let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
