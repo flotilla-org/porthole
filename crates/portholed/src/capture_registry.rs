@@ -904,6 +904,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                 serde_json::from_str(line.trim_end()).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
             match request {
                 CaptureTransferRequest::LatestVideoFrame { session_id, track_id } => {
+                    let include_control_page = !registered_control_pages.contains(&track_id);
                     let request = LatestVideoFrameRequest {
                         session_id: session_id.clone(),
                         track_id,
@@ -913,24 +914,24 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         fd,
                         frame,
                         control_page,
-                    } = registry.latest_frame_for_consumer(&request, consumer_id, !registered_control_pages.contains(&track_id))?;
+                    } = registry.latest_frame_for_consumer(&request, consumer_id, include_control_page)?;
                     let lease_id = next_lease_id;
                     next_lease_id = next_lease_id.wrapping_add(1).max(1);
                     response.lease_id = lease_id;
                     if let Some(control_page) = control_page.as_ref() {
-                        let track_id = control_page.track_id.get();
-                        if registered_control_pages.insert(track_id) {
-                            write_capture_transfer_message(
-                                &mut stream,
-                                &CaptureTransferMessage::RegisterVideoControlPage {
-                                    session_id: request.session_id.clone(),
-                                    track_id,
-                                    map_len: control_page.map_len,
-                                },
-                            )?;
-                            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-                            fdpass::send_fd(&stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-                        }
+                        debug_assert!(include_control_page);
+                        let control_track_id = control_page.track_id.get();
+                        registered_control_pages.insert(control_track_id);
+                        write_capture_transfer_message(
+                            &mut stream,
+                            &CaptureTransferMessage::RegisterVideoControlPage {
+                                session_id: request.session_id.clone(),
+                                track_id: control_track_id,
+                                map_len: control_page.map_len,
+                            },
+                        )?;
+                        stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+                        fdpass::send_fd(&stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
                     }
                     if let Some(pool) = frame.cpu_pool_registration() {
                         let pool_key = RegisteredPoolKey {
