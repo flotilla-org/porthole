@@ -678,14 +678,9 @@ impl CaptureRegistry {
             .acquire_next_after(consumer_id, track_id, after_producer_cursor)
             .map_err(CaptureRegistryError::from_capture)?
         {
-            OrderedVideoAcquire::Frame(frame) => latest_reply_from_frame(
-                request,
-                &mut session.video,
-                consumer_id,
-                include_control_page,
-                frame,
-            )
-            .map(OrderedFrameReply::Frame),
+            OrderedVideoAcquire::Frame(frame) => {
+                latest_reply_from_frame(request, &mut session.video, consumer_id, include_control_page, frame).map(OrderedFrameReply::Frame)
+            }
             OrderedVideoAcquire::Lapped {
                 after_producer_cursor,
                 oldest_available_cursor,

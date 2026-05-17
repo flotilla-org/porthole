@@ -225,7 +225,9 @@ impl DaemonConsumer {
             after_producer_cursor,
         };
         self.write_capture_transfer_request(&request)?;
-        self.stream.flush().map_err(|error| daemon_error("flush-next-frame-request", error))?;
+        self.stream
+            .flush()
+            .map_err(|error| daemon_error("flush-next-frame-request", error))?;
         self.receive_frame_acquire("next-frame")
     }
 
