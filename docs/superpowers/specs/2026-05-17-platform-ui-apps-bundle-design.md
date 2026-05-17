@@ -229,7 +229,9 @@ Porthole.app/Contents/MacOS/portholed
 Phase 3 needs an explicit migration:
 
 1. Install new `Porthole.app`.
-2. Boot out any existing `org.flotilla.porthole` LaunchAgent.
+2. Boot out any existing `org.flotilla.porthole` LaunchAgent. This is the
+   current LaunchAgent label from `crates/porthole/src/launchd.rs`; it is not
+   derived from the development bundle id `org.flotilla.porthole.dev`.
 3. Remove the old per-user plist when the helper will own startup.
 4. Register the helper's login item or helper LaunchAgent, depending on the
    current slice.
@@ -274,15 +276,14 @@ Bundle-foundation tests should cover:
 - bundle contains `Info.plist`, icon, `porthole`, and `portholed`
 - `CFBundleIdentifier` stays stable
 - transitional daemon-only plist has `CFBundleExecutable=portholed`
-- helper-mode plist has `CFBundleExecutable=PortholeHelper` and
-  `LSUIElement=true`
 - installed LaunchAgent program path changes only in the intended migration
   slice
 - `codesign -v target/<profile>/Porthole.app`
 
 Swift helper tests can be lighter initially. The first UI slice should verify
-that the helper starts, creates an `NSStatusItem`, can launch a child process
-in a controlled test mode, and exits cleanly.
+that the helper-mode plist has `CFBundleExecutable=PortholeHelper` and
+`LSUIElement=true`, the helper starts, creates an `NSStatusItem`, can launch a
+child process in a controlled test mode, and exits cleanly.
 
 ## 14. First Implementation Slice
 

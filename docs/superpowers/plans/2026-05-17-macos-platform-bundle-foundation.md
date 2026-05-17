@@ -177,6 +177,8 @@ use std::fs;
 
 #[test]
 fn transitional_info_plist_keeps_daemon_executable() {
+    // Cargo runs package tests from the workspace root, which is the xtask
+    // convention this repository uses for checked-in product inputs.
     let plist = fs::read_to_string("apps/macos/bundle/Info.plist").unwrap();
     assert!(plist.contains("<key>CFBundleIdentifier</key>"));
     assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
@@ -218,7 +220,7 @@ Create `apps/macos/bundle/Info.plist` with the same transitional values currentl
     <key>CFBundleIconFile</key>
     <string>icon</string>
     <key>CFBundleVersion</key>
-    <string>0.0.0-dev</string>
+    <string>0.0.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.0.0-dev</string>
     <key>CFBundlePackageType</key>
@@ -353,6 +355,10 @@ pub fn build_command_args(release: bool) -> Vec<&'static str> {
 
 Run the focused test again and verify PASS.
 
+The initial `Vec<&'static str>` shape is intentionally narrow. If a later
+slice adds dynamic package filtering or target selection, change it to
+`Vec<String>` in that slice.
+
 - [ ] **Step 4: Implement signing identity selection**
 
 Port the existing `choose_sign_identity` behavior from `scripts/dev-bundle.sh` into Rust:
@@ -360,6 +366,8 @@ Port the existing `choose_sign_identity` behavior from `scripts/dev-bundle.sh` i
 - If `--sign` is provided, use it.
 - Otherwise run `security find-identity -v -p codesigning`.
 - Select the first identity whose name starts with `Apple Development:`.
+- Reject an empty identity or `--sign -`; xtask must reject ad-hoc signing
+  directly because users will call it without the shell wrapper.
 - If none is found, return the existing explanatory error text.
 
 Keep this logic in a small function so tests can cover parsing without invoking `security`:
@@ -370,7 +378,8 @@ pub fn parse_apple_development_identity(output: &str) -> Option<String> {
 }
 ```
 
-Add tests for parsing a sample identity output and for ignoring ad-hoc signatures.
+Add tests for parsing a sample identity output, ignoring ad-hoc signatures, and
+rejecting `"-"` as an explicit signing identity.
 
 - [ ] **Step 5: Implement bundle assembly**
 
@@ -391,6 +400,9 @@ Add tests for parsing a sample identity output and for ignoring ad-hoc signature
 7. Print the same install/onboard guidance as today.
 
 Use `std::process::Command` and return typed errors with context. Do not use shell command strings for build/sign operations.
+Leave a short code comment beside `--deep` noting that this is acceptable for
+the flat transitional dev bundle, but production/notarized signing should sign
+individual components in a defined order before signing the app.
 
 - [ ] **Step 6: Verify focused command**
 
