@@ -579,6 +579,31 @@ impl CaptureRegistry {
         consumer_id: ConsumerId,
         include_control_page: bool,
     ) -> Result<LatestFrameReply, CaptureRegistryError> {
+        self.frame_for_consumer(request, consumer_id, include_control_page, FrameAcquireMode::Latest)
+    }
+
+    fn frame_by_cursor_for_consumer(
+        &self,
+        request: &LatestVideoFrameRequest,
+        consumer_id: ConsumerId,
+        include_control_page: bool,
+        producer_cursor: u64,
+    ) -> Result<LatestFrameReply, CaptureRegistryError> {
+        self.frame_for_consumer(
+            request,
+            consumer_id,
+            include_control_page,
+            FrameAcquireMode::ProducerCursor(producer_cursor),
+        )
+    }
+
+    fn frame_for_consumer(
+        &self,
+        request: &LatestVideoFrameRequest,
+        consumer_id: ConsumerId,
+        include_control_page: bool,
+        acquire_mode: FrameAcquireMode,
+    ) -> Result<LatestFrameReply, CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
         let session = inner
             .sessions
@@ -605,10 +630,12 @@ impl CaptureRegistry {
                 });
             }
         }
-        let frame = session
-            .video
-            .acquire_latest(consumer_id, TrackId::new(request.track_id))
-            .map_err(CaptureRegistryError::from_capture)?;
+        let track_id = TrackId::new(request.track_id);
+        let frame = match acquire_mode {
+            FrameAcquireMode::Latest => session.video.acquire_latest(consumer_id, track_id),
+            FrameAcquireMode::ProducerCursor(producer_cursor) => session.video.acquire_cursor(consumer_id, track_id, producer_cursor),
+        }
+        .map_err(CaptureRegistryError::from_capture)?;
         let fd = if frame.cpu_pool_registration().is_some() {
             None
         } else {
@@ -732,6 +759,20 @@ struct LatestFrameReply {
     fd: Option<std::os::fd::OwnedFd>,
     frame: AcquiredVideoFrame,
     control_page: Option<VideoControlPageRegistration>,
+}
+
+#[derive(Debug)]
+struct FdConnectionState {
+    next_lease_id: u64,
+    leases: BTreeMap<u64, (String, AcquiredVideoFrame)>,
+    registered_pools: BTreeSet<RegisteredPoolKey>,
+    registered_control_pages: BTreeSet<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameAcquireMode {
+    Latest,
+    ProducerCursor(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -886,11 +927,13 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     let reader_stream = stream.try_clone().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
     let mut reader = BufReader::new(reader_stream);
     let consumer_id = registry.allocate_consumer_id()?;
-    let mut next_lease_id = 1_u64;
-    let mut leases: BTreeMap<u64, (String, AcquiredVideoFrame)> = BTreeMap::new();
-    // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
-    let mut registered_pools: BTreeSet<RegisteredPoolKey> = BTreeSet::new();
-    let mut registered_control_pages: BTreeSet<u64> = BTreeSet::new();
+    let mut connection = FdConnectionState {
+        next_lease_id: 1,
+        leases: BTreeMap::new(),
+        // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
+        registered_pools: BTreeSet::new(),
+        registered_control_pages: BTreeSet::new(),
+    };
     let result = (|| {
         loop {
             let mut line = String::new();
@@ -904,68 +947,29 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                 serde_json::from_str(line.trim_end()).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
             match request {
                 CaptureTransferRequest::LatestVideoFrame { session_id, track_id } => {
-                    let include_control_page = !registered_control_pages.contains(&track_id);
+                    let include_control_page = !connection.registered_control_pages.contains(&track_id);
                     let request = LatestVideoFrameRequest {
                         session_id: session_id.clone(),
                         track_id,
                     };
-                    let LatestFrameReply {
-                        mut response,
-                        fd,
-                        frame,
-                        control_page,
-                    } = registry.latest_frame_for_consumer(&request, consumer_id, include_control_page)?;
-                    let lease_id = next_lease_id;
-                    next_lease_id = next_lease_id.wrapping_add(1).max(1);
-                    response.lease_id = lease_id;
-                    if let Some(control_page) = control_page.as_ref() {
-                        debug_assert!(include_control_page);
-                        let control_track_id = control_page.track_id.get();
-                        registered_control_pages.insert(control_track_id);
-                        write_capture_transfer_message(
-                            &mut stream,
-                            &CaptureTransferMessage::RegisterVideoControlPage {
-                                session_id: request.session_id.clone(),
-                                track_id: control_track_id,
-                                map_len: control_page.map_len,
-                            },
-                        )?;
-                        stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-                        fdpass::send_fd(&stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-                    }
-                    if let Some(pool) = frame.cpu_pool_registration() {
-                        let pool_key = RegisteredPoolKey {
-                            track_id: pool.track_id.get(),
-                            pool_id: pool.pool_id,
-                            pool_generation: pool.pool_generation,
-                        };
-                        if registered_pools.insert(pool_key) {
-                            let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
-                            write_capture_transfer_message(
-                                &mut stream,
-                                &CaptureTransferMessage::RegisterCpuPool {
-                                    session_id: request.session_id.clone(),
-                                    track_id: pool.track_id.get(),
-                                    pool_id: pool.pool_id,
-                                    pool_generation: pool.pool_generation,
-                                    payload_map_len: pool.payload_map_len,
-                                    slot_stride: pool.slot_stride,
-                                    slot_count: pool.slot_count,
-                                },
-                            )?;
-                            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-                            fdpass::send_fd(&stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-                        }
-                    }
-                    leases.insert(lease_id, (session_id, frame));
-                    write_capture_transfer_message(&mut stream, &video_frame_message_from_response(&response))?;
-                    stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-                    if let Some(fd) = fd {
-                        fdpass::send_fd(&stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-                    }
+                    let reply = registry.latest_frame_for_consumer(&request, consumer_id, include_control_page)?;
+                    send_frame_reply(&mut stream, &request.session_id, session_id, reply, &mut connection)?;
+                }
+                CaptureTransferRequest::AcquireVideoFrameByCursor {
+                    session_id,
+                    track_id,
+                    producer_cursor,
+                } => {
+                    let include_control_page = !connection.registered_control_pages.contains(&track_id);
+                    let request = LatestVideoFrameRequest {
+                        session_id: session_id.clone(),
+                        track_id,
+                    };
+                    let reply = registry.frame_by_cursor_for_consumer(&request, consumer_id, include_control_page, producer_cursor)?;
+                    send_frame_reply(&mut stream, &request.session_id, session_id, reply, &mut connection)?;
                 }
                 CaptureTransferRequest::ReleaseVideoFrame { lease_id } => {
-                    if let Some((session_id, frame)) = leases.remove(&lease_id) {
+                    if let Some((session_id, frame)) = connection.leases.remove(&lease_id) {
                         registry.release_frame(&session_id, frame)?;
                     }
                 }
@@ -973,11 +977,74 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
         }
         Ok(())
     })();
-    for (_, (session_id, frame)) in leases {
+    for (_, (session_id, frame)) in connection.leases {
         let _ = registry.release_frame(&session_id, frame);
     }
     registry.disconnect_consumer(consumer_id);
     result
+}
+
+fn send_frame_reply(
+    stream: &mut UnixStream,
+    response_session_id: &str,
+    lease_session_id: String,
+    reply: LatestFrameReply,
+    connection: &mut FdConnectionState,
+) -> Result<(), CaptureRegistryError> {
+    let LatestFrameReply {
+        mut response,
+        fd,
+        frame,
+        control_page,
+    } = reply;
+    let lease_id = connection.next_lease_id;
+    connection.next_lease_id = connection.next_lease_id.wrapping_add(1).max(1);
+    response.lease_id = lease_id;
+    if let Some(control_page) = control_page.as_ref() {
+        let control_track_id = control_page.track_id.get();
+        connection.registered_control_pages.insert(control_track_id);
+        write_capture_transfer_message(
+            stream,
+            &CaptureTransferMessage::RegisterVideoControlPage {
+                session_id: response_session_id.to_string(),
+                track_id: control_track_id,
+                map_len: control_page.map_len,
+            },
+        )?;
+        stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+        fdpass::send_fd(stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+    }
+    if let Some(pool) = frame.cpu_pool_registration() {
+        let pool_key = RegisteredPoolKey {
+            track_id: pool.track_id.get(),
+            pool_id: pool.pool_id,
+            pool_generation: pool.pool_generation,
+        };
+        if connection.registered_pools.insert(pool_key) {
+            let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
+            write_capture_transfer_message(
+                stream,
+                &CaptureTransferMessage::RegisterCpuPool {
+                    session_id: response_session_id.to_string(),
+                    track_id: pool.track_id.get(),
+                    pool_id: pool.pool_id,
+                    pool_generation: pool.pool_generation,
+                    payload_map_len: pool.payload_map_len,
+                    slot_stride: pool.slot_stride,
+                    slot_count: pool.slot_count,
+                },
+            )?;
+            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+            fdpass::send_fd(stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+        }
+    }
+    connection.leases.insert(lease_id, (lease_session_id, frame));
+    write_capture_transfer_message(stream, &video_frame_message_from_response(&response))?;
+    stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+    if let Some(fd) = fd {
+        fdpass::send_fd(stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+    }
+    Ok(())
 }
 
 fn write_capture_transfer_message(stream: &mut UnixStream, message: &CaptureTransferMessage) -> Result<(), CaptureRegistryError> {
@@ -1326,6 +1393,89 @@ mod tests {
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         assert_eq!(pinned_frame_count(&registry, "session"), 1);
+        drop(reader);
+        drop(client);
+        server_thread.join().unwrap();
+
+        assert_eq!(pinned_frame_count(&registry, "session"), 0);
+    }
+
+    #[test]
+    fn fd_connection_acquires_requested_producer_cursor() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        let mut video = VideoSlotManager::new_reusable_pool(2);
+        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
+        video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video,
+                capture_task: None,
+                startup_cancel: None,
+            },
+        );
+
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry_for_server = registry.clone();
+        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
+
+        writeln!(
+            client,
+            "{}",
+            serde_json::json!({
+                "op": "acquire_video_frame_by_cursor",
+                "session_id": session_id,
+                "track_id": track_id.get(),
+                "producer_cursor": 1
+            })
+        )
+        .unwrap();
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(control["op"], "register_video_control_page");
+        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
+        assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
+
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(pool["op"], "register_cpu_pool");
+        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(response.producer_cursor, 1);
+        assert_eq!(response.sequence, 1);
+        assert_ne!(response.lease_id, 0);
+        let mut file = File::from(fd);
+        let mut bytes = Vec::new();
+        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
+        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, [1, 2, 3, 4]);
+
+        writeln!(
+            client,
+            "{}",
+            serde_json::json!({
+                "op": "release_video_frame",
+                "lease_id": response.lease_id
+            })
+        )
+        .unwrap();
         drop(reader);
         drop(client);
         server_thread.join().unwrap();
