@@ -688,22 +688,26 @@ impl CaptureRegistry {
                 latest_available_cursor,
                 skipped_count,
             } => Ok(OrderedFrameReply::Unavailable {
-                session_id: request.session_id.clone(),
-                track_id: request.track_id,
-                after_producer_cursor,
-                oldest_available_cursor,
-                latest_available_cursor,
-                skipped_count,
-                reason: "lapped",
+                fields: OrderedUnavailableReply {
+                    session_id: request.session_id.clone(),
+                    track_id: request.track_id,
+                    after_producer_cursor,
+                    oldest_available_cursor,
+                    latest_available_cursor,
+                    skipped_count,
+                    reason: "lapped",
+                },
             }),
             OrderedVideoAcquire::Empty => Ok(OrderedFrameReply::Unavailable {
-                session_id: request.session_id.clone(),
-                track_id: request.track_id,
-                after_producer_cursor,
-                oldest_available_cursor: 0,
-                latest_available_cursor: 0,
-                skipped_count: 0,
-                reason: "empty",
+                fields: OrderedUnavailableReply {
+                    session_id: request.session_id.clone(),
+                    track_id: request.track_id,
+                    after_producer_cursor,
+                    oldest_available_cursor: 0,
+                    latest_available_cursor: 0,
+                    skipped_count: 0,
+                    reason: "empty",
+                },
             }),
         }
     }
@@ -775,15 +779,17 @@ struct LatestFrameReply {
 
 enum OrderedFrameReply {
     Frame(Box<LatestFrameReply>),
-    Unavailable {
-        session_id: String,
-        track_id: u64,
-        after_producer_cursor: u64,
-        oldest_available_cursor: u64,
-        latest_available_cursor: u64,
-        skipped_count: u64,
-        reason: &'static str,
-    },
+    Unavailable { fields: OrderedUnavailableReply },
+}
+
+struct OrderedUnavailableReply {
+    session_id: String,
+    track_id: u64,
+    after_producer_cursor: u64,
+    oldest_available_cursor: u64,
+    latest_available_cursor: u64,
+    skipped_count: u64,
+    reason: &'static str,
 }
 
 fn latest_reply_from_frame(
@@ -1074,24 +1080,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                         OrderedFrameReply::Frame(reply) => {
                             send_frame_reply(&mut stream, &request.session_id, include_control_page, *reply, &mut connection)?;
                         }
-                        OrderedFrameReply::Unavailable {
-                            session_id,
-                            track_id,
-                            after_producer_cursor,
-                            oldest_available_cursor,
-                            latest_available_cursor,
-                            skipped_count,
-                            reason,
-                        } => send_unavailable_reply(
-                            &mut stream,
-                            session_id,
-                            track_id,
-                            after_producer_cursor,
-                            oldest_available_cursor,
-                            latest_available_cursor,
-                            skipped_count,
-                            reason,
-                        )?,
+                        OrderedFrameReply::Unavailable { fields } => send_unavailable_reply(&mut stream, &fields)?,
                     }
                 }
                 CaptureTransferRequest::ReleaseVideoFrame { lease_id } => {
@@ -1176,27 +1165,17 @@ fn send_frame_reply(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn send_unavailable_reply(
-    stream: &mut UnixStream,
-    session_id: String,
-    track_id: u64,
-    after_producer_cursor: u64,
-    oldest_available_cursor: u64,
-    latest_available_cursor: u64,
-    skipped_count: u64,
-    reason: &'static str,
-) -> Result<(), CaptureRegistryError> {
+fn send_unavailable_reply(stream: &mut UnixStream, fields: &OrderedUnavailableReply) -> Result<(), CaptureRegistryError> {
     write_capture_transfer_message(
         stream,
         &CaptureTransferMessage::VideoFrameUnavailable {
-            session_id,
-            track_id,
-            after_producer_cursor,
-            oldest_available_cursor,
-            latest_available_cursor,
-            skipped_count,
-            reason: reason.to_string(),
+            session_id: fields.session_id.clone(),
+            track_id: fields.track_id,
+            after_producer_cursor: fields.after_producer_cursor,
+            oldest_available_cursor: fields.oldest_available_cursor,
+            latest_available_cursor: fields.latest_available_cursor,
+            skipped_count: fields.skipped_count,
+            reason: fields.reason.to_string(),
         },
     )?;
     stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))
@@ -1782,6 +1761,65 @@ mod tests {
         assert_eq!(response["latest_available_cursor"], 4);
         assert_eq!(response["skipped_count"], 1);
         assert_eq!(response["reason"], "lapped");
+
+        drop(reader);
+        drop(client);
+        server_thread.join().unwrap();
+
+        assert_eq!(pinned_frame_count(&registry, "session"), 0);
+    }
+
+    #[test]
+    fn fd_connection_reports_empty_ordered_video_frame() {
+        let registry = CaptureRegistry::disabled();
+        let session_id = "session".to_string();
+        let source_id = capture_transfer::model::SourceId::new(1);
+        let track_id = capture_transfer::model::TrackId::new(1);
+        let mut video = VideoSlotManager::new_reusable_pool(2);
+        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
+        registry.inner.lock().unwrap().sessions.insert(
+            session_id.clone(),
+            CaptureSession {
+                source_id,
+                track_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                video,
+                capture_task: None,
+                startup_cancel: None,
+            },
+        );
+
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let registry_for_server = registry.clone();
+        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
+
+        writeln!(
+            client,
+            "{}",
+            serde_json::json!({
+                "op": "acquire_next_video_frame",
+                "session_id": session_id,
+                "track_id": track_id.get(),
+                "after_producer_cursor": 1
+            })
+        )
+        .unwrap();
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let response: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(response["op"], "video_frame_unavailable");
+        assert_eq!(response["session_id"], "session");
+        assert_eq!(response["track_id"], 1);
+        assert_eq!(response["after_producer_cursor"], 1);
+        assert_eq!(response["oldest_available_cursor"], 0);
+        assert_eq!(response["latest_available_cursor"], 0);
+        assert_eq!(response["skipped_count"], 0);
+        assert_eq!(response["reason"], "empty");
 
         drop(reader);
         drop(client);

@@ -211,6 +211,8 @@ impl DaemonConsumer {
 
         match self.receive_frame_acquire("latest-frame")? {
             DaemonFrameAcquire::Frame(frame) => Ok(frame),
+            // `video_frame_unavailable` is reserved for ordered acquisition.
+            // Treat it as a daemon protocol error if it appears on the latest path.
             DaemonFrameAcquire::Unavailable(unavailable) => Err(CaptureTransferError::DaemonTransport {
                 operation: "latest-frame",
                 message: format!("video frame unavailable: {}", unavailable.reason),
