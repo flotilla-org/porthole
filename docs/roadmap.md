@@ -75,14 +75,15 @@ What's known missing or rough:
 
 - [x] `docs/superpowers/specs/2026-05-17-platform-ui-apps-bundle-design.md` — platform UI app contract and macOS bundle build architecture.
 - [x] Repo-native bundle builder (`cargo xtask bundle --platform macos`) that assembles `target/<profile>/Porthole.app` from checked-in macOS bundle metadata and Rust binaries.
-- [ ] Swift / SwiftUI macOS helper under `apps/macos/PortholeHelper/`; build output copies `PortholeHelper`, `portholed`, and `porthole` into `Contents/MacOS/`.
-- [ ] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
-- [ ] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
+- [x] Swift / SwiftUI macOS helper under `apps/macos/PortholeHelper/`; build output copies `PortholeHelper`, `portholed`, and `porthole` into `Contents/MacOS/`.
+- [x] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
+- [x] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
 - [ ] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
 - [ ] Notification surface for agent-permission approvals (depends on phase 2). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
 - [ ] `SMAppService.daemon(plistName:)` registration so the user gets a System Settings → General → Login Items entry. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
 - [ ] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
-- [ ] Quit / Restart daemon menu items.
+- [ ] Helper passively re-probes an externally running daemon so the `runningExternal` status recovers if that daemon exits after helper launch.
+- [x] Quit / Restart daemon menu items.
 
 ---
 

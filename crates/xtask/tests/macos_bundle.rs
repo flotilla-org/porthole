@@ -1,6 +1,9 @@
 use std::{fs, path::PathBuf};
 
-use xtask::macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity};
+use xtask::{
+    macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity},
+    macos_helper::{swift_build_args, swift_build_configuration},
+};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -11,14 +14,15 @@ fn workspace_root() -> PathBuf {
 }
 
 #[test]
-fn transitional_info_plist_keeps_daemon_executable() {
+fn helper_info_plist_uses_helper_executable() {
     let plist = fs::read_to_string(workspace_root().join("apps/macos/bundle/Info.plist")).unwrap();
     assert!(plist.contains("<key>CFBundleIdentifier</key>"));
     assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
     assert!(plist.contains("<key>CFBundleExecutable</key>"));
-    assert!(plist.contains("<string>portholed</string>"));
-    assert!(plist.contains("<key>LSBackgroundOnly</key>"));
-    assert!(!plist.contains("PortholeHelper"));
+    assert!(plist.contains("<string>PortholeHelper</string>"));
+    assert!(plist.contains("<key>LSUIElement</key>"));
+    assert!(plist.contains("<true/>"));
+    assert!(!plist.contains("<key>LSBackgroundOnly</key>"));
 }
 
 #[test]
@@ -72,4 +76,46 @@ fn rejects_adhoc_explicit_signing_identity() {
     assert!(validate_sign_identity(Some("-")).is_err());
     assert!(validate_sign_identity(Some("")).is_err());
     assert!(validate_sign_identity(Some("Apple Development: Alice Example (ABCDE12345)")).is_ok());
+}
+
+#[test]
+fn swift_build_configuration_tracks_rust_profile() {
+    assert_eq!(swift_build_configuration(false), "debug");
+    assert_eq!(swift_build_configuration(true), "release");
+}
+
+#[test]
+fn swift_build_uses_package_path_and_scratch_path() {
+    assert_eq!(
+        swift_build_args(false),
+        vec![
+            "build",
+            "--package-path",
+            "apps/macos/PortholeHelper",
+            "--product",
+            "PortholeHelper",
+            "--scratch-path",
+            "target/swift/PortholeHelper",
+            "-c",
+            "debug",
+        ]
+    );
+}
+
+#[test]
+fn swift_build_release_uses_release_configuration() {
+    assert_eq!(
+        swift_build_args(true),
+        vec![
+            "build",
+            "--package-path",
+            "apps/macos/PortholeHelper",
+            "--product",
+            "PortholeHelper",
+            "--scratch-path",
+            "target/swift/PortholeHelper",
+            "-c",
+            "release",
+        ]
+    );
 }

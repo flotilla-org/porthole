@@ -7,6 +7,8 @@ use std::{
 
 use thiserror::Error;
 
+use crate::macos_helper;
+
 pub const INFO_PLIST: &str = "apps/macos/bundle/Info.plist";
 pub const ICON: &str = "apps/macos/bundle/Resources/icon.png";
 
@@ -84,12 +86,15 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
 
     if !options.refresh {
         run_status("cargo", &build_command_args(options.release))?;
+        run_status_owned("swift", &macos_helper::swift_build_args(options.release))?;
     }
 
     let daemon_bin = Path::new("target").join(profile).join("portholed");
     let cli_bin = Path::new("target").join(profile).join("porthole");
+    let helper_bin = macos_helper::built_helper_path(options.release);
     ensure_file(&daemon_bin)?;
     ensure_file(&cli_bin)?;
+    ensure_file(&helper_bin)?;
 
     let app = app_path(profile);
     if app.exists() {
@@ -107,6 +112,7 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
 
     copy_file(Path::new(INFO_PLIST), &contents.join("Info.plist"))?;
     copy_file(Path::new(ICON), &resources_dir.join("icon.png"))?;
+    copy_executable(&helper_bin, &macos_dir.join("PortholeHelper"))?;
     copy_executable(&daemon_bin, &macos_dir.join("portholed"))?;
     copy_executable(&cli_bin, &macos_dir.join("porthole"))?;
 
@@ -117,6 +123,7 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     // before signing the app.
     run_status("codesign", &sign_args)?;
 
+    println!("bundle mode: helper app");
     println!("bundle built: {}", app.display());
     println!("signed with:      {identity}");
     println!(
@@ -199,6 +206,29 @@ fn run_status(command: &str, args: &[&str]) -> Result<(), BundleError> {
     }
 }
 
+fn run_status_owned(command: &str, args: &[String]) -> Result<(), BundleError> {
+    let status = Command::new(command).args(args).status().map_err(|source| BundleError::CommandIo {
+        command: format_command_owned(command, args),
+        source,
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(BundleError::CommandFailed {
+            command: format_command_owned(command, args),
+            status: status.to_string(),
+        })
+    }
+}
+
 fn format_command(command: &str, args: &[&str]) -> String {
     std::iter::once(command).chain(args.iter().copied()).collect::<Vec<_>>().join(" ")
+}
+
+fn format_command_owned(command: &str, args: &[String]) -> String {
+    std::iter::once(command.to_owned())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

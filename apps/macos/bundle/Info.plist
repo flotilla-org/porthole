@@ -7,7 +7,7 @@
     <key>CFBundleName</key>
     <string>Porthole</string>
     <key>CFBundleExecutable</key>
-    <string>portholed</string>
+    <string>PortholeHelper</string>
     <key>CFBundleIconFile</key>
     <string>icon</string>
     <key>CFBundleVersion</key>
@@ -16,7 +16,7 @@
     <string>0.0.0-dev</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>LSBackgroundOnly</key>
+    <key>LSUIElement</key>
     <true/>
     <key>NSAccessibilityUsageDescription</key>
     <string>Porthole needs Accessibility to inject input and inspect window state.</string>

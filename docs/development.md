@@ -16,11 +16,12 @@ open -R target/release/Porthole.app    # reveal in Finder
 porthole onboard
 ```
 
-Run the daemon via the LaunchAgent installed by `porthole install`, not by
-starting `Porthole.app/Contents/MacOS/portholed` from a terminal. For
-permission prompts, macOS tracks the responsible process; a terminal-launched
-daemon can cause Privacy & Security to ask for Ghostty/Terminal permission
-instead of Porthole permission.
+Run Porthole via the LaunchAgent installed by `porthole install`, not by
+starting `Porthole.app/Contents/MacOS/portholed` from a terminal. Helper-mode
+bundles register `PortholeHelper` as the launchd program; the helper starts the
+bundled daemon as its child. For permission prompts, macOS tracks the
+responsible process; a terminal-launched daemon can cause Privacy & Security to
+ask for Ghostty/Terminal permission instead of Porthole permission.
 
 `porthole onboard` walks through ungranted permissions one at a time:
 1. Reads `/info` to see which permissions are ungranted.
@@ -35,9 +36,11 @@ Exit codes:
 
 ## Dev bundle signing
 
-`scripts/dev-bundle.sh` signs `Porthole.app` with a local Apple Development
-identity when one exists. That gives TCC a stable designated requirement across
-rebuilds. If no Apple Development identity is available, the script fails.
+`scripts/dev-bundle.sh` delegates to `cargo xtask bundle --platform macos`,
+which builds the Rust binaries, builds the Swift helper, assembles
+`Porthole.app`, and signs it with a local Apple Development identity when one
+exists. That gives TCC a stable designated requirement across rebuilds. If no
+Apple Development identity is available, the script fails.
 Ad-hoc signing is deliberately unsupported for the dev bundle: its designated
 requirement is cdhash-based and changes on every rebuild, which makes Privacy &
 Security grants look present while runtime checks report missing permissions.
@@ -61,7 +64,9 @@ porthole onboard
 
 ## Rebuild workflow
 
-Cargo replaces `target/<profile>/portholed` but the bundle's copy is stale. Two options:
+Cargo replaces `target/<profile>/portholed` and `target/<profile>/porthole`, and
+SwiftPM replaces the helper build output, but the bundle's copies are stale.
+Two options:
 
 ```sh
 ./scripts/dev-bundle.sh --refresh    # re-copy and re-sign; keeps TCC grants
