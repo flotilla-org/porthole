@@ -17,7 +17,9 @@ static NEXT_SEGMENT_ID: AtomicU64 = AtomicU64::new(1);
 pub struct SharedMemorySegment {
     ptr: NonNull<u8>,
     len: usize,
-    path: PathBuf,
+    path: Option<PathBuf>,
+    writable: bool,
+    unlink_on_drop: bool,
     _file: File,
 }
 
@@ -78,7 +80,43 @@ impl SharedMemorySegment {
         Ok(Self {
             ptr: NonNull::new(raw.cast::<u8>()).expect("mmap returned null without MAP_FAILED"),
             len,
-            path,
+            path: Some(path),
+            writable: true,
+            unlink_on_drop: true,
+            _file: file,
+        })
+    }
+
+    pub fn map_read_only(fd: OwnedFd, len: usize) -> Result<Self> {
+        if len == 0 {
+            return Err(CaptureTransferError::InvalidSharedMemoryLength);
+        }
+        let file = File::from(fd);
+        let backing_len = file.metadata().map_err(|error| CaptureTransferError::SharedMemory {
+            operation: "stat-read-only",
+            message: error.to_string(),
+        })?;
+        if len as u64 > backing_len.len() {
+            return Err(CaptureTransferError::SharedMemory {
+                operation: "mmap-read-only",
+                message: format!("requested map length {len} exceeds backing file length {}", backing_len.len()),
+            });
+        }
+        // SAFETY: mmap is called with a valid fd, non-zero length, and read-only
+        // shared permissions. The mapping is released in Drop.
+        let raw = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, file.as_raw_fd(), 0) };
+        if raw == libc::MAP_FAILED {
+            return Err(CaptureTransferError::SharedMemory {
+                operation: "mmap-read-only",
+                message: std::io::Error::last_os_error().to_string(),
+            });
+        }
+        Ok(Self {
+            ptr: NonNull::new(raw.cast::<u8>()).expect("mmap returned null without MAP_FAILED"),
+            len,
+            path: None,
+            writable: false,
+            unlink_on_drop: false,
             _file: file,
         })
     }
@@ -106,6 +144,7 @@ impl SharedMemorySegment {
 
     #[must_use]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        assert!(self.writable);
         // SAFETY: ptr points to a live mutable mapping of len bytes owned by self.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
@@ -119,6 +158,7 @@ impl SharedMemorySegment {
     }
 
     pub fn with_slice_at_mut<R>(&self, offset: usize, len: usize, f: impl FnOnce(&mut [u8]) -> R) -> R {
+        assert!(self.writable);
         assert!(offset <= self.len);
         assert!(len <= self.len - offset);
         // SAFETY: offset and len were bounds-checked. The slot manager only
@@ -128,6 +168,7 @@ impl SharedMemorySegment {
     }
 
     pub fn write_at(&self, offset: usize, bytes: &[u8]) {
+        assert!(self.writable);
         assert!(offset <= self.len);
         assert!(bytes.len() <= self.len - offset);
         // SAFETY: offset and len were bounds-checked. Callers only write into a
@@ -154,7 +195,11 @@ impl Drop for SharedMemorySegment {
         unsafe {
             libc::munmap(self.ptr.as_ptr().cast(), self.len);
         }
-        let _ = fs::remove_file(&self.path);
+        if self.unlink_on_drop
+            && let Some(path) = &self.path
+        {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -166,7 +211,7 @@ fn unique_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use crate::shm::SharedMemorySegment;
+    use crate::{CaptureTransferError, shm::SharedMemorySegment};
 
     #[test]
     fn mapped_segment_roundtrips_bytes() {
@@ -181,6 +226,15 @@ mod tests {
     #[test]
     fn zero_length_segment_is_rejected() {
         assert!(SharedMemorySegment::new(0).is_err());
+    }
+
+    #[test]
+    fn zero_length_read_only_mapping_is_rejected() {
+        let segment = SharedMemorySegment::new(4).unwrap();
+
+        let error = SharedMemorySegment::map_read_only(segment.try_clone_fd().unwrap(), 0).unwrap_err();
+
+        assert_eq!(error, CaptureTransferError::InvalidSharedMemoryLength);
     }
 
     #[test]
@@ -207,5 +261,29 @@ mod tests {
         segment.with_slice_at_mut(3, 2, |slice| slice.copy_from_slice(&[5, 6]));
 
         assert_eq!(segment.slice_at(0, 6), &[0, 0, 0, 5, 6, 0]);
+    }
+
+    #[test]
+    fn read_only_mapping_clones_contents_from_fd() {
+        let mut segment = SharedMemorySegment::new(4).unwrap();
+        segment.as_mut_slice().copy_from_slice(&[1, 2, 3, 4]);
+        let clone = SharedMemorySegment::map_read_only(segment.try_clone_fd().unwrap(), 4).unwrap();
+
+        assert_eq!(clone.as_slice(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn read_only_mapping_rejects_len_larger_than_backing_file() {
+        let segment = SharedMemorySegment::new(4).unwrap();
+
+        let error = SharedMemorySegment::map_read_only(segment.try_clone_fd().unwrap(), 8).unwrap_err();
+
+        assert!(matches!(
+            error,
+            CaptureTransferError::SharedMemory {
+                operation: "mmap-read-only",
+                ..
+            }
+        ));
     }
 }

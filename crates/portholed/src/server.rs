@@ -76,6 +76,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Method, Request, StatusCode},
     };
+    use capture_transfer::control_page::VideoTrackControlPage;
     use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
     use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
     use tower::ServiceExt;
@@ -197,6 +198,14 @@ mod tests {
         let mut reader = BufReader::new(reader_stream);
 
         request_latest_frame(&mut stream, &created);
+        let control = read_json_line(&mut reader);
+        assert_eq!(control["op"], "register_video_control_page");
+        assert_eq!(control["session_id"], created.session_id);
+        assert_eq!(control["track_id"], created.track_id);
+        let control_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
+        assert_eq!(control_page.validate_header().unwrap().producer_cursor, 1);
+
         let pool = read_json_line(&mut reader);
         assert_eq!(pool["op"], "register_cpu_pool");
         assert_eq!(pool["session_id"], created.session_id);
@@ -209,6 +218,10 @@ mod tests {
         let first = read_json_line(&mut reader);
         assert_eq!(first["op"], "video_frame");
         assert_eq!(first["producer_cursor"], 1);
+        let entry = control_page.shadow_read_entry_for_cursor(1).unwrap();
+        assert_eq!(entry.sequence, first["sequence"].as_u64().unwrap());
+        assert_eq!(entry.pool_id, first["pool_id"].as_u64().unwrap());
+        assert_eq!(entry.payload_len, first["payload_len"].as_u64().unwrap());
         let first_lease = first["lease_id"].as_u64().unwrap();
         assert_ne!(first_lease, 0);
         assert_eq!(first["pool_id"], pool["pool_id"]);
@@ -268,6 +281,11 @@ mod tests {
         let frame = loop {
             let value = read_json_line(reader);
             match value["op"].as_str() {
+                Some("register_video_control_page") => {
+                    let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+                    let page = VideoTrackControlPage::map_read_only(fd, value["map_len"].as_u64().unwrap() as usize).unwrap();
+                    page.validate_header().unwrap();
+                }
                 Some("register_cpu_pool") => {
                     let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
                     let key = (
