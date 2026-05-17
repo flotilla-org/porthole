@@ -18,7 +18,7 @@ Everything happens over HTTP-over-UDS — same protocol Firecracker uses for VM 
 
 ## Install & run
 
-Recommended sequence: build the bundle, install it (daemon + CLI go in one place under launchd's control), then run `porthole onboard` against the installed daemon to grant TCC.
+Recommended sequence: build the bundle, install it (helper + daemon + CLI go in one place under launchd's control), then run `porthole onboard` against the installed daemon to grant TCC.
 
 ```sh
 git clone https://github.com/flotilla-org/porthole
@@ -27,8 +27,9 @@ cargo build --workspace --release
 cargo xtask bundle --platform macos --release
 
 # 1. Install: copies Porthole.app to /Applications, symlinks the CLI into
-#    ~/.local/bin/porthole, registers a LaunchAgent so the daemon auto-starts
-#    at login (and now). Pass --user to install per-user without admin.
+#    ~/.local/bin/porthole, registers a LaunchAgent so the helper auto-starts
+#    at login and supervises the daemon. Pass --user to install per-user
+#    without admin.
 ./target/release/Porthole.app/Contents/MacOS/porthole install
 
 # 2. Onboard: walks through each ungranted permission, fires the OS prompt,
@@ -37,14 +38,13 @@ cargo xtask bundle --platform macos --release
 #    is cached per process, so each grant gets its own restart cycle.
 porthole onboard
 
-# 3. From now on the daemon is ambient — comes up at login, restarts on
-#    crash. Verify:
+# 3. From now on the helper is ambient and keeps the daemon running. Verify:
 porthole info
 ```
 
 Why install before onboard: TCC grants attach to bundle path. Granting in the build location and then moving the bundle to `/Applications` resets the grants, and onboarding the build location twice does no good. Install first → onboard against the final location → done.
 
-`Porthole.app` holds both the daemon and the CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers both.
+`Porthole.app` holds the native helper, daemon, and CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers all three. The helper owns native startup/status UI and daemon supervision; the daemon still owns HTTP-over-UDS, desktop actions, and permission truth.
 
 To reverse: `porthole uninstall` removes the LaunchAgent, the symlink, and the bundle. TCC grants persist; clear with `tccutil reset Accessibility org.flotilla.porthole.dev` (and `ScreenCapture`) if needed.
 
@@ -58,7 +58,7 @@ If you just want the CLI to poke at a daemon someone else is running:
 cargo install --git https://github.com/flotilla-org/porthole porthole --locked
 ```
 
-This lands `porthole` in `~/.cargo/bin/`. **The daemon (`portholed`) must still be launched from the `.app` bundle** — TCC keys off bundle identity, so a daemon started from `~/.cargo/bin/portholed` would have no stable identity for grants and prompts would re-fire on every cargo install.
+This lands `porthole` in `~/.cargo/bin/`. **The daemon (`portholed`) must still be launched from the `.app` bundle, normally by `PortholeHelper`** — TCC keys off bundle identity, so a daemon started from `~/.cargo/bin/portholed` would have no stable identity for grants and prompts would re-fire on every cargo install.
 
 ### Permissions (macOS)
 

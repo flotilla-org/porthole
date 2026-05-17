@@ -171,10 +171,10 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
     }
 
     if !opts.skip_launch_agent {
-        let daemon_path = dst_bundle.join("Contents/MacOS/portholed");
+        let startup_program = startup_program_for_bundle(&dst_bundle);
         let log_dir = home()?.join("Library/Logs/porthole");
         fs::create_dir_all(&log_dir).map_err(|e| io_err(&log_dir, e))?;
-        let plist_xml = render_launch_agent_plist(&daemon_path, &log_dir.join("portholed.log"));
+        let plist_xml = render_launch_agent_plist(&startup_program, &log_dir.join("portholed.log"));
         if let Some(parent) = plist_path.parent() {
             fs::create_dir_all(parent).map_err(|e| io_err(parent, e))?;
         }
@@ -288,6 +288,16 @@ fn locate_bundle_from(exe: &Path) -> Option<PathBuf> {
 
 fn path_contains(path_env: &str, dir: &Path) -> bool {
     path_env.split(':').any(|p| Path::new(p) == dir)
+}
+
+fn startup_program_for_bundle(bundle: &Path) -> PathBuf {
+    let macos = bundle.join("Contents/MacOS");
+    let helper = macos.join("PortholeHelper");
+    if helper.is_file() {
+        helper
+    } else {
+        macos.join("portholed")
+    }
 }
 
 fn remove_path(p: &Path) -> Result<(), InstallError> {
@@ -462,6 +472,29 @@ mod tests {
         assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
         assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
         assert!(plist.contains("/Users/x/Library/Logs/porthole/portholed.log"));
+    }
+
+    #[test]
+    fn startup_program_prefers_helper_when_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("Porthole.app");
+        let macos = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        fs::write(macos.join("PortholeHelper"), "").unwrap();
+        fs::write(macos.join("portholed"), "").unwrap();
+
+        assert_eq!(startup_program_for_bundle(&bundle), macos.join("PortholeHelper"));
+    }
+
+    #[test]
+    fn startup_program_falls_back_to_daemon_for_transitional_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("Porthole.app");
+        let macos = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos).unwrap();
+        fs::write(macos.join("portholed"), "").unwrap();
+
+        assert_eq!(startup_program_for_bundle(&bundle), macos.join("portholed"));
     }
 
     #[test]
