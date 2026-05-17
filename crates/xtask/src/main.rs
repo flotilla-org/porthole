@@ -14,14 +14,15 @@ enum Command {
 }
 
 #[derive(Debug, Parser)]
+#[command(about = "Build a platform app bundle")]
 struct BundleArgs {
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "Platform bundle to build")]
     platform: Platform,
-    #[arg(long)]
+    #[arg(long, help = "Build release profile instead of debug")]
     release: bool,
-    #[arg(long)]
+    #[arg(long, help = "Skip cargo build and rebuild/sign the app bundle from existing target binaries")]
     refresh: bool,
-    #[arg(long)]
+    #[arg(long, help = "Apple Development signing identity to use")]
     sign: Option<String>,
 }
 
