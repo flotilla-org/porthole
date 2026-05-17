@@ -2,7 +2,7 @@
 
 Living document. Each phase lists concrete deliverables as a checklist; PRs that land items tick the boxes. Phase order reflects dependencies — phase N+1 generally needs the design surface set by phase N — but phase 4 (product slices) is orthogonal to the platform/UX track and can interleave freely.
 
-Last revised: 2026-04-26.
+Last revised: 2026-05-17.
 
 ---
 
@@ -10,21 +10,19 @@ Last revised: 2026-04-26.
 
 What has shipped on `main`:
 
-- macOS adapter for launch (process + artifact), input (key/text/click/scroll), wait (Stable / Dirty / Exists / Gone / TitleMatches), screenshot, focus, close, attention, displays, search, attach, replace, snapshot_geometry.
+- macOS adapter for launch (process + artifact), input (key/text/click/scroll), wait (Stable / Dirty / Exists / Gone / TitleMatches), screenshot, focus, close, attention, displays, search, attach, replace, placement, snapshot_geometry.
 - HTTP-over-UDS daemon (`portholed`) and CLI (`porthole`) talking via Unix Domain Socket.
 - System-permissions slice: `porthole onboard` flow, `/info` permission status, `/system-permissions/request` route, capability-aware error mapping (`SystemPermissionNeeded`, `SystemPermissionRequestFailed`).
-- Dev bundle script (`scripts/dev-bundle.sh`) producing an Apple Development
-  signed `.app` for stable TCC identity across rebuilds; ad-hoc signing is a
-  hard failure because it invalidates TCC grants on rebuild.
+- Install/uninstall flow: `porthole install` copies the bundle, symlinks the CLI, and registers a per-user LaunchAgent; `porthole uninstall` reverses it.
+- Dev bundle script (`scripts/dev-bundle.sh`) producing an Apple Development signed `.app` with `portholed` and `porthole` in one bundle for stable TCC identity across rebuilds; ad-hoc signing is a hard failure because it invalidates TCC grants on rebuild.
+- macOS recording command (`porthole record surface ... --duration ... --output ...`) built on ordered capture-transfer cursors and AVFoundation `.mov` writing.
 - CI: `cargo build --workspace --locked` / `cargo test --workspace --locked` / `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo +nightly-2026-03-12 fmt --check`.
 
 What's known missing or rough:
 
-- No `POST /surfaces/{id}/place` route — the adapter method exists, but the only HTTP path to in-place resize goes through `/replace`, which destroys the surface.
-- No agent-facing recipe / walkthrough doc for end-to-end terminal automation.
-- No installable shipping path — users build from source and run the dev bundle manually. No `cargo install`-mediated install, no LaunchAgent, no auto-start.
-- CLI binary lives outside the bundle; TCC identity is daemon-only.
 - No native UI — onboard flow is CLI-only, no menu bar presence, no notification surface for future agent-permission approvals.
+- No helper-backed agent-permissions enforcement yet - the design is pinned, but protected routes do not yet prompt for per-agent approval.
+- Recording live-smoke remains permission-blocked for freshly built daemon identities unless the installed bundle has Accessibility and Screen Recording grants.
 
 ---
 
@@ -61,7 +59,7 @@ What's known missing or rough:
 
 **Goal:** Pin down the API and UX for agent-X-asks-permission-to-drive-window-Y *before* the helper app is built, so the helper isn't rewritten when the model crystallises. No code in this phase.
 
-- [ ] `docs/superpowers/specs/YYYY-MM-DD-porthole-agent-permissions-design.md` covering:
+- [x] `docs/superpowers/specs/2026-05-17-porthole-agent-permissions-design.md` covering:
     - Identity: how an agent identifies itself (token? tag? bundle path?).
     - Scope: per-surface, per-app, per-action-class, time-bounded?
     - Approval flow: who prompts, who decides, where decisions are persisted.
@@ -92,7 +90,7 @@ What's known missing or rough:
 
 Candidates, roughly ordered by leverage:
 
-- [ ] **Recording on macOS** — AVFoundation or ScreenCaptureKit. Biggest user-visible feature gap.
+- [x] **Recording on macOS** — AVFoundation or ScreenCaptureKit. Biggest user-visible feature gap.
 - [ ] **Multi-display placement verbs** — extends the phase-0 `/place` route (which takes explicit geometry) with anchor-based placement (e.g. `anchor: focused_display`, `anchor: by_id`).
 - [ ] **Browser tabs via CDP** — Chrome / Edge tab coverage that AX can't reach. Expanded tab verb set (input, wait, replace) and content-area screenshot crop.
 - [ ] **`force_place: true` launch option** — placement on preexisting surfaces.
