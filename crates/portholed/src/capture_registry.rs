@@ -679,7 +679,8 @@ impl CaptureRegistry {
             .map_err(CaptureRegistryError::from_capture)?
         {
             OrderedVideoAcquire::Frame(frame) => {
-                latest_reply_from_frame(request, &mut session.video, consumer_id, include_control_page, frame).map(OrderedFrameReply::Frame)
+                latest_reply_from_frame(request, &mut session.video, consumer_id, include_control_page, frame)
+                    .map(|reply| OrderedFrameReply::Frame(Box::new(reply)))
             }
             OrderedVideoAcquire::Lapped {
                 after_producer_cursor,
@@ -773,7 +774,7 @@ struct LatestFrameReply {
 }
 
 enum OrderedFrameReply {
-    Frame(LatestFrameReply),
+    Frame(Box<LatestFrameReply>),
     Unavailable {
         session_id: String,
         track_id: u64,
@@ -1071,7 +1072,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
                     };
                     match registry.next_frame_for_consumer(&request, consumer_id, include_control_page, after_producer_cursor)? {
                         OrderedFrameReply::Frame(reply) => {
-                            send_frame_reply(&mut stream, &request.session_id, include_control_page, reply, &mut connection)?;
+                            send_frame_reply(&mut stream, &request.session_id, include_control_page, *reply, &mut connection)?;
                         }
                         OrderedFrameReply::Unavailable {
                             session_id,
