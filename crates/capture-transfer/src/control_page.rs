@@ -104,6 +104,7 @@ pub struct VideoConsumerCursorEntry {
     pub release_cursor: u64,
     pub skipped_count: u64,
     pub acquired_count: u64,
+    pub reserved0: u64,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -249,6 +250,8 @@ impl VideoTrackControlPage {
         let initial_header: VideoTrackControlHeader = page.read_at(0);
         let capacity = validate_control_header(&initial_header, map_len)?;
         page.layout = VideoTrackControlLayout::for_capacity(capacity);
+        // Re-read after choosing the final layout so a racing or corrupt header
+        // is caught against the mapping shape callers will use.
         page.validate_header()?;
         Ok(page)
     }
@@ -474,6 +477,22 @@ impl VideoTrackControlPage {
         self.consumer_cursor_offset(index) + std::mem::offset_of!(VideoConsumerCursorEntry, release_cursor)
     }
 
+    fn consumer_last_acquired_cursor_offset(&self, index: usize) -> usize {
+        self.consumer_cursor_offset(index) + std::mem::offset_of!(VideoConsumerCursorEntry, last_acquired_cursor)
+    }
+
+    fn consumer_last_acquired_sequence_offset(&self, index: usize) -> usize {
+        self.consumer_cursor_offset(index) + std::mem::offset_of!(VideoConsumerCursorEntry, last_acquired_sequence)
+    }
+
+    fn consumer_skipped_count_offset(&self, index: usize) -> usize {
+        self.consumer_cursor_offset(index) + std::mem::offset_of!(VideoConsumerCursorEntry, skipped_count)
+    }
+
+    fn consumer_acquired_count_offset(&self, index: usize) -> usize {
+        self.consumer_cursor_offset(index) + std::mem::offset_of!(VideoConsumerCursorEntry, acquired_count)
+    }
+
     fn load_u64_atomic(&self, offset: usize, ordering: Ordering) -> u64 {
         assert_eq!(offset % std::mem::align_of::<AtomicU64>(), 0);
         let bytes = self.storage.slice_at(offset, std::mem::size_of::<AtomicU64>());
@@ -656,15 +675,24 @@ impl VideoTrackControlPage {
         last_acquired_sequence: u64,
         skipped_count: u64,
         acquired_count: u64,
-    ) {
-        let mut entry = self.consumer_cursor_entry(index);
-        debug_assert_eq!(entry.consumer_id, consumer_id);
-        entry.consumer_id = consumer_id;
-        entry.last_acquired_cursor = last_acquired_cursor;
-        entry.last_acquired_sequence = last_acquired_sequence;
-        entry.skipped_count = skipped_count;
-        entry.acquired_count = acquired_count;
-        self.write_at(self.consumer_cursor_offset(index), entry);
+    ) -> CaptureResult<()> {
+        let entry = self.consumer_cursor_entry(index);
+        if entry.consumer_id != consumer_id {
+            return Err(invalid_control_page("consumer cursor slot does not match consumer id"));
+        }
+        self.store_u64_atomic(
+            self.consumer_last_acquired_cursor_offset(index),
+            last_acquired_cursor,
+            Ordering::Release,
+        );
+        self.store_u64_atomic(
+            self.consumer_last_acquired_sequence_offset(index),
+            last_acquired_sequence,
+            Ordering::Release,
+        );
+        self.store_u64_atomic(self.consumer_skipped_count_offset(index), skipped_count, Ordering::Release);
+        self.store_u64_atomic(self.consumer_acquired_count_offset(index), acquired_count, Ordering::Release);
+        Ok(())
     }
 
     #[must_use]
@@ -980,6 +1008,32 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(entry.consumer_id, 8);
         assert_eq!(entry.slot_generation, 2);
+    }
+
+    #[test]
+    fn consumer_acquire_update_rejects_slot_consumer_mismatch() {
+        let page = VideoTrackControlPage::new(2);
+        let slot = page.register_consumer_cursor(7).unwrap();
+
+        let error = page.store_consumer_acquire_cursor(slot, 8, 1, 1, 0, 1).unwrap_err();
+
+        assert!(error.to_string().contains("consumer cursor slot does not match consumer id"));
+    }
+
+    #[test]
+    fn consumer_acquire_update_preserves_release_cursor() {
+        let page = VideoTrackControlPage::new(2);
+        let slot = page.register_consumer_cursor(7).unwrap();
+        page.store_consumer_release_cursor(slot, 9);
+
+        page.store_consumer_acquire_cursor(slot, 7, 10, 20, 1, 2).unwrap();
+
+        let entry = page.consumer_cursor_entry(slot);
+        assert_eq!(entry.last_acquired_cursor, 10);
+        assert_eq!(entry.last_acquired_sequence, 20);
+        assert_eq!(entry.skipped_count, 1);
+        assert_eq!(entry.acquired_count, 2);
+        assert_eq!(entry.release_cursor, 9);
     }
 
     #[test]

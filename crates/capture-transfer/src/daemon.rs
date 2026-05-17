@@ -103,7 +103,7 @@ pub struct DaemonConsumer {
     // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
     pools: BTreeMap<PoolKey, Rc<RegisteredPoolMapping>>,
     control_pages: BTreeMap<u64, VideoTrackControlPage>,
-    consumer_slots: BTreeMap<u64, u64>,
+    consumer_slots: BTreeMap<u64, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,6 +227,10 @@ impl DaemonConsumer {
                             ),
                         });
                     }
+                    let consumer_slot = usize::try_from(consumer_slot).map_err(|_| CaptureTransferError::DaemonTransport {
+                        operation: "mmap-control-page",
+                        message: "consumer slot does not fit usize".to_string(),
+                    })?;
                     self.control_pages.insert(track_id, page);
                     self.consumer_slots.insert(track_id, consumer_slot);
                 }
@@ -328,7 +332,7 @@ impl DaemonConsumer {
         if let Some(consumer_slot) = self.consumer_slots.get(&frame.track_id).copied()
             && let Some(page) = self.control_pages.get(&frame.track_id)
         {
-            page.store_consumer_release_cursor(consumer_slot as usize, frame.producer_cursor);
+            page.store_consumer_release_cursor(consumer_slot, frame.producer_cursor);
         }
         let lease_id = frame.lease_id;
         drop(frame);

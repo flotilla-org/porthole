@@ -151,12 +151,14 @@ struct StoredFrame {
 #[derive(Debug)]
 struct TrackRingControl {
     page: VideoTrackControlPage,
+    consumer_slots: BTreeMap<ConsumerId, usize>,
 }
 
 impl TrackRingControl {
     fn new(capacity: usize) -> Self {
         Self {
             page: VideoTrackControlPage::new(capacity),
+            consumer_slots: BTreeMap::new(),
         }
     }
 
@@ -202,10 +204,15 @@ impl TrackRingControl {
     }
 
     fn register_consumer(&mut self, consumer_id: ConsumerId) -> Result<usize> {
-        self.page.register_consumer_cursor(consumer_id.get())
+        if let Some(slot) = self.consumer_slots.get(&consumer_id).copied() {
+            return Ok(slot);
+        }
+        let slot = self.page.register_consumer_cursor(consumer_id.get())?;
+        self.consumer_slots.insert(consumer_id, slot);
+        Ok(slot)
     }
 
-    fn store_consumer_acquire(&mut self, consumer_id: ConsumerId, slot: usize, snapshot: &ConsumerRingCursorSnapshot) {
+    fn store_consumer_acquire(&mut self, consumer_id: ConsumerId, slot: usize, snapshot: &ConsumerRingCursorSnapshot) -> Result<()> {
         self.page.store_consumer_acquire_cursor(
             slot,
             consumer_id.get(),
@@ -213,16 +220,17 @@ impl TrackRingControl {
             snapshot.last_acquired_sequence.unwrap_or(0),
             snapshot.skipped_count,
             snapshot.acquired_count,
-        );
+        )
     }
 
     fn store_consumer_release(&mut self, consumer_id: ConsumerId, release_cursor: u64) -> Result<()> {
-        let slot = self.page.register_consumer_cursor(consumer_id.get())?;
+        let slot = self.register_consumer(consumer_id)?;
         self.page.store_consumer_release_cursor(slot, release_cursor);
         Ok(())
     }
 
     fn unregister_consumer(&mut self, consumer_id: ConsumerId) {
+        self.consumer_slots.remove(&consumer_id);
         self.page.unregister_consumer_cursor(consumer_id.get());
     }
 }
@@ -540,7 +548,14 @@ impl VideoSlotManager {
         cursor.acquire(&entry);
         let cursor_snapshot = cursor.snapshot();
         if let Some(control) = self.controls_by_track.get_mut(&track_id) {
-            control.store_consumer_acquire(consumer_id, consumer_slot, &cursor_snapshot);
+            if let Err(error) = control.store_consumer_acquire(consumer_id, consumer_slot, &cursor_snapshot) {
+                if let Some(frames) = self.frames_by_track.get_mut(&track_id)
+                    && let Some(stored) = frames.iter_mut().find(|stored| stored.key == frame_key)
+                {
+                    stored.pinned_by.remove(&consumer_id);
+                }
+                return Err(error);
+            }
         }
         let mut desc = desc;
         desc.evicted_count = self.evicted_by_track.get(&track_id).copied().unwrap_or(0);
