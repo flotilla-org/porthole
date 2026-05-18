@@ -95,7 +95,7 @@ What's known missing or rough:
 - [x] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
 - [x] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
 - [ ] Notification surface for agent-permission approvals (depends on the phase 2.5 enforcement endpoints). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
-- [ ] `SMAppService.daemon(plistName:)` registration so the user gets a System Settings → General → Login Items entry. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
+- [x] `SMAppService.mainApp` registration so the user gets a System Settings → General → Login Items entry for the per-user helper app. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
 - [x] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
 - [x] Helper passively re-probes an externally running daemon so the `runningExternal` status recovers if that daemon exits after helper launch.
 - [x] Quit / Restart daemon menu items.

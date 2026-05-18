@@ -117,17 +117,25 @@ final class LaunchAgentMigratorTests: XCTestCase {
                 events.append("migrate")
                 return .notNeeded
             },
+            registerLoginItem: {
+                events.append("registerLoginItem")
+                return .alreadyEnabled
+            },
             startSupervisor: {
                 events.append("start")
             },
             reportMigration: { result in
-                events.append("report")
+                events.append("reportMigration")
                 XCTAssertEqual(result, .notNeeded)
+            },
+            reportLoginItem: { result in
+                events.append("reportLoginItem")
+                XCTAssertEqual(result, .alreadyEnabled)
             }
         )
 
         startup.start()
 
-        XCTAssertEqual(events, ["migrate", "report", "start"])
+        XCTAssertEqual(events, ["migrate", "reportMigration", "registerLoginItem", "reportLoginItem", "start"])
     }
 }

@@ -4,6 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
+    private var loginItemMenuItem: NSMenuItem?
     private var supervisor: DaemonSupervisor?
     private var onboardingWindowController: OnboardingWindowController?
 
@@ -14,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paths = BundlePaths.current()
         HelperStartup(
             migrateLaunchAgent: { LaunchAgentMigrator().migrate() },
+            registerLoginItem: { LoginItemRegistrar().registerIfNeeded() },
             startSupervisor: { [weak self] in
                 guard let self else { return }
                 let nextSupervisor = DaemonSupervisor(daemonURL: paths.daemonURL, cliURL: paths.cliURL) { [weak self] state in
@@ -22,7 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 supervisor = nextSupervisor
                 nextSupervisor.start()
             },
-            reportMigration: { [weak self] result in self?.reportLaunchAgentMigration(result) }
+            reportMigration: { [weak self] result in self?.reportLaunchAgentMigration(result) },
+            reportLoginItem: { [weak self] result in self?.reportLoginItemRegistration(result) }
         ).start()
     }
 
@@ -42,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         status.isEnabled = false
         statusMenuItem = status
         menu.addItem(status)
+        let loginItem = NSMenuItem(title: "Login Item: checking", action: nil, keyEquivalent: "")
+        loginItem.isEnabled = false
+        loginItemMenuItem = loginItem
+        menu.addItem(loginItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Open Onboarding...", action: #selector(openOnboarding), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Restart Daemon", action: #selector(restartDaemon), keyEquivalent: "r"))
@@ -72,6 +79,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .failed(let url, let reason):
             NSLog("failed to retire legacy Porthole LaunchAgent at \(url.path(percentEncoded: false)): \(reason)")
             statusMenuItem?.title = "LaunchAgent migration failed; daemon starting"
+        }
+    }
+
+    private func reportLoginItemRegistration(_ result: LoginItemRegistrar.RegistrationResult) {
+        switch result {
+        case .alreadyEnabled:
+            loginItemMenuItem?.title = "Login Item: enabled"
+            NSLog("Porthole login item already enabled")
+        case .registered:
+            loginItemMenuItem?.title = "Login Item: registered"
+            NSLog("registered Porthole login item")
+        case .requiresApproval:
+            loginItemMenuItem?.title = "Login Item: needs approval"
+            NSLog("Porthole login item requires approval in System Settings")
+        case .failed(let reason):
+            loginItemMenuItem?.title = "Login Item: registration failed"
+            NSLog("failed to register Porthole login item: \(reason)")
         }
     }
 
