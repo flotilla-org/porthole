@@ -1,10 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
+mod common;
+
+use common::approve_permission_needed;
 use porthole_core::{
     in_memory::InMemoryAdapter,
     search::{Candidate, encode_ref},
     surface::{SurfaceId, SurfaceInfo},
 };
+use porthole_protocol::agent_permissions::{AgentPermissionDuration, CreateAgentIdentityRequest, CreateAgentIdentityResponse};
 use portholed::server::serve;
 
 #[tokio::test]
@@ -42,15 +46,35 @@ async fn search_track_roundtrip_over_uds() {
     assert!(socket.exists(), "socket did not appear");
 
     let client = porthole::client::DaemonClient::new(&socket);
+    let identity: CreateAgentIdentityResponse = client
+        .post_json(
+            "/agent-identities",
+            &CreateAgentIdentityRequest {
+                display_name: "e2e-agent".into(),
+                metadata: None,
+            },
+        )
+        .await
+        .expect("create agent identity");
+    let agent_client = porthole::client::DaemonClient::new(&socket).with_bearer_token(identity.token);
 
-    let search: porthole_protocol::search::SearchResponse = client
+    let first_search: Result<porthole_protocol::search::SearchResponse, porthole::client::ClientError> = agent_client
+        .post_json("/surfaces/search", &serde_json::json!({ "app_name": "ScriptedApp" }))
+        .await;
+    approve_permission_needed(
+        &client,
+        first_search.expect_err("search should need permission"),
+        AgentPermissionDuration::Persistent,
+    )
+    .await;
+    let search: porthole_protocol::search::SearchResponse = agent_client
         .post_json("/surfaces/search", &serde_json::json!({ "app_name": "ScriptedApp" }))
         .await
-        .expect("search");
+        .expect("search after approval");
     assert_eq!(search.candidates.len(), 1);
     assert_eq!(search.candidates[0].ref_, r);
 
-    let track: porthole_protocol::search::TrackResponse = client
+    let track: porthole_protocol::search::TrackResponse = agent_client
         .post_json("/surfaces/track", &serde_json::json!({ "ref": r }))
         .await
         .expect("track");

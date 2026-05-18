@@ -136,7 +136,7 @@ opens its own tool window or artifact.
 The first action classes should be coarse enough for users to understand:
 
 - `observe`: screenshot, content-rect, snapshot-geometry, wait, recording read
-  access, and capture-session creation
+  access, display metadata, and capture-session creation
 - `drive`: focus, key, text, click, scroll, pointer movement
 - `manage`: place, replace, close, attention, launch, attach, track
 - `record`: long-running video recording and capture-transfer consumption
@@ -145,7 +145,8 @@ The first action classes should be coarse enough for users to understand:
 screen capture is more sensitive than one screenshot or a stability wait.
 
 The daemon maps each route to one or more action classes. For example,
-`POST /surfaces/{id}/text` requires `drive`, while
+`POST /surfaces/{id}/text` requires `drive`, `POST /launches` requires
+`manage` on the `launched_by_agent` target, and
 `POST /capture-sessions/surfaces/{id}` requires `observe` and `record`.
 
 ### Duration
@@ -317,7 +318,8 @@ Add these wire error codes:
 - `agent_operator_required` (403): valid caller, but the endpoint requires
   helper/operator authority
 - `agent_permission_needed` (403): no matching grant; details include
-  `request_id`
+  `request_id`, `target`, requested `actions`, and `surface_id` when the
+  target is a concrete surface
 - `agent_permission_denied` (403): matching deny or explicit user denial
 - `agent_permission_request_expired` (410): caller retried against an expired
   request
@@ -331,6 +333,7 @@ Example:
   "details": {
     "request_id": "apr_5d1e",
     "agent_id": "agent_a83df4c91f0a",
+    "target": { "type": "surface", "surface_id": "surf_123" },
     "surface_id": "surf_123",
     "actions": ["drive"],
     "recommended_duration": { "type": "until_surface_gone" }

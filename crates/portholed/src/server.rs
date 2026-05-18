@@ -139,38 +139,70 @@ mod tests {
 
     use super::*;
 
-    async fn router_with_tracked_surface() -> (Router, String) {
+    async fn router_with_tracked_surface() -> (Router, String, String) {
         let adapter = Arc::new(InMemoryAdapter::new());
         let state = AppState::new(adapter);
         let info = SurfaceInfo::window(porthole_core::SurfaceId::new(), 1);
-        let id = info.id.to_string();
+        let id = info.id.clone();
         state.handles.insert(info).await;
-        (build_router(state), id)
+        let token = authorize_surface(
+            &state,
+            &id,
+            vec![ActionClass::Drive, ActionClass::Manage, ActionClass::Observe, ActionClass::Record],
+        )
+        .await;
+        (build_router(state), id.to_string(), token)
     }
 
     async fn router_with_authorized_tracked_surface() -> (Router, String, String) {
         let adapter = Arc::new(InMemoryAdapter::new());
-        let store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let identity = store.create_identity("agent", None, 1_000).await.unwrap();
-        let state = AppState::new_with_agent_policy(adapter, store.clone(), EventBus::new());
+        let state = AppState::new(adapter);
         let info = SurfaceInfo::window(porthole_core::SurfaceId::new(), 1);
         let id = info.id.clone();
         state.handles.insert(info).await;
-        let request = store
+        let token = authorize_surface(
+            &state,
+            &id,
+            vec![ActionClass::Drive, ActionClass::Manage, ActionClass::Observe, ActionClass::Record],
+        )
+        .await;
+        (build_router(state), id.to_string(), token)
+    }
+
+    async fn authorize_surface(state: &AppState, id: &porthole_core::SurfaceId, actions: Vec<ActionClass>) -> String {
+        let identity = state.agent_store.create_identity("agent", None, 1_000).await.unwrap();
+        let request = state
+            .agent_store
             .create_pending_request(
                 identity.agent_id.clone(),
                 TargetSelector::Surface { surface_id: id.clone() },
-                vec![ActionClass::Drive],
+                actions,
                 None,
                 1_001,
             )
             .await
             .unwrap();
-        store
+        state
+            .agent_store
             .approve_request(&request.request_id, DurationSpec::UntilSurfaceGone, Vec::new(), 1_002)
             .await
             .unwrap();
-        (build_router(state), id.to_string(), identity.token)
+        identity.token
+    }
+
+    async fn authorize_target(state: &AppState, target: TargetSelector, actions: Vec<ActionClass>) -> String {
+        let identity = state.agent_store.create_identity("agent", None, 1_000).await.unwrap();
+        let request = state
+            .agent_store
+            .create_pending_request(identity.agent_id.clone(), target, actions, None, 1_001)
+            .await
+            .unwrap();
+        state
+            .agent_store
+            .approve_request(&request.request_id, DurationSpec::Persistent, Vec::new(), 1_002)
+            .await
+            .unwrap();
+        identity.token
     }
 
     async fn post(router: Router, uri: &str, body: serde_json::Value) -> axum::http::Response<Body> {
@@ -190,6 +222,16 @@ mod tests {
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
             .body(Body::from(body.to_string()))
+            .unwrap();
+        router.oneshot(req).await.unwrap()
+    }
+
+    async fn get_with_token(router: Router, uri: &str, token: &str) -> axum::http::Response<Body> {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
             .unwrap();
         router.oneshot(req).await.unwrap()
     }
@@ -438,10 +480,18 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         let state = AppState::new_with_capture_socket(adapter, temp.path().join("capture-transfer.sock")).unwrap();
         let info = SurfaceInfo::window(porthole_core::SurfaceId::from("surf_test"), 1);
+        let surface_id = info.id.clone();
         state.handles.insert(info).await;
+        let token = authorize_surface(&state, &surface_id, vec![ActionClass::Observe, ActionClass::Record]).await;
         let router = build_router(state);
 
-        let res = post(router.clone(), "/capture-sessions/surfaces/surf_test", serde_json::json!({})).await;
+        let res = post_with_token(
+            router.clone(),
+            "/capture-sessions/surfaces/surf_test",
+            &token,
+            serde_json::json!({}),
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
@@ -489,29 +539,31 @@ mod tests {
     #[tokio::test]
     async fn post_launch_then_screenshot_roundtrips() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        let router = build_router(AppState::new(adapter));
+        let state = AppState::new(adapter);
+        let launch_token = authorize_target(&state, TargetSelector::LaunchedByAgent, vec![ActionClass::Manage]).await;
+        let router = build_router(state.clone());
         let launch_body = serde_json::json!({
             "kind": { "type": "process", "app": "test", "args": [] },
             "require_confidence": "strong"
         });
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri("/launches")
-            .header("content-type", "application/json")
-            .body(Body::from(launch_body.to_string()))
-            .unwrap();
-        let res = router.clone().oneshot(req).await.unwrap();
+        let res = post_with_token(router.clone(), "/launches", &launch_token, launch_body).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let launch: porthole_protocol::launches::LaunchResponse = serde_json::from_slice(&body).unwrap();
+        let screenshot_token = authorize_surface(
+            &state,
+            &porthole_core::SurfaceId::from(launch.surface_id.as_str()),
+            vec![ActionClass::Observe],
+        )
+        .await;
 
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri(format!("/surfaces/{}/screenshot", launch.surface_id))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap();
-        let res = router.oneshot(req).await.unwrap();
+        let res = post_with_token(
+            router,
+            &format!("/surfaces/{}/screenshot", launch.surface_id),
+            &screenshot_token,
+            serde_json::json!({}),
+        )
+        .await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 4 * 1024 * 1024).await.unwrap();
         let shot: porthole_protocol::screenshot::ScreenshotResponse = serde_json::from_slice(&body).unwrap();
@@ -559,33 +611,31 @@ mod tests {
 
     #[tokio::test]
     async fn post_close_marks_surface_dead() {
-        let (router, id) = router_with_tracked_surface().await;
-        let res = post(router.clone(), &format!("/surfaces/{id}/close"), serde_json::json!({})).await;
+        let (router, id, token) = router_with_tracked_surface().await;
+        let res = post_with_token(router.clone(), &format!("/surfaces/{id}/close"), &token, serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
         // Subsequent operations should 410 (GONE)
-        let res = post(router, &format!("/surfaces/{id}/focus"), serde_json::json!({})).await;
+        let res = post_with_token(router, &format!("/surfaces/{id}/focus"), &token, serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::GONE);
     }
 
     #[tokio::test]
     async fn get_attention_returns_default() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        let router = build_router(AppState::new(adapter));
-        let req = Request::builder()
-            .method(Method::GET)
-            .uri("/attention")
-            .body(Body::empty())
-            .unwrap();
-        let res = router.oneshot(req).await.unwrap();
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = get_with_token(router, "/attention", &token).await;
         assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn get_displays_returns_list() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        let router = build_router(AppState::new(adapter));
-        let req = Request::builder().method(Method::GET).uri("/displays").body(Body::empty()).unwrap();
-        let res = router.oneshot(req).await.unwrap();
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Observe]).await;
+        let router = build_router(state);
+        let res = get_with_token(router, "/displays", &token).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let resp: porthole_protocol::attention::DisplaysResponse = serde_json::from_slice(&body).unwrap();
@@ -604,8 +654,10 @@ mod tests {
             cg_window_id: 7,
         };
         adapter.set_next_search_result(Ok(vec![candidate])).await;
-        let router = build_router(AppState::new(adapter));
-        let res = post(router, "/surfaces/search", serde_json::json!({})).await;
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(router, "/surfaces/search", &token, serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let resp: porthole_protocol::search::SearchResponse = serde_json::from_slice(&body).unwrap();
@@ -616,8 +668,10 @@ mod tests {
     async fn post_search_with_empty_adapter_result_returns_empty_candidates_list() {
         let adapter = Arc::new(InMemoryAdapter::new());
         adapter.set_next_search_result(Ok(vec![])).await;
-        let router = build_router(AppState::new(adapter));
-        let res = post(router, "/surfaces/search", serde_json::json!({})).await;
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(router, "/surfaces/search", &token, serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let resp: porthole_protocol::search::SearchResponse = serde_json::from_slice(&body).unwrap();
@@ -632,7 +686,9 @@ mod tests {
         };
 
         let adapter = Arc::new(InMemoryAdapter::new());
-        let router = build_router(AppState::new(adapter.clone()));
+        let state = AppState::new(adapter.clone());
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
 
         let r = encode_ref(1, 7);
         let body = serde_json::json!({ "ref": r });
@@ -642,7 +698,7 @@ mod tests {
         info.cg_window_id = Some(7);
         info.app_name = Some("X".into());
         adapter.set_next_window_alive_result(Ok(Some(info))).await;
-        let res = post(router.clone(), "/surfaces/track", body.clone()).await;
+        let res = post_with_token(router.clone(), "/surfaces/track", &token, body.clone()).await;
         assert_eq!(res.status(), StatusCode::OK);
         let first_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let first: porthole_protocol::search::TrackResponse = serde_json::from_slice(&first_body).unwrap();
@@ -654,7 +710,7 @@ mod tests {
         info2.cg_window_id = Some(7);
         info2.app_name = Some("X".into());
         adapter.set_next_window_alive_result(Ok(Some(info2))).await;
-        let res = post(router, "/surfaces/track", body).await;
+        let res = post_with_token(router, "/surfaces/track", &token, body).await;
         assert_eq!(res.status(), StatusCode::OK);
         let second_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let second: porthole_protocol::search::TrackResponse = serde_json::from_slice(&second_body).unwrap();
@@ -665,8 +721,10 @@ mod tests {
     #[tokio::test]
     async fn post_track_with_malformed_ref_returns_not_found() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        let router = build_router(AppState::new(adapter));
-        let res = post(router, "/surfaces/track", serde_json::json!({ "ref": "junk" })).await;
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(router, "/surfaces/track", &token, serde_json::json!({ "ref": "junk" })).await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
@@ -685,6 +743,7 @@ mod tests {
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
 
         adapter
             .set_next_snapshot_geometry(Ok(GeometrySnapshot {
@@ -699,9 +758,10 @@ mod tests {
             .await;
 
         let router = build_router(state);
-        let res = post(
+        let res = post_with_token(
             router,
             &format!("/surfaces/{old_id}/replace"),
+            &token,
             serde_json::json!({
                 "kind": { "type": "artifact", "path": "/tmp/x.pdf" }
             }),
@@ -723,11 +783,13 @@ mod tests {
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
 
         let router = build_router(state);
-        let res = post(
+        let res = post_with_token(
             router,
             &format!("/surfaces/{old_id}/replace"),
+            &token,
             serde_json::json!({
                 "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
                 "placement": {}
@@ -780,6 +842,7 @@ mod tests {
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
 
         // Script close to fail.
         adapter
@@ -790,9 +853,10 @@ mod tests {
             .await;
 
         let router = build_router(state);
-        let res = post(
+        let res = post_with_token(
             router,
             &format!("/surfaces/{old_id}/replace"),
+            &token,
             serde_json::json!({ "kind": { "type": "artifact", "path": "/tmp/x.pdf" } }),
         )
         .await;
@@ -815,6 +879,7 @@ mod tests {
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
 
         adapter
             .set_next_close_result(Err(porthole_core::PortholeError::new(
@@ -824,9 +889,10 @@ mod tests {
             .await;
 
         let router = build_router(state);
-        let res = post(
+        let res = post_with_token(
             router,
             &format!("/surfaces/{old_id}/replace"),
+            &token,
             serde_json::json!({ "kind": { "type": "artifact", "path": "/tmp/x.pdf" } }),
         )
         .await;
@@ -856,6 +922,7 @@ mod tests {
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
 
         // Close will succeed (default). Make the artifact launch return weak
         // confidence, which will fail the Strong requirement.
@@ -864,9 +931,10 @@ mod tests {
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
         let router = build_router(state);
-        let res = post(
+        let res = post_with_token(
             router,
             &format!("/surfaces/{old_id}/replace"),
+            &token,
             serde_json::json!({
                 "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
                 "require_confidence": "strong"
@@ -894,10 +962,13 @@ mod tests {
         outcome.surface.cg_window_id = Some(321);
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
-        let router = build_router(AppState::new(adapter));
-        let res = post(
+        let state = AppState::new(adapter);
+        let token = authorize_target(&state, TargetSelector::LaunchedByAgent, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(
             router,
             "/launches",
+            &token,
             serde_json::json!({
                 "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
                 "require_fresh_surface": true

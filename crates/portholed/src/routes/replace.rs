@@ -3,12 +3,14 @@ use std::time::Duration;
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
-use porthole_core::surface::SurfaceId;
+use porthole_core::{agent_policy::ActionClass, surface::SurfaceId};
 use porthole_protocol::launches::{LaunchResponse, ReplaceRequest};
 
 use crate::{
     routes::{
+        agent_guard::{authorize_surface_actions, complete_route_execution},
         errors::ApiError,
         launches::{confidence_to_wire, correlation_to_wire, request_to_launch_spec},
     },
@@ -17,6 +19,7 @@ use crate::{
 
 pub async fn post_replace(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<ReplaceRequest>,
 ) -> Result<Json<LaunchResponse>, ApiError> {
@@ -29,10 +32,12 @@ pub async fn post_replace(
     }
 
     let old_id = SurfaceId::from(id);
+    let execution = authorize_surface_actions(&state, &headers, old_id.as_str(), &[ActionClass::Manage], Some("replace surface")).await?;
     let spec = request_to_launch_spec(&req)?;
     let placement = req.placement.as_ref();
 
     let out = state.replace.replace(&old_id, &spec, placement).await?;
+    complete_route_execution(&state, execution, "/surfaces/{id}/replace").await?;
 
     if let Some(ms) = req.auto_dismiss_after_ms {
         if ms > 0 {

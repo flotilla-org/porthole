@@ -1,22 +1,39 @@
 use axum::{
     Json,
     extract::{Path, State},
+    http::HeaderMap,
 };
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
-use porthole_core::surface::SurfaceId;
+use porthole_core::{agent_policy::ActionClass, surface::SurfaceId};
 use porthole_protocol::screenshot::{Rect, ScreenshotRequest, ScreenshotResponse};
 
-use crate::{routes::errors::ApiError, state::AppState};
+use crate::{
+    routes::{
+        agent_guard::{authorize_surface_actions, complete_route_execution},
+        errors::ApiError,
+    },
+    state::AppState,
+};
 
 pub async fn post_screenshot(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(_req): Json<ScreenshotRequest>,
 ) -> Result<Json<ScreenshotResponse>, ApiError> {
     // session propagation deferred to events/attention plan
     let surface_id = SurfaceId::from(id.clone());
+    let execution = authorize_surface_actions(
+        &state,
+        &headers,
+        surface_id.as_str(),
+        &[ActionClass::Observe],
+        Some("capture screenshot"),
+    )
+    .await?;
     let info = state.handles.require_alive(&surface_id).await?;
     let shot = state.adapter.screenshot(&info).await?;
+    complete_route_execution(&state, execution, "/surfaces/{id}/screenshot").await?;
     let png_b64 = B64.encode(&shot.png_bytes);
     Ok(Json(ScreenshotResponse {
         surface_id: info.id,

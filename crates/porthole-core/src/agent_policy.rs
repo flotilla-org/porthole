@@ -225,7 +225,9 @@ fn target_matches(selector: &TargetSelector, agent: &AgentContext, target: &Targ
         TargetSelector::FrontmostOnce { surface_id } => {
             target.surface_id.as_ref() == Some(surface_id) && target.frontmost_surface_id.as_ref() == Some(surface_id)
         }
-        TargetSelector::AllSurfaces => target.surface_id.is_some(),
+        // All-surfaces grants cover both concrete surface contexts and global
+        // desktop operations such as search or attention that have no surface id.
+        TargetSelector::AllSurfaces => true,
     }
 }
 

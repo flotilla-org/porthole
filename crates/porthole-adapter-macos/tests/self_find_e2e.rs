@@ -3,11 +3,12 @@
 use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 use porthole_core::{
+    agent_policy::{ActionClass, DurationSpec, TargetSelector},
     in_memory::InMemoryAdapter,
     search::Candidate,
     surface::{SurfaceId, SurfaceInfo},
 };
-use portholed::server::serve;
+use portholed::{agent_store::AgentPolicyStore, events::EventBus, server::serve_with_agent_policy};
 
 /// Exercises the full path from `porthole attach --containing-pid $$
 /// --frontmost` back to a scripted candidate that matches the test
@@ -41,9 +42,28 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
     info.app_name = Some("TestHarness".into());
     adapter.set_next_window_alive_result(Ok(Some(info))).await;
 
+    let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
+    let identity = agent_store.create_identity("self-find-test", None, 1_000).await.unwrap();
+    let request = agent_store
+        .create_pending_request(
+            identity.agent_id.clone(),
+            TargetSelector::AllSurfaces,
+            vec![ActionClass::Manage],
+            None,
+            1_001,
+        )
+        .await
+        .unwrap();
+    agent_store
+        .approve_request(&request.request_id, DurationSpec::Persistent, Vec::new(), 1_002)
+        .await
+        .unwrap();
+    let token = identity.token;
+
     let socket_for_serve = socket.clone();
     let adapter_for_serve: Arc<dyn porthole_core::adapter::Adapter> = adapter.clone();
-    let server_task = tokio::spawn(async move { serve(adapter_for_serve, socket_for_serve).await });
+    let server_task =
+        tokio::spawn(async move { serve_with_agent_policy(adapter_for_serve, socket_for_serve, agent_store, EventBus::new()).await });
 
     for _ in 0..200 {
         if socket.exists() {
@@ -72,6 +92,7 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
     let output = tokio::task::spawn_blocking(move || {
         std::process::Command::new(cli)
             .env("PORTHOLE_RUNTIME_DIR", runtime_dir)
+            .env("PORTHOLE_AGENT_TOKEN", token)
             .args(["attach", "--containing-pid", &test_pid.to_string(), "--frontmost", "--json"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
