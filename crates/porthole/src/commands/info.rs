@@ -6,6 +6,7 @@ pub async fn run(client: &DaemonClient) -> Result<(), ClientError> {
     let info: InfoResponse = client.get_json("/info").await?;
     println!("daemon_version: {}", info.daemon_version);
     println!("uptime_seconds: {}", info.uptime_seconds);
+    println!("surface_count: {}", info.surface_count);
     for adapter in info.adapters {
         println!(
             "adapter: {} (loaded={}) capabilities={}",

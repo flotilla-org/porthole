@@ -7,7 +7,7 @@ use porthole::{
         agents as agents_cmd, attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays,
         focus as focus_cmd, install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs,
         place as place_cmd, record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd,
-        send as send_cmd, send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
+        send as send_cmd, send_keys as send_keys_cmd, status as status_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -36,6 +36,8 @@ struct Cli {
 enum Command {
     /// Print daemon info and loaded adapters.
     Info,
+    /// Print daemon status, socket path, version, and tracked surface count.
+    Status,
     /// Guided setup: walk through each ungranted permission, prompt the OS,
     /// wait for the user to grant, restart the daemon, and verify. Permissions
     /// are processed one at a time because TCC coalesces simultaneous prompt
@@ -619,7 +621,8 @@ enum ConditionArg {
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
-    let mut client = DaemonClient::new(socket_path());
+    let control_socket_path = socket_path();
+    let mut client = DaemonClient::new(&control_socket_path);
     let agent_token = cli
         .agent_token
         .or_else(|| std::env::var("PORTHOLE_AGENT_TOKEN").ok())
@@ -629,6 +632,10 @@ async fn main() -> std::process::ExitCode {
     }
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
+        Command::Status => match status_cmd::run(&client, &control_socket_path).await {
+            status_cmd::StatusOutcome::Up => Ok(()),
+            status_cmd::StatusOutcome::Down => return std::process::ExitCode::from(1),
+        },
         Command::Install {
             user,
             force,

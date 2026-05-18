@@ -9,6 +9,7 @@ pub async fn get_info(State(state): State<AppState>) -> Result<Json<InfoResponse
     Ok(Json(InfoResponse {
         daemon_version: state.daemon_version.to_string(),
         uptime_seconds: state.uptime_seconds(),
+        surface_count: state.handles.alive_count().await as u64,
         adapters: vec![AdapterInfo {
             name: state.adapter.name().to_string(),
             loaded: true,

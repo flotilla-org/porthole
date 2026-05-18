@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct InfoResponse {
     pub daemon_version: String,
     pub uptime_seconds: u64,
+    pub surface_count: u64,
     pub adapters: Vec<AdapterInfo>,
 }
 

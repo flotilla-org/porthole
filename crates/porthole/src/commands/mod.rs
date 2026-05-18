@@ -26,6 +26,7 @@ pub mod scroll;
 pub mod search;
 pub mod send;
 pub mod send_keys;
+pub mod status;
 pub mod text;
 pub mod track;
 pub mod wait;

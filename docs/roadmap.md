@@ -52,7 +52,7 @@ What's known missing or rough:
     - [x] `launchctl bootstrap gui/$UID <plist>`. Idempotent: bootouts any prior load before writing.
 - [x] `porthole uninstall` subcommand: reverse of the above. `--keep-bundle` to leave the `.app` for the user to manage manually.
 - [x] Recommended sequence documented in README: install bundle → `porthole onboard` → `porthole install`. Order matters because TCC dialogs need an active user; auto-start before grants exist queues prompts the user has no context for.
-- [ ] Optional: `porthole status` — daemon up/down, socket path, version, surface count.
+- [x] Optional: `porthole status` — daemon up/down, socket path, version, surface count.
 
 ---
 
