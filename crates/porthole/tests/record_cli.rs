@@ -51,6 +51,24 @@ fn formats_record_summary() {
 }
 
 #[test]
+fn record_session_debug_redacts_bearer_token() {
+    let session = RecordSession {
+        session_id: "session-1".to_string(),
+        track_id: 7,
+        width: 2,
+        height: 1,
+        stride: 8,
+        pixel_format: "bgra8_unorm".to_string(),
+        fd_socket_path: "/tmp/capture-fd.sock".to_string(),
+        bearer_token: Some("pta_agent.secret".to_string()),
+    };
+
+    let output = format!("{session:?}");
+    assert!(output.contains("<redacted>"));
+    assert!(!output.contains("pta_agent.secret"));
+}
+
+#[test]
 fn movie_writer_validation_rejects_non_bgra_pixels() {
     let err = validate_movie_writer_settings(&MovieWriterSettings {
         output: "/tmp/out.mov".into(),
@@ -270,6 +288,7 @@ impl RecordSessionClient for FakeSessionClient {
             stride: 4,
             pixel_format: "bgra8_unorm".to_string(),
             fd_socket_path: "/tmp/capture-transfer.sock".to_string(),
+            bearer_token: None,
         })
     }
 

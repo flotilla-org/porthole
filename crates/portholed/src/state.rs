@@ -29,9 +29,15 @@ impl AppState {
     }
 
     pub fn new_with_capture_socket(adapter: Arc<dyn Adapter>, fd_socket_path: std::path::PathBuf) -> std::io::Result<Self> {
-        Ok(Self::new_with_capture_registry(
+        // Test/server helper: production wiring uses serve_with_agent_policy so
+        // HTTP authorization and capture fd authorization share the real store.
+        let agent_store = AgentPolicyStore::open_in_memory_sync().expect("in-memory agent policy store should initialize");
+        let capture = CaptureRegistry::with_fd_socket_and_agent_policy(fd_socket_path, agent_store.clone())?;
+        Ok(Self::new_with_agent_policy_and_capture(
             adapter,
-            CaptureRegistry::with_fd_socket(fd_socket_path)?,
+            capture,
+            agent_store,
+            EventBus::new(),
         ))
     }
 

@@ -36,7 +36,7 @@ pub async fn post_surface(
     let surface = state.handles.require_alive(&surface_id).await?;
     let response = state
         .capture
-        .create_surface_session(state.adapter.clone(), surface)
+        .create_surface_session(state.adapter.clone(), surface, execution.agent_id.clone())
         .await
         .map_err(capture_error_to_api)?;
     let audit_state = state.clone();
