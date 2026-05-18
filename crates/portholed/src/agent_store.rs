@@ -358,7 +358,8 @@ impl AgentPolicyStore {
 
             let request_id = PermissionRequestId::from(format!("apr_{}", Uuid::new_v4().simple()));
             let stored_reason = reason.clone();
-            conn.execute(
+            let tx = conn.transaction()?;
+            tx.execute(
                 "INSERT INTO agent_permission_requests(request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms)
                  VALUES(?1, ?2, ?3, ?4, ?5, 'pending', ?6, NULL)",
                 params![
@@ -371,7 +372,7 @@ impl AgentPolicyStore {
                 ],
             )?;
             insert_audit(
-                conn,
+                &tx,
                 &agent_id,
                 Some(&request_id),
                 None,
@@ -386,6 +387,7 @@ impl AgentPolicyStore {
                 None,
                 stored_reason.as_deref(),
             )?;
+            tx.commit()?;
             Ok(StoredPermissionRequest {
                 request_id,
                 agent_id,

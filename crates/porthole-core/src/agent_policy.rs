@@ -88,7 +88,11 @@ pub enum DurationSpec {
 #[serde(rename_all = "snake_case")]
 pub enum Constraint {
     RequiresFrontmost,
+    /// Stored on grants and enforced by route-specific execution guards that
+    /// know the requested operation duration.
     MaxDurationMs(u64),
+    /// Stored on grants and enforced by route-specific drive guards that know
+    /// the concrete input payload.
     AllowedInput(Vec<String>),
 }
 
@@ -192,6 +196,7 @@ fn grant_matches(
         && duration_matches(&grant.duration, target, now_unix_ms)
         && target_matches(&grant.target, agent, target)
         && actions_match(&grant.actions, actions)
+        && constraints_match(&grant.constraints, target)
 }
 
 fn duration_matches(duration: &DurationSpec, target: &TargetContext, now_unix_ms: u64) -> bool {
@@ -226,6 +231,16 @@ fn target_matches(selector: &TargetSelector, agent: &AgentContext, target: &Targ
 
 fn actions_match(allowed: &[ActionClass], requested: &[ActionClass]) -> bool {
     !requested.is_empty() && requested.iter().all(|action| allowed.contains(action))
+}
+
+fn constraints_match(constraints: &[Constraint], target: &TargetContext) -> bool {
+    constraints.iter().all(|constraint| match constraint {
+        Constraint::RequiresFrontmost => match (&target.surface_id, &target.frontmost_surface_id) {
+            (Some(surface_id), Some(frontmost_surface_id)) => surface_id == frontmost_surface_id,
+            _ => false,
+        },
+        Constraint::MaxDurationMs(_) | Constraint::AllowedInput(_) => true,
+    })
 }
 
 #[cfg(test)]
@@ -518,6 +533,51 @@ mod tests {
                 Constraint::MaxDurationMs(2_000),
                 Constraint::AllowedInput(vec!["text".into()])
             ]
+        );
+    }
+
+    #[test]
+    fn requires_frontmost_constraint_authorizes_only_frontmost_surface() {
+        let constrained = Grant {
+            constraints: vec![Constraint::RequiresFrontmost],
+            ..grant(
+                TargetSelector::Surface {
+                    surface_id: surf("surf_1"),
+                },
+                vec![ActionClass::Drive],
+            )
+        };
+        let snapshot = PolicySnapshot {
+            grants: vec![constrained],
+            denials: Vec::new(),
+            consumed_once_grants: Vec::new(),
+        };
+        let mut frontmost = target_context("surf_1");
+        frontmost.frontmost_surface_id = Some(surf("surf_1"));
+        let mut background = target_context("surf_1");
+        background.frontmost_surface_id = Some(surf("surf_2"));
+
+        assert!(matches!(
+            snapshot.authorize(
+                &AgentContext {
+                    agent_id: agent("agent_1"),
+                },
+                &frontmost,
+                &[ActionClass::Drive],
+                NOW
+            ),
+            AuthorizationDecision::Allowed { .. }
+        ));
+        assert_eq!(
+            snapshot.authorize(
+                &AgentContext {
+                    agent_id: agent("agent_1"),
+                },
+                &background,
+                &[ActionClass::Drive],
+                NOW
+            ),
+            AuthorizationDecision::NeedsPermission
         );
     }
 
