@@ -14,11 +14,34 @@ use porthole_protocol::{
     wait::WaitTimeoutBody,
 };
 
+use crate::agent_store::AgentStoreError;
+
 pub struct ApiError(pub WireError);
 
 impl From<PortholeError> for ApiError {
     fn from(err: PortholeError) -> Self {
         Self(err.into())
+    }
+}
+
+impl From<AgentStoreError> for ApiError {
+    fn from(err: AgentStoreError) -> Self {
+        let (code, message) = match err {
+            AgentStoreError::PermissionRequestNotFound => (
+                ErrorCode::AgentPermissionRequestExpired,
+                "agent permission request was not found or is no longer available".to_string(),
+            ),
+            AgentStoreError::PermissionRequestNotPending => {
+                (ErrorCode::InvalidArgument, "agent permission request is not pending".to_string())
+            }
+            AgentStoreError::IdentityNotFound => (ErrorCode::InvalidArgument, "agent identity not found".to_string()),
+            other => (ErrorCode::InternalError, other.to_string()),
+        };
+        Self(WireError {
+            code,
+            message,
+            details: None,
+        })
     }
 }
 

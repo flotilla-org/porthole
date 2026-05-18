@@ -30,6 +30,8 @@ pub enum AgentStoreError {
     PermissionRequestNotFound,
     #[error("permission request is not pending")]
     PermissionRequestNotPending,
+    #[error("agent identity not found")]
+    IdentityNotFound,
     #[error("unknown permission request status {0}")]
     UnknownPermissionRequestStatus(String),
 }
@@ -48,6 +50,30 @@ pub struct CreatedAgentIdentity {
     pub token: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatedAgentToken {
+    pub token_id: String,
+    pub agent_id: AgentId,
+    pub token: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredAgentIdentity {
+    pub agent_id: AgentId,
+    pub display_name: String,
+    pub metadata: Option<AgentIdentityMetadata>,
+    pub created_at_unix_ms: u64,
+    pub revoked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredAgentToken {
+    pub token_id: String,
+    pub agent_id: AgentId,
+    pub created_at_unix_ms: u64,
+    pub revoked_at_unix_ms: Option<u64>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PermissionRequestStatus {
     Pending,
@@ -56,6 +82,14 @@ pub enum PermissionRequestStatus {
 }
 
 impl PermissionRequestStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+        }
+    }
+
     fn parse(s: &str) -> StoreResult<Self> {
         match s {
             "pending" => Ok(Self::Pending),
@@ -87,6 +121,10 @@ pub struct StoredGrant {
     pub actions: Vec<ActionClass>,
     pub duration: DurationSpec,
     pub constraints: Vec<Constraint>,
+    pub created_at_unix_ms: u64,
+    pub expires_at_unix_ms: Option<u64>,
+    pub consumed_at_unix_ms: Option<u64>,
+    pub revoked_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,12 +140,16 @@ pub struct ExecutionAuditRecord {
 }
 
 impl AgentPolicyStore {
-    pub async fn open_in_memory() -> StoreResult<Self> {
+    pub fn open_in_memory_sync() -> StoreResult<Self> {
         let conn = Connection::open_in_memory()?;
         init_schema(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    pub async fn open_in_memory() -> StoreResult<Self> {
+        Self::open_in_memory_sync()
     }
 
     pub async fn open_default() -> StoreResult<Self> {
@@ -178,6 +220,92 @@ impl AgentPolicyStore {
                 params![token_id, agent_id.as_str(), token_hash, created_at_unix_ms],
             )?;
             Ok(CreatedAgentIdentity { agent_id, token_id, token })
+        })
+        .await
+    }
+
+    pub async fn list_identities(&self) -> StoreResult<Vec<StoredAgentIdentity>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT agent_id, display_name, metadata_json, created_at_unix_ms, revoked_at_unix_ms
+                 FROM agent_identities
+                 ORDER BY created_at_unix_ms, agent_id",
+            )?;
+            let rows = stmt.query_map([], identity_tuple_from_row)?;
+            rows.map(|row| stored_identity_from_tuple(row?)).collect()
+        })
+        .await
+    }
+
+    pub async fn get_identity(&self, agent_id: &AgentId) -> StoreResult<Option<StoredAgentIdentity>> {
+        let agent_id = agent_id.clone();
+        self.with_conn(move |conn| select_identity(conn, &agent_id)).await
+    }
+
+    pub async fn revoke_identity(&self, agent_id: &AgentId, revoked_at_unix_ms: u64) -> StoreResult<bool> {
+        let agent_id = agent_id.clone();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction()?;
+            let updated = tx.execute(
+                "UPDATE agent_identities
+                 SET revoked_at_unix_ms = ?1
+                 WHERE agent_id = ?2
+                   AND revoked_at_unix_ms IS NULL",
+                params![revoked_at_unix_ms, agent_id.as_str()],
+            )?;
+            tx.execute(
+                "UPDATE agent_tokens
+                 SET revoked_at_unix_ms = ?1
+                 WHERE agent_id = ?2
+                   AND revoked_at_unix_ms IS NULL",
+                params![revoked_at_unix_ms, agent_id.as_str()],
+            )?;
+            tx.commit()?;
+            Ok(updated == 1)
+        })
+        .await
+    }
+
+    pub async fn mint_token(&self, agent_id: &AgentId, created_at_unix_ms: u64) -> StoreResult<CreatedAgentToken> {
+        let agent_id = agent_id.clone();
+        self.with_conn(move |conn| {
+            let exists = conn
+                .query_row(
+                    "SELECT 1 FROM agent_identities WHERE agent_id = ?1 AND revoked_at_unix_ms IS NULL",
+                    params![agent_id.as_str()],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !exists {
+                return Err(AgentStoreError::IdentityNotFound);
+            }
+            let token_id = format!("tok_{}", Uuid::new_v4().simple());
+            let secret = Uuid::new_v4().simple().to_string();
+            let token = format!("pta_{}.{secret}", agent_id.as_str());
+            conn.execute(
+                "INSERT INTO agent_tokens(token_id, agent_id, token_hash, created_at_unix_ms, revoked_at_unix_ms)
+                 VALUES(?1, ?2, ?3, ?4, NULL)",
+                params![token_id, agent_id.as_str(), hash_token(&token), created_at_unix_ms],
+            )?;
+            Ok(CreatedAgentToken { token_id, agent_id, token })
+        })
+        .await
+    }
+
+    pub async fn revoke_token(&self, agent_id: &AgentId, token_id: &str, revoked_at_unix_ms: u64) -> StoreResult<bool> {
+        let agent_id = agent_id.clone();
+        let token_id = token_id.to_string();
+        self.with_conn(move |conn| {
+            let updated = conn.execute(
+                "UPDATE agent_tokens
+                 SET revoked_at_unix_ms = ?1
+                 WHERE agent_id = ?2
+                   AND token_id = ?3
+                   AND revoked_at_unix_ms IS NULL",
+                params![revoked_at_unix_ms, agent_id.as_str(), token_id],
+            )?;
+            Ok(updated == 1)
         })
         .await
     }
@@ -343,7 +471,53 @@ impl AgentPolicyStore {
                 actions,
                 duration,
                 constraints,
+                created_at_unix_ms: decided_at_unix_ms,
+                expires_at_unix_ms,
+                consumed_at_unix_ms: None,
+                revoked_at_unix_ms: None,
             })
+        })
+        .await
+    }
+
+    pub async fn list_permission_requests(&self) -> StoreResult<Vec<StoredPermissionRequest>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
+                 FROM agent_permission_requests
+                 WHERE status = 'pending'
+                 ORDER BY created_at_unix_ms, request_id",
+            )?;
+            let rows = stmt.query_map([], request_tuple_from_row)?;
+            rows.map(|row| stored_request_from_tuple(row?)).collect()
+        })
+        .await
+    }
+
+    pub async fn list_grants(&self) -> StoreResult<Vec<StoredGrant>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT grant_id, agent_id, origin_request_id, target_json, actions_json, duration_json, constraints_json, created_at_unix_ms, expires_at_unix_ms, consumed_at_unix_ms, revoked_at_unix_ms
+                 FROM agent_grants
+                 ORDER BY created_at_unix_ms, grant_id",
+            )?;
+            let rows = stmt.query_map([], grant_tuple_from_row)?;
+            rows.map(|row| stored_grant_from_tuple(row?)).collect()
+        })
+        .await
+    }
+
+    pub async fn revoke_grant(&self, grant_id: &GrantId, revoked_at_unix_ms: u64) -> StoreResult<bool> {
+        let grant_id = grant_id.clone();
+        self.with_conn(move |conn| {
+            let updated = conn.execute(
+                "UPDATE agent_grants
+                 SET revoked_at_unix_ms = ?1
+                 WHERE grant_id = ?2
+                   AND revoked_at_unix_ms IS NULL",
+                params![revoked_at_unix_ms, grant_id.as_str()],
+            )?;
+            Ok(updated == 1)
         })
         .await
     }
@@ -759,6 +933,93 @@ fn select_request_by_id_tx(
 }
 
 type RequestTuple = (String, String, String, String, Option<String>, String, u64, Option<u64>);
+type IdentityTuple = (String, String, String, u64, Option<u64>);
+type GrantTuple = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    u64,
+    Option<u64>,
+    Option<u64>,
+    Option<u64>,
+);
+
+fn identity_tuple_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentityTuple> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+}
+
+fn stored_identity_from_tuple(row: IdentityTuple) -> StoreResult<StoredAgentIdentity> {
+    let (agent_id, display_name, metadata_json, created_at_unix_ms, revoked_at_unix_ms) = row;
+    Ok(StoredAgentIdentity {
+        agent_id: AgentId::from(agent_id),
+        display_name,
+        metadata: from_json(&metadata_json)?,
+        created_at_unix_ms,
+        revoked_at_unix_ms,
+    })
+}
+
+fn select_identity(conn: &Connection, agent_id: &AgentId) -> StoreResult<Option<StoredAgentIdentity>> {
+    let row = conn
+        .query_row(
+            "SELECT agent_id, display_name, metadata_json, created_at_unix_ms, revoked_at_unix_ms
+             FROM agent_identities
+             WHERE agent_id = ?1",
+            params![agent_id.as_str()],
+            identity_tuple_from_row,
+        )
+        .optional()?;
+    row.map(stored_identity_from_tuple).transpose()
+}
+
+fn grant_tuple_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<GrantTuple> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+    ))
+}
+
+fn stored_grant_from_tuple(row: GrantTuple) -> StoreResult<StoredGrant> {
+    let (
+        grant_id,
+        agent_id,
+        origin_request_id,
+        target_json,
+        actions_json,
+        duration_json,
+        constraints_json,
+        created_at_unix_ms,
+        expires_at_unix_ms,
+        consumed_at_unix_ms,
+        revoked_at_unix_ms,
+    ) = row;
+    Ok(StoredGrant {
+        grant_id: GrantId::from(grant_id),
+        agent_id: AgentId::from(agent_id),
+        origin_request_id: origin_request_id.map(PermissionRequestId::from),
+        target: from_json(&target_json)?,
+        actions: from_json(&actions_json)?,
+        duration: from_json(&duration_json)?,
+        constraints: from_json(&constraints_json)?,
+        created_at_unix_ms,
+        expires_at_unix_ms,
+        consumed_at_unix_ms,
+        revoked_at_unix_ms,
+    })
+}
 
 fn request_tuple_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestTuple> {
     Ok((

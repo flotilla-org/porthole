@@ -18,10 +18,12 @@ repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
 async-trait = "0.1"
+async-stream = "0.3"
 base64 = "0.22"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "matched-path", "query"] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+futures-core = "0.3"
 hyper = { version = "1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hyperlocal = "0.9"

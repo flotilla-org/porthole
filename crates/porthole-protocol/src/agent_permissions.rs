@@ -1,6 +1,6 @@
 use porthole_core::{
     SurfaceId,
-    agent_policy::{ActionClass, AgentId, PermissionRequestId},
+    agent_policy::{ActionClass, AgentId, AppSelector, Constraint, DurationSpec, GrantId, PermissionRequestId, TargetSelector},
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,23 @@ pub struct MintAgentTokenResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIdentityResponse {
+    pub agent_id: AgentId,
+    pub display_name: String,
+    pub metadata: Option<AgentIdentityMetadata>,
+    pub created_at_unix_ms: u64,
+    pub revoked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentTokenResponse {
+    pub token_id: String,
+    pub agent_id: AgentId,
+    pub created_at_unix_ms: u64,
+    pub revoked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentIdentityMetadata {
     pub bundle_id: Option<String>,
     pub executable_path: Option<String>,
@@ -40,6 +57,38 @@ pub struct AgentPermissionNeededDetails {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentPermissionRequestResponse {
+    pub request_id: PermissionRequestId,
+    pub agent_id: AgentId,
+    pub target: AgentPermissionTarget,
+    pub actions: Vec<ActionClass>,
+    pub reason: Option<String>,
+    pub status: String,
+    pub created_at_unix_ms: u64,
+    pub resolved_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentGrantResponse {
+    pub grant_id: GrantId,
+    pub agent_id: AgentId,
+    pub origin_request_id: Option<PermissionRequestId>,
+    pub target: AgentPermissionTarget,
+    pub actions: Vec<ActionClass>,
+    pub duration: AgentPermissionDuration,
+    pub constraints: AgentPermissionConstraints,
+    pub created_at_unix_ms: u64,
+    pub expires_at_unix_ms: Option<u64>,
+    pub consumed_at_unix_ms: Option<u64>,
+    pub revoked_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationResponse {
+    pub revoked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentPermissionDuration {
     Once,
@@ -47,6 +96,30 @@ pub enum AgentPermissionDuration {
     Session { session: String },
     TimeBounded { expires_at_unix_ms: u64 },
     Persistent,
+}
+
+impl From<DurationSpec> for AgentPermissionDuration {
+    fn from(duration: DurationSpec) -> Self {
+        match duration {
+            DurationSpec::Once => Self::Once,
+            DurationSpec::UntilSurfaceGone => Self::UntilSurfaceGone,
+            DurationSpec::Session { session } => Self::Session { session },
+            DurationSpec::TimeBounded { expires_at_unix_ms } => Self::TimeBounded { expires_at_unix_ms },
+            DurationSpec::Persistent => Self::Persistent,
+        }
+    }
+}
+
+impl From<AgentPermissionDuration> for DurationSpec {
+    fn from(duration: AgentPermissionDuration) -> Self {
+        match duration {
+            AgentPermissionDuration::Once => Self::Once,
+            AgentPermissionDuration::UntilSurfaceGone => Self::UntilSurfaceGone,
+            AgentPermissionDuration::Session { session } => Self::Session { session },
+            AgentPermissionDuration::TimeBounded { expires_at_unix_ms } => Self::TimeBounded { expires_at_unix_ms },
+            AgentPermissionDuration::Persistent => Self::Persistent,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,12 +132,56 @@ pub enum AgentPermissionTarget {
     AllSurfaces,
 }
 
+impl From<TargetSelector> for AgentPermissionTarget {
+    fn from(target: TargetSelector) -> Self {
+        match target {
+            TargetSelector::Surface { surface_id } => Self::Surface { surface_id },
+            TargetSelector::App { app } => Self::App { app: app.into() },
+            TargetSelector::LaunchedByAgent => Self::LaunchedByAgent,
+            TargetSelector::FrontmostOnce { surface_id } => Self::FrontmostOnce { surface_id },
+            TargetSelector::AllSurfaces => Self::AllSurfaces,
+        }
+    }
+}
+
+impl From<AgentPermissionTarget> for TargetSelector {
+    fn from(target: AgentPermissionTarget) -> Self {
+        match target {
+            AgentPermissionTarget::Surface { surface_id } => Self::Surface { surface_id },
+            AgentPermissionTarget::App { app } => Self::App { app: app.into() },
+            AgentPermissionTarget::LaunchedByAgent => Self::LaunchedByAgent,
+            AgentPermissionTarget::FrontmostOnce { surface_id } => Self::FrontmostOnce { surface_id },
+            AgentPermissionTarget::AllSurfaces => Self::AllSurfaces,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentPermissionAppSelector {
     BundleId { bundle_id: String },
     ExecutablePath { executable_path: String },
     AppName { app_name: String },
+}
+
+impl From<AppSelector> for AgentPermissionAppSelector {
+    fn from(app: AppSelector) -> Self {
+        match app {
+            AppSelector::BundleId(bundle_id) => Self::BundleId { bundle_id },
+            AppSelector::ExecutablePath(executable_path) => Self::ExecutablePath { executable_path },
+            AppSelector::AppName(app_name) => Self::AppName { app_name },
+        }
+    }
+}
+
+impl From<AgentPermissionAppSelector> for AppSelector {
+    fn from(app: AgentPermissionAppSelector) -> Self {
+        match app {
+            AgentPermissionAppSelector::BundleId { bundle_id } => Self::BundleId(bundle_id),
+            AgentPermissionAppSelector::ExecutablePath { executable_path } => Self::ExecutablePath(executable_path),
+            AgentPermissionAppSelector::AppName { app_name } => Self::AppName(app_name),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +192,36 @@ pub struct AgentPermissionConstraints {
     pub max_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_input: Vec<String>,
+}
+
+impl From<Vec<Constraint>> for AgentPermissionConstraints {
+    fn from(constraints: Vec<Constraint>) -> Self {
+        let mut wire = Self::default();
+        for constraint in constraints {
+            match constraint {
+                Constraint::RequiresFrontmost => wire.requires_frontmost = true,
+                Constraint::MaxDurationMs(value) => wire.max_duration_ms = Some(value),
+                Constraint::AllowedInput(values) => wire.allowed_input = values,
+            }
+        }
+        wire
+    }
+}
+
+impl From<AgentPermissionConstraints> for Vec<Constraint> {
+    fn from(constraints: AgentPermissionConstraints) -> Self {
+        let mut core = Vec::new();
+        if constraints.requires_frontmost {
+            core.push(Constraint::RequiresFrontmost);
+        }
+        if let Some(max_duration_ms) = constraints.max_duration_ms {
+            core.push(Constraint::MaxDurationMs(max_duration_ms));
+        }
+        if !constraints.allowed_input.is_empty() {
+            core.push(Constraint::AllowedInput(constraints.allowed_input));
+        }
+        core
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

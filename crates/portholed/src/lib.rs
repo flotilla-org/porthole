@@ -4,6 +4,7 @@
 
 pub mod agent_store;
 pub mod capture_registry;
+pub mod events;
 pub mod routes;
 pub mod runtime;
 pub mod server;
