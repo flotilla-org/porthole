@@ -176,6 +176,7 @@ impl AgentPolicyStore {
             set_owner_only_dir_permissions(parent)?;
         }
         let conn = Connection::open(path)?;
+        set_owner_only_file_permissions(path)?;
         init_schema(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -484,7 +485,7 @@ impl AgentPolicyStore {
         .await
     }
 
-    pub async fn list_permission_requests(&self) -> StoreResult<Vec<StoredPermissionRequest>> {
+    pub async fn list_pending_permission_requests(&self) -> StoreResult<Vec<StoredPermissionRequest>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
@@ -535,7 +536,7 @@ impl AgentPolicyStore {
         remember: bool,
         reason: Option<String>,
         decided_at_unix_ms: u64,
-    ) -> StoreResult<Option<Denial>> {
+    ) -> StoreResult<StoredPermissionRequest> {
         let request_id = request_id.clone();
         self.with_conn(move |conn| {
             let tx = conn.transaction()?;
@@ -591,8 +592,18 @@ impl AgentPolicyStore {
                 None,
                 reason.as_deref(),
             )?;
+            let updated_request = StoredPermissionRequest {
+                request_id: request.request_id,
+                agent_id: request.agent_id,
+                target: request.target,
+                actions,
+                reason: request.reason,
+                status: PermissionRequestStatus::Denied,
+                created_at_unix_ms: request.created_at_unix_ms,
+                resolved_at_unix_ms: Some(decided_at_unix_ms),
+            };
             tx.commit()?;
-            Ok(denial)
+            Ok(updated_request)
         })
         .await
     }
@@ -914,6 +925,19 @@ fn set_owner_only_dir_permissions(_path: &Path) -> StoreResult<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn set_owner_only_file_permissions(path: &Path) -> StoreResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_file_permissions(_path: &Path) -> StoreResult<()> {
+    Ok(())
+}
+
 fn select_pending_request(
     conn: &Connection,
     agent_id: &AgentId,
@@ -1222,6 +1246,20 @@ mod tests {
         assert!(tables.contains(&"agent_permission_requests".to_string()));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_backed_store_restricts_database_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("Application Support").join("Porthole").join("agent-policy.sqlite");
+
+        AgentPolicyStore::open_at_path(&db_path).await.unwrap();
+
+        let mode = std::fs::metadata(&db_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
     #[tokio::test]
     async fn creating_identity_returns_agent_id_and_one_plaintext_token_only_once() {
         let store = AgentPolicyStore::open_in_memory().await.unwrap();
@@ -1254,6 +1292,26 @@ mod tests {
         let authenticated = store.authenticate_agent_token(&created.token).await.unwrap();
 
         assert_eq!(authenticated, Some(created.agent_id));
+    }
+
+    #[tokio::test]
+    async fn revoked_token_no_longer_authenticates() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let created = store.create_identity("agent", None, NOW).await.unwrap();
+
+        assert!(store.revoke_token(&created.agent_id, &created.token_id, NOW + 1).await.unwrap());
+
+        assert_eq!(store.authenticate_agent_token(&created.token).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn revoked_identity_cascades_to_token_authentication() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let created = store.create_identity("agent", None, NOW).await.unwrap();
+
+        assert!(store.revoke_identity(&created.agent_id, NOW + 1).await.unwrap());
+
+        assert_eq!(store.authenticate_agent_token(&created.token).await.unwrap(), None);
     }
 
     #[tokio::test]

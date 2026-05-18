@@ -93,7 +93,7 @@ pub async fn post_revoke_identity_token(
 }
 
 pub async fn get_requests(State(state): State<AppState>) -> Result<Json<Vec<AgentPermissionRequestResponse>>, ApiError> {
-    let requests = state.agent_store.list_permission_requests().await?;
+    let requests = state.agent_store.list_pending_permission_requests().await?;
     Ok(Json(requests.into_iter().map(request_response).collect()))
 }
 
@@ -146,19 +146,14 @@ pub async fn post_deny_request(
     Json(body): Json<DenyAgentPermissionRequest>,
 ) -> Result<Json<AgentPermissionRequestResponse>, ApiError> {
     let request_id = PermissionRequestId::from(request_id);
-    state
+    let request = state
         .agent_store
         .deny_request(&request_id, body.remember, body.reason, now_unix_ms())
         .await?;
     state.events.publish(AgentEvent::AgentPermissionResolved {
-        request_id: request_id.clone(),
+        request_id,
         status: "denied".into(),
     });
-    let request = state
-        .agent_store
-        .get_permission_request(&request_id)
-        .await?
-        .ok_or(crate::agent_store::AgentStoreError::PermissionRequestNotFound)?;
     Ok(Json(request_response(request)))
 }
 
@@ -221,7 +216,10 @@ fn not_found(message: &str) -> ApiError {
 }
 
 fn now_unix_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before Unix epoch")
+        .as_millis() as u64
 }
 
 #[cfg(test)]
