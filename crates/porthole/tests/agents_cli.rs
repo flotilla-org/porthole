@@ -70,6 +70,53 @@ async fn agents_show_json_omits_token_secrets() {
 }
 
 #[tokio::test]
+async fn agents_show_text_renders_utc_timestamps() {
+    let mut client = FakeAgentClient {
+        identity_response: Some(AgentIdentityResponse {
+            created_at_unix_ms: 1_000,
+            revoked_at_unix_ms: Some(86_400_000),
+            ..identity_response()
+        }),
+        ..FakeAgentClient::default()
+    };
+
+    let output = run_with_output(
+        &mut client,
+        AgentsCommand::Show {
+            agent_id: "agent_1".into(),
+            json: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(output.contains("created_at: 1970-01-01T00:00:01.000Z"));
+    assert!(output.contains("revoked_at: 1970-01-02T00:00:00.000Z"));
+}
+
+#[tokio::test]
+async fn agents_list_text_renders_configured_identities() {
+    let mut client = FakeAgentClient {
+        list_identities_response: vec![
+            identity_response(),
+            AgentIdentityResponse {
+                agent_id: AgentId::from("agent_2"),
+                display_name: "Second Agent".into(),
+                ..identity_response()
+            },
+        ],
+        ..FakeAgentClient::default()
+    };
+
+    let output = run_with_output(&mut client, AgentsCommand::List { json: false }).await.unwrap();
+
+    assert_eq!(
+        output,
+        "agent_id: agent_1\ndisplay_name: Test Agent\n\nagent_id: agent_2\ndisplay_name: Second Agent\n"
+    );
+}
+
+#[tokio::test]
 async fn agents_token_create_json_renders_second_token_once() {
     let mut client = FakeAgentClient {
         mint_token_response: Some(MintAgentTokenResponse {
@@ -278,6 +325,7 @@ async fn agents_deny_posts_reason_and_remember_flag() {
 struct FakeAgentClient {
     create_identity_request: Option<CreateAgentIdentityRequest>,
     create_identity_response: Option<CreateAgentIdentityResponse>,
+    list_identities_response: Vec<AgentIdentityResponse>,
     identity_response: Option<AgentIdentityResponse>,
     shown_agent_id: Option<String>,
     minted_token_agent_id: Option<String>,
@@ -310,7 +358,7 @@ impl AgentClient for FakeAgentClient {
     }
 
     async fn list_identities(&mut self) -> Result<Vec<AgentIdentityResponse>, ClientError> {
-        Ok(vec![identity_response()])
+        Ok(self.list_identities_response.clone())
     }
 
     async fn get_identity(&mut self, agent_id: &str) -> Result<AgentIdentityResponse, ClientError> {

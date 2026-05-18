@@ -114,7 +114,8 @@ Drive routes (`key`, `text`, `click`, `scroll`, and pointer movement) require an
 ```sh
 porthole agents create --name "My Agent" --json
 # Pass the returned token as: Authorization: Bearer <token>
-# CLI drive commands read it from --agent-token or PORTHOLE_AGENT_TOKEN.
+# CLI drive commands read it from PORTHOLE_AGENT_TOKEN or --agent-token.
+# Prefer the environment variable so tokens don't appear in process listings.
 export PORTHOLE_AGENT_TOKEN=pta_agent_...
 
 porthole agents requests --json

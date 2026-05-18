@@ -22,8 +22,10 @@ use porthole_protocol::launches::WireConfidence;
 #[derive(Parser)]
 #[command(version, about = "porthole — OS-level presentation substrate")]
 struct Cli {
-    /// Agent bearer token for protected routes. Can also be supplied with
-    /// PORTHOLE_AGENT_TOKEN.
+    /// Agent bearer token for protected routes.
+    ///
+    /// Prefer PORTHOLE_AGENT_TOKEN to avoid exposing the token in process
+    /// listings or shell history.
     #[arg(long, global = true)]
     agent_token: Option<String>,
     #[command(subcommand)]

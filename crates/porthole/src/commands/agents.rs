@@ -8,6 +8,9 @@ use serde::Serialize;
 
 use crate::client::{ClientError, DaemonClient};
 
+#[derive(Serialize)]
+struct EmptyBody {}
+
 #[derive(Subcommand, Clone, Debug)]
 pub enum AgentsCommand {
     /// Create an agent identity and print its bearer token once.
@@ -182,6 +185,9 @@ pub async fn run_with_output<C: AgentClient>(client: &mut C, command: AgentsComm
             json,
         } => {
             let request = client.get_request(&request_id).await?;
+            // The daemon revalidates pending state and scope at approve time.
+            // The CLI copies the pending request scope so the operator chooses
+            // only the grant duration.
             let response = client
                 .approve_request(
                     &request_id,
@@ -248,16 +254,41 @@ fn render_identity(response: AgentIdentityResponse, json: bool) -> Result<String
         render_json(&response)
     } else {
         Ok(format!(
-            "agent_id: {}\ndisplay_name: {}\ncreated_at_unix_ms: {}\nrevoked_at_unix_ms: {}\n",
+            "agent_id: {}\ndisplay_name: {}\ncreated_at: {}\nrevoked_at: {}\n",
             response.agent_id,
             response.display_name,
-            response.created_at_unix_ms,
-            response
-                .revoked_at_unix_ms
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".into())
+            format_unix_ms_utc(response.created_at_unix_ms),
+            response.revoked_at_unix_ms.map(format_unix_ms_utc).unwrap_or_else(|| "-".into())
         ))
     }
+}
+
+fn format_unix_ms_utc(unix_ms: u64) -> String {
+    let total_seconds = unix_ms / 1_000;
+    let millis = unix_ms % 1_000;
+    let days = (total_seconds / 86_400) as i64;
+    let seconds_of_day = total_seconds % 86_400;
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+}
+
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_parameter = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_parameter + 2) / 5 + 1;
+    let month = month_parameter + if month_parameter < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (year as i32, month as u32, day as u32)
 }
 
 fn render_requests(response: Vec<AgentPermissionRequestResponse>, json: bool) -> Result<String, ClientError> {
@@ -331,21 +362,16 @@ impl AgentClient for DaemonClient {
     }
 
     async fn revoke_identity(&mut self, agent_id: &str) -> Result<RevocationResponse, ClientError> {
-        self.post_json(&format!("/agent-identities/{agent_id}/revoke"), &serde_json::json!({}))
-            .await
+        self.post_json(&format!("/agent-identities/{agent_id}/revoke"), &EmptyBody {}).await
     }
 
     async fn mint_token(&mut self, agent_id: &str) -> Result<MintAgentTokenResponse, ClientError> {
-        self.post_json(&format!("/agent-identities/{agent_id}/tokens"), &serde_json::json!({}))
-            .await
+        self.post_json(&format!("/agent-identities/{agent_id}/tokens"), &EmptyBody {}).await
     }
 
     async fn revoke_token(&mut self, agent_id: &str, token_id: &str) -> Result<RevocationResponse, ClientError> {
-        self.post_json(
-            &format!("/agent-identities/{agent_id}/tokens/{token_id}/revoke"),
-            &serde_json::json!({}),
-        )
-        .await
+        self.post_json(&format!("/agent-identities/{agent_id}/tokens/{token_id}/revoke"), &EmptyBody {})
+            .await
     }
 
     async fn list_requests(&mut self) -> Result<Vec<AgentPermissionRequestResponse>, ClientError> {
@@ -375,7 +401,7 @@ impl AgentClient for DaemonClient {
     }
 
     async fn revoke_grant(&mut self, grant_id: &str) -> Result<RevocationResponse, ClientError> {
-        self.post_json(&format!("/agent-permissions/grants/{grant_id}/revoke"), &serde_json::json!({}))
+        self.post_json(&format!("/agent-permissions/grants/{grant_id}/revoke"), &EmptyBody {})
             .await
     }
 }
