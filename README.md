@@ -11,7 +11,7 @@ Most agent workflows that need to touch the desktop end up reinventing the same 
 - Stable handles for windows you launched or attached to — no global enumeration needed after the fact
 - Structured input (`key`, `text`, `click`, `scroll`) targeted at a specific handle
 - Typed waits (`stable`, `dirty`, `exists`, `gone`, `title_matches`) that don't livelock on blinking cursors
-- Capture primitives (screenshot now; recording is planned) with self-describing metadata
+- Capture primitives (screenshot and bounded recording) with self-describing metadata
 - Presentation: launch a file artifact with explicit placement, auto-dismiss, and in-place replacement
 
 Everything happens over HTTP-over-UDS — same protocol Firecracker uses for VM control, curl-debuggable by default, with an OpenAPI-able surface for agents.
@@ -99,12 +99,31 @@ See `docs/development.md` for first-time setup, rebuild workflow, and TCC reset 
 - **Surface** — a window or tab porthole knows about. Identified by a `surface_id` (string). All verbs operate on surfaces.
 - **Launch** — starts a process or opens an artifact, correlates the resulting OS window to a surface id, tracks it for you.
 - **Attach** — takes an already-running window, hands you a handle to manage it. `search` lists candidates; `track` mints the handle.
-- **Session** — an optional opaque tag you attach to calls. Propagates into event bodies (when events land) and capture metadata. No query endpoint; just correlation-by-tag.
+- **Session** — an optional opaque tag you attach to calls. Propagates into capture metadata. No query endpoint; just correlation-by-tag.
+- **Agent identity** — a local bearer-token principal used by protected routes. Drive routes default-deny until the operator approves a matching request.
 - **Capability** — adapters declare what they actually support via `/info`. Probe before you commit to a workflow.
 
 ## Using porthole from an agent (HTTP)
 
-The daemon speaks HTTP/1.1 over a Unix Domain Socket. SSE is used for `/events` (not yet shipped). Requests are JSON; responses are JSON; errors are `{"code": "snake_case_code", "message": "...", "details": {...}?}` with a matching HTTP status.
+The daemon speaks HTTP/1.1 over a Unix Domain Socket. SSE is available at `/events` for agent-permission and policy events. Requests are JSON; responses are JSON; errors are `{"code": "snake_case_code", "message": "...", "details": {...}?}` with a matching HTTP status.
+
+### Agent permissions
+
+Drive routes (`key`, `text`, `click`, `scroll`, and pointer movement) require an agent bearer token and a matching local grant. Operator commands create identities, inspect pending requests, approve/deny requests, and revoke grants:
+
+```sh
+porthole agents create --name "My Agent" --json
+# Pass the returned token as: Authorization: Bearer <token>
+# CLI drive commands read it from --agent-token or PORTHOLE_AGENT_TOKEN.
+export PORTHOLE_AGENT_TOKEN=pta_agent_...
+
+porthole agents requests --json
+porthole agents approve <request_id> --duration until-surface-gone
+porthole agents grants --json
+porthole agents grant revoke <grant_id>
+```
+
+When a protected route has no matching grant, the daemon returns `403 agent_permission_needed` with a `details.request_id`. Agent clients can retry after approval. Helper/UI clients should subscribe to `/events` for `agent_permission_requested` and `agent_permission_resolved` in the steady state; the CLI commands above provide a polling/operator fallback.
 
 ### Discover capabilities
 
@@ -195,18 +214,21 @@ All input is handle-targeted:
 curl --unix-socket .../porthole.sock \
      -X POST http://localhost/surfaces/$SURFACE/text \
      -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $PORTHOLE_AGENT_TOKEN" \
      -d '{"text": "python3 repro.py\n"}'
 
 # Press Enter with modifiers
 curl --unix-socket .../porthole.sock \
      -X POST http://localhost/surfaces/$SURFACE/key \
      -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $PORTHOLE_AGENT_TOKEN" \
      -d '{"events": [{"key": "Enter"}, {"key": "KeyA", "modifiers": ["Cmd"]}]}'
 
 # Click at window-local coordinates
 curl --unix-socket .../porthole.sock \
      -X POST http://localhost/surfaces/$SURFACE/click \
      -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $PORTHOLE_AGENT_TOKEN" \
      -d '{"x": 120, "y": 440, "button": "left", "count": 1}'
 ```
 
@@ -445,7 +467,7 @@ Every error response follows the same JSON body:
 
 - `404` — surface not found (stale id, never existed)
 - `410` — surface dead (handle exists but window gone)
-- `403` — permission needed (grant Accessibility / Screen Recording)
+- `403` — permission needed (approve agent request, or grant Accessibility / Screen Recording)
 - `409` — correlation ambiguous, launch returned existing, close failed, etc.
 - `400` — invalid argument (unknown key name, out-of-range coord, URL instead of file path, unknown display id, etc.)
 - `501` — adapter can't do this on this platform (capability_missing)
@@ -466,10 +488,9 @@ For the experience report that motivated porthole in the first place, see [docs/
 
 Deferred to future slices:
 
-- **Events SSE** — a live `/events` stream of surface lifecycle and launch notifications. Will enable event-native `wait` for `exists`/`gone`/`title_matches` and populate `recently_active_surface_ids`.
+- **Events SSE expansion** — `/events` currently carries agent-permission and policy events. Surface lifecycle and launch notifications are still planned; those will enable event-native `wait` for `exists`/`gone`/`title_matches` and populate `recently_active_surface_ids`.
 - **Browser / CDP** — URL artifact support, tab-as-first-class-surface, richer browser automation.
 - **Tabs** — native-app tab enumeration (iTerm2, Safari, Ghostty, Preview) with the restricted verb matrix from the v0 spec §4.1.
-- **Recording** — short video capture of a surface.
 - **Porthole-viewer app** — a canonical review-oriented display for agent-common content types (markdown, mermaid, dot, asciinema, videos). Slice C's `open`-based dispatch lands agents in edit-oriented apps; the viewer will be the right primitive for "show this for review."
 - **Hyprland / Linux / Windows** adapters.
 - **Cross-host routing** — same HTTP protocol over TCP; no policy yet.
