@@ -360,6 +360,9 @@ porthole launch --kind artifact --app /tmp/proposal.pdf \
 # Replace in place
 porthole replace $SURFACE --kind artifact --app /tmp/alt.pdf --inherit-placement
 
+# Move a tracked surface to the focused display using default sizing
+porthole place $SURFACE --anchor focused-display
+
 # Close
 porthole close $SURFACE
 ```

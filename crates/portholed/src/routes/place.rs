@@ -3,7 +3,10 @@ use axum::{
     extract::{Path, State},
     http::HeaderMap,
 };
-use porthole_core::{agent_policy::ActionClass, surface::SurfaceId};
+use porthole_core::{
+    ErrorCode, PortholeError, agent_policy::ActionClass, display::Rect, input::CoordUnits, placement::resolve_placement_rect,
+    surface::SurfaceId,
+};
 use porthole_protocol::placement::{PlaceRequest, PlaceResponse};
 
 use crate::{
@@ -22,12 +25,38 @@ pub async fn post_place(
 ) -> Result<Json<PlaceResponse>, ApiError> {
     let surface_id = SurfaceId::from(id);
     let execution = authorize_surface_actions(&state, &headers, surface_id.as_str(), &[ActionClass::Manage], Some("place surface")).await?;
-    state.input.place(&surface_id, req.rect, req.units).await?;
+    let (rect, units) = resolve_place_request(&state, &req).await?;
+    state.input.place(&surface_id, rect, units).await?;
     complete_route_execution(&state, execution, "/surfaces/{id}/place").await?;
     Ok(Json(PlaceResponse {
         surface_id: surface_id.to_string(),
         placed: true,
     }))
+}
+
+async fn resolve_place_request(state: &AppState, req: &PlaceRequest) -> Result<(Rect, CoordUnits), ApiError> {
+    let effective_placement = req.placement.as_ref().filter(|placement| !placement.is_effectively_empty());
+
+    match (req.rect, effective_placement) {
+        (Some(_), Some(_)) => Err(invalid_place("place request cannot include both rect and placement")),
+        (Some(rect), None) => Ok((rect, req.units)),
+        (None, Some(placement)) => {
+            if matches!(req.units, CoordUnits::Physical) {
+                return Err(invalid_place(
+                    "placement uses logical display-local coordinates; units=physical only applies to rect",
+                ));
+            }
+            let rect = resolve_placement_rect(placement, &state.adapter)
+                .await
+                .map_err(|reason| invalid_place(format!("placement could not be resolved: {reason}")))?;
+            Ok((rect, CoordUnits::Logical))
+        }
+        (None, None) => Err(invalid_place("place request requires rect or non-empty placement")),
+    }
+}
+
+fn invalid_place(message: impl Into<String>) -> ApiError {
+    ApiError::from(PortholeError::new(ErrorCode::InvalidArgument, message))
 }
 
 #[cfg(test)]
@@ -133,6 +162,102 @@ mod tests {
             serde_json::json!({ "rect": { "x": 0.0, "y": 0.0, "w": 0.0, "h": 100.0 } }),
         )
         .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err: WireError = serde_json::from_value(body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn post_place_accepts_anchor_placement() {
+        let (router, id, adapter, token) = router_with_alive_surface().await;
+
+        let (status, body) = post_json(
+            router,
+            &format!("/surfaces/{id}/place"),
+            &token,
+            serde_json::json!({ "placement": { "anchor": "focused_display" } }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        let resp: PlaceResponse = serde_json::from_value(body).unwrap();
+        assert!(resp.placed);
+        let calls = adapter.place_surface_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].1,
+            Rect {
+                x: 288.0,
+                y: 162.0,
+                w: 1344.0,
+                h: 756.0
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn post_place_rejects_rect_and_placement_together() {
+        let (router, id, _, token) = router_with_alive_surface().await;
+
+        let (status, body) = post_json(
+            router,
+            &format!("/surfaces/{id}/place"),
+            &token,
+            serde_json::json!({
+                "rect": { "x": 0.0, "y": 0.0, "w": 100.0, "h": 100.0 },
+                "placement": { "anchor": "focused_display" }
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err: WireError = serde_json::from_value(body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn post_place_rejects_empty_request() {
+        let (router, id, _, token) = router_with_alive_surface().await;
+
+        let (status, body) = post_json(router, &format!("/surfaces/{id}/place"), &token, serde_json::json!({})).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err: WireError = serde_json::from_value(body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn post_place_rejects_physical_units_for_placement() {
+        let (router, id, _, token) = router_with_alive_surface().await;
+
+        let (status, body) = post_json(
+            router,
+            &format!("/surfaces/{id}/place"),
+            &token,
+            serde_json::json!({
+                "placement": { "anchor": "focused_display" },
+                "units": "physical"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err: WireError = serde_json::from_value(body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn post_place_rejects_unknown_display_id() {
+        let (router, id, _, token) = router_with_alive_surface().await;
+
+        let (status, body) = post_json(
+            router,
+            &format!("/surfaces/{id}/place"),
+            &token,
+            serde_json::json!({ "placement": { "on_display": "missing-display" } }),
+        )
+        .await;
+
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err: WireError = serde_json::from_value(body).unwrap();
         assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);

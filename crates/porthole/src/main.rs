@@ -343,21 +343,27 @@ enum Command {
         session: Option<String>,
     },
     /// In-place resize/move a surface. Surface identity is preserved — the
-    /// inner process keeps running, unlike `replace`. Coordinates are in
-    /// global screen points by default; pass `--units physical` to specify
-    /// in pixels (daemon divides by the surface's display scale).
+    /// inner process keeps running, unlike `replace`. With only x/y/w/h,
+    /// coordinates are global screen points; with --on-display or --anchor,
+    /// geometry is display-local placement.
     Place {
         surface_id: String,
         #[arg(long)]
-        x: f64,
+        x: Option<f64>,
         #[arg(long)]
-        y: f64,
+        y: Option<f64>,
         #[arg(long)]
-        w: f64,
+        w: Option<f64>,
         #[arg(long)]
-        h: f64,
+        h: Option<f64>,
+        /// Placement display ("focused", "primary", or a display ID).
+        #[arg(long, value_parser = parse_display_target)]
+        on_display: Option<DisplayTarget>,
+        /// Placement anchor: selects target display and default sizing when no geometry is given.
+        #[arg(long, value_enum)]
+        anchor: Option<AnchorArg>,
         /// Coordinate units for x/y/w/h. Default `logical` (Cocoa points).
-        /// `physical` divides all four by the surface's display scale.
+        /// `physical` is only valid for global rect mode.
         #[arg(long, value_enum, default_value_t = UnitsArg::Logical)]
         units: UnitsArg,
         #[arg(long)]
@@ -479,11 +485,11 @@ impl From<AnchorArg> for Anchor {
 /// Validates that geometry flags are either all provided or all absent.
 /// A partial set (e.g. three of four flags) produces a clear error rather than
 /// silently discarding the partial input.
-fn require_full_geometry(x: Option<f64>, y: Option<f64>, w: Option<f64>, h: Option<f64>) -> Result<Option<Rect>, String> {
+fn require_full_geometry(x: Option<f64>, y: Option<f64>, w: Option<f64>, h: Option<f64>, flags: &str) -> Result<Option<Rect>, String> {
     match (x, y, w, h) {
         (None, None, None, None) => Ok(None),
         (Some(x), Some(y), Some(w), Some(h)) => Ok(Some(Rect { x, y, w, h })),
-        _ => Err("partial geometry: must specify all of --geom-x, --geom-y, --geom-w, --geom-h together".into()),
+        _ => Err(format!("partial geometry: must specify all of {flags} together")),
     }
 }
 
@@ -716,7 +722,7 @@ async fn main() -> std::process::ExitCode {
                 },
             };
 
-            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h) {
+            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h, "--geom-x, --geom-y, --geom-w, --geom-h") {
                 Ok(g) => g,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -787,7 +793,7 @@ async fn main() -> std::process::ExitCode {
                 }
             };
 
-            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h) {
+            let geometry = match require_full_geometry(geom_x, geom_y, geom_w, geom_h, "--geom-x, --geom-y, --geom-w, --geom-h") {
                 Ok(g) => g,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -970,9 +976,42 @@ async fn main() -> std::process::ExitCode {
             y,
             w,
             h,
+            on_display,
+            anchor,
             units,
             session,
-        } => place_cmd::run(&client, surface_id, Rect { x, y, w, h }, units.into(), session).await,
+        } => {
+            let geometry = match require_full_geometry(x, y, w, h, "--x, --y, --w, --h") {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    return std::process::ExitCode::FAILURE;
+                }
+            };
+            if on_display.is_some() || anchor.is_some() {
+                if matches!(units, UnitsArg::Physical) {
+                    eprintln!("error: --units physical is only valid for global rect placement");
+                    return std::process::ExitCode::FAILURE;
+                }
+                place_cmd::run_placement(
+                    &client,
+                    surface_id,
+                    PlacementSpec {
+                        on_display,
+                        geometry,
+                        anchor: anchor.map(Anchor::from),
+                    },
+                    session,
+                )
+                .await
+            } else {
+                let Some(rect) = geometry else {
+                    eprintln!("error: place requires either x/y/w/h or --on-display/--anchor placement");
+                    return std::process::ExitCode::FAILURE;
+                };
+                place_cmd::run_rect(&client, surface_id, rect, units.into(), session).await
+            }
+        }
         Command::ContentRect { surface_id, units } => content_rect_cmd::run(&client, surface_id, units.into()).await,
         Command::Pointer { command } => match command {
             PointerCommand::Move {
@@ -1100,7 +1139,7 @@ async fn main() -> std::process::ExitCode {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command};
+    use super::{Cli, Command, require_full_geometry};
 
     #[test]
     fn global_agent_token_can_be_passed_before_drive_command() {
@@ -1108,5 +1147,28 @@ mod tests {
 
         assert_eq!(cli.agent_token.as_deref(), Some("pta_agent.secret"));
         assert!(matches!(cli.command, Command::Text { .. }));
+    }
+
+    #[test]
+    fn place_anchor_can_omit_explicit_geometry() {
+        let cli = Cli::try_parse_from(["porthole", "place", "surf_1", "--anchor", "focused-display"]).unwrap();
+
+        match cli.command {
+            Command::Place { x, y, w, h, anchor, .. } => {
+                assert!(x.is_none());
+                assert!(y.is_none());
+                assert!(w.is_none());
+                assert!(h.is_none());
+                assert!(matches!(anchor, Some(super::AnchorArg::FocusedDisplay)));
+            }
+            _ => panic!("expected place command"),
+        }
+    }
+
+    #[test]
+    fn place_partial_geometry_error_names_place_flags() {
+        let err = require_full_geometry(Some(10.0), Some(20.0), Some(800.0), None, "--x, --y, --w, --h").unwrap_err();
+
+        assert_eq!(err, "partial geometry: must specify all of --x, --y, --w, --h together");
     }
 }
