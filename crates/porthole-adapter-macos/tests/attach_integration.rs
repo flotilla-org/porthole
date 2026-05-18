@@ -17,6 +17,7 @@ fn textedit_spec() -> ProcessLaunchSpec {
         timeout: Duration::from_secs(10),
         require_confidence: RequireConfidence::Strong,
         require_fresh_surface: false,
+        force_place: false,
     }
 }
 

@@ -13,6 +13,7 @@ fn pdf_spec(path: &str) -> ArtifactLaunchSpec {
         path: PathBuf::from(path),
         require_confidence: RequireConfidence::Plausible,
         require_fresh_surface: false,
+        force_place: false,
         timeout: Duration::from_secs(10),
     }
 }
@@ -42,6 +43,7 @@ async fn place_surface_moves_textedit() {
         timeout: Duration::from_secs(10),
         require_confidence: RequireConfidence::Strong,
         require_fresh_surface: false,
+        force_place: false,
     };
     let outcome = adapter.launch_process(&spec).await.expect("launch");
     adapter
@@ -74,6 +76,7 @@ async fn snapshot_geometry_returns_display_id() {
         timeout: Duration::from_secs(10),
         require_confidence: RequireConfidence::Strong,
         require_fresh_surface: false,
+        force_place: false,
     };
     let outcome = adapter.launch_process(&spec).await.expect("launch");
     let snap = adapter.snapshot_geometry(&outcome.surface).await.expect("snapshot");

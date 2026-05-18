@@ -114,6 +114,9 @@ enum Command {
         /// Fail if a preexisting surface is returned instead of a fresh one.
         #[arg(long)]
         require_fresh_surface: bool,
+        /// Apply placement even if launch returns a preexisting surface.
+        #[arg(long)]
+        force_place: bool,
         /// Placement: which display ("focused", "primary", or a display ID).
         #[arg(long, value_parser = parse_display_target)]
         on_display: Option<DisplayTarget>,
@@ -170,6 +173,9 @@ enum Command {
         /// Fail if a preexisting surface is returned instead of a fresh one.
         #[arg(long)]
         require_fresh_surface: bool,
+        /// Apply placement even if launch returns a preexisting surface.
+        #[arg(long)]
+        force_place: bool,
         /// Placement: which display ("focused", "primary", or a display ID).
         #[arg(long, value_parser = parse_display_target, conflicts_with = "inherit_placement")]
         on_display: Option<DisplayTarget>,
@@ -695,6 +701,7 @@ async fn main() -> std::process::ExitCode {
             timeout_ms,
             require_confidence,
             require_fresh_surface,
+            force_place,
             on_display,
             geom_x,
             geom_y,
@@ -747,6 +754,7 @@ async fn main() -> std::process::ExitCode {
                     timeout_ms,
                     require_confidence: require_confidence.into(),
                     require_fresh_surface,
+                    force_place,
                     placement,
                     auto_dismiss_after_ms: auto_dismiss_ms,
                     json,
@@ -765,6 +773,7 @@ async fn main() -> std::process::ExitCode {
             timeout_ms,
             require_confidence,
             require_fresh_surface,
+            force_place,
             on_display,
             geom_x,
             geom_y,
@@ -823,6 +832,7 @@ async fn main() -> std::process::ExitCode {
                 placement,
                 auto_dismiss_after_ms: auto_dismiss_ms,
                 require_fresh_surface,
+                force_place,
             };
             replace_cmd::run(&client, surface_id, req, json).await
         }
@@ -1162,6 +1172,26 @@ mod tests {
                 assert!(matches!(anchor, Some(super::AnchorArg::FocusedDisplay)));
             }
             _ => panic!("expected place command"),
+        }
+    }
+
+    #[test]
+    fn launch_force_place_flag_parses() {
+        let cli = Cli::try_parse_from(["porthole", "launch", "--app", "TextEdit.app", "--force-place"]).unwrap();
+
+        match cli.command {
+            Command::Launch { force_place, .. } => assert!(force_place),
+            _ => panic!("expected launch command"),
+        }
+    }
+
+    #[test]
+    fn replace_force_place_flag_parses() {
+        let cli = Cli::try_parse_from(["porthole", "replace", "surf_1", "--app", "TextEdit.app", "--force-place"]).unwrap();
+
+        match cli.command {
+            Command::Replace { force_place, .. } => assert!(force_place),
+            _ => panic!("expected replace command"),
         }
     }
 

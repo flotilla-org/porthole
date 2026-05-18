@@ -21,6 +21,13 @@ impl LaunchPipeline {
     }
 
     pub async fn launch(&self, spec: &LaunchSpec, placement: Option<&PlacementSpec>) -> Result<LaunchPipelineOutcome, LaunchPipelineError> {
+        if spec.require_fresh_surface() && spec.force_place() {
+            return Err(LaunchPipelineError::Porthole(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                "force_place cannot be combined with require_fresh_surface",
+            )));
+        }
+
         // 0. Pre-flight: validate user-supplied placement spec.
         if let Some(p) = placement {
             validate_placement(p, &self.adapter).await.map_err(LaunchPipelineError::Porthole)?;
@@ -67,7 +74,11 @@ impl LaunchPipeline {
         // 5. Resolve + apply placement.
         let placement_outcome = if outcome.surface_was_preexisting {
             if placement.map(|p| !p.is_effectively_empty()).unwrap_or(false) {
-                PlacementOutcome::SkippedPreexisting
+                if spec.force_place() {
+                    self.apply_placement(&outcome.surface, placement).await
+                } else {
+                    PlacementOutcome::SkippedPreexisting
+                }
             } else {
                 PlacementOutcome::NotRequested
             }
@@ -183,6 +194,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             require_confidence: required,
             require_fresh_surface: false,
+            force_place: false,
         }
     }
 
@@ -195,6 +207,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             require_confidence: rc,
             require_fresh_surface: false,
+            force_place: false,
         }
     }
 
@@ -243,6 +256,7 @@ mod tests {
             path: "/tmp/x.pdf".into(),
             require_confidence: RequireConfidence::Strong,
             require_fresh_surface: false,
+            force_place: false,
             timeout: Duration::from_secs(5),
         });
         let result = pipeline.launch(&spec, None).await.unwrap();
@@ -264,6 +278,7 @@ mod tests {
             path: "/tmp/x.pdf".into(),
             require_confidence: RequireConfidence::Strong,
             require_fresh_surface: true,
+            force_place: false,
             timeout: Duration::from_secs(5),
         });
         match pipeline.launch(&spec, None).await {
@@ -320,6 +335,71 @@ mod tests {
         let result = pipeline.launch(&spec, Some(&placement)).await.unwrap();
         assert_eq!(result.placement, PlacementOutcome::SkippedPreexisting);
         assert!(adapter.place_surface_calls().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn force_place_applies_placement_on_preexisting() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(77);
+        outcome.surface_was_preexisting = true;
+        adapter.set_next_launch_outcome(Ok(outcome)).await;
+        let pipeline = LaunchPipeline::new(adapter.clone(), handles);
+
+        let placement = PlacementSpec {
+            on_display: Some(DisplayTarget::Primary),
+            geometry: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 500.0,
+                h: 500.0,
+            }),
+            anchor: None,
+        };
+        let mut process = spec_minimal(RequireConfidence::Strong);
+        process.force_place = true;
+        let spec = LaunchSpec::Process(process);
+        let result = pipeline.launch(&spec, Some(&placement)).await.unwrap();
+        assert_eq!(result.placement, PlacementOutcome::Applied);
+        assert_eq!(adapter.place_surface_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn force_place_without_effective_placement_is_not_requested() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(77);
+        outcome.surface_was_preexisting = true;
+        adapter.set_next_launch_outcome(Ok(outcome)).await;
+        let pipeline = LaunchPipeline::new(adapter.clone(), handles);
+
+        let mut process = spec_minimal(RequireConfidence::Strong);
+        process.force_place = true;
+        let spec = LaunchSpec::Process(process);
+        let placement = PlacementSpec::default();
+        let result = pipeline.launch(&spec, Some(&placement)).await.unwrap();
+        assert_eq!(result.placement, PlacementOutcome::NotRequested);
+        assert!(adapter.place_surface_calls().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn require_fresh_and_force_place_is_invalid() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let handles = HandleStore::new();
+        let pipeline = LaunchPipeline::new(adapter.clone(), handles);
+
+        let mut process = spec_minimal(RequireConfidence::Strong);
+        process.require_fresh_surface = true;
+        process.force_place = true;
+        let spec = LaunchSpec::Process(process);
+        match pipeline.launch(&spec, None).await {
+            Err(LaunchPipelineError::Porthole(error)) => {
+                assert_eq!(error.code, ErrorCode::InvalidArgument);
+                assert!(error.message.contains("force_place"));
+            }
+            other => panic!("expected invalid force_place combination, got {other:?}"),
+        }
+        assert!(adapter.launch_calls().await.is_empty());
     }
 
     #[tokio::test]
@@ -427,6 +507,7 @@ mod tests {
             path: "/tmp/x.pdf".into(),
             require_confidence: RequireConfidence::Plausible,
             require_fresh_surface: false,
+            force_place: false,
             timeout: std::time::Duration::from_secs(5),
         });
         let result = pipeline.launch(&spec, None).await.unwrap();

@@ -572,6 +572,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             require_confidence: RequireConfidence::Strong,
             require_fresh_surface: false,
+            force_place: false,
         };
         let outcome = adapter.launch_process(&spec).await.unwrap();
         assert_eq!(outcome.confidence, Confidence::Strong);
@@ -677,6 +678,7 @@ mod tests {
             path: "/tmp/test.pdf".into(),
             require_confidence: crate::adapter::RequireConfidence::Strong,
             require_fresh_surface: false,
+            force_place: false,
             timeout: std::time::Duration::from_secs(5),
         };
         let outcome = adapter.launch_artifact(&spec).await.unwrap();

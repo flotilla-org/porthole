@@ -60,6 +60,7 @@ pub struct ProcessLaunchSpec {
     pub timeout: Duration,
     pub require_confidence: RequireConfidence,
     pub require_fresh_surface: bool,
+    pub force_place: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -67,6 +68,7 @@ pub struct ArtifactLaunchSpec {
     pub path: std::path::PathBuf,
     pub require_confidence: RequireConfidence,
     pub require_fresh_surface: bool,
+    pub force_place: bool,
     pub timeout: Duration,
 }
 
@@ -88,6 +90,13 @@ impl LaunchSpec {
         match self {
             LaunchSpec::Process(p) => p.require_fresh_surface,
             LaunchSpec::Artifact(a) => a.require_fresh_surface,
+        }
+    }
+
+    pub fn force_place(&self) -> bool {
+        match self {
+            LaunchSpec::Process(p) => p.force_place,
+            LaunchSpec::Artifact(a) => a.force_place,
         }
     }
 }

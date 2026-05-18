@@ -838,6 +838,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_replace_force_place_applies_placement_to_preexisting_surface() {
+        use porthole_core::surface::{SurfaceId, SurfaceInfo};
+
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
+        old.cg_window_id = Some(51);
+        let old_id = old.id.clone();
+        let state = AppState::new(adapter.clone());
+        state.handles.insert(old).await;
+        let token = authorize_surface(&state, &old_id, vec![ActionClass::Manage]).await;
+
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
+        outcome.surface_was_preexisting = true;
+        adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
+
+        let router = build_router(state);
+        let res = post_with_token(
+            router,
+            &format!("/surfaces/{old_id}/replace"),
+            &token,
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "placement": {
+                    "on_display": "primary",
+                    "geometry": { "x": 0.0, "y": 0.0, "w": 500.0, "h": 500.0 }
+                },
+                "force_place": true
+            }),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::launches::LaunchResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.placement, porthole_core::placement::PlacementOutcome::Applied);
+        assert_eq!(adapter.place_surface_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
     async fn post_launches_rejects_url_artifact() {
         let adapter = Arc::new(InMemoryAdapter::new());
         let router = build_router(AppState::new(adapter));
@@ -1017,5 +1056,62 @@ mod tests {
         let details = err.details.expect("details populated");
         assert!(details.get("ref").is_some());
         assert_eq!(details.get("cg_window_id").and_then(|v| v.as_u64()), Some(321));
+    }
+
+    #[tokio::test]
+    async fn post_launches_force_place_applies_placement_to_preexisting_surface() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
+        outcome.surface_was_preexisting = true;
+        adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
+
+        let state = AppState::new(adapter.clone());
+        let token = authorize_target(&state, TargetSelector::LaunchedByAgent, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(
+            router,
+            "/launches",
+            &token,
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "placement": {
+                    "on_display": "primary",
+                    "geometry": { "x": 0.0, "y": 0.0, "w": 500.0, "h": 500.0 }
+                },
+                "force_place": true
+            }),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let resp: porthole_protocol::launches::LaunchResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(resp.placement, porthole_core::placement::PlacementOutcome::Applied);
+        assert_eq!(adapter.place_surface_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn post_launches_rejects_require_fresh_with_force_place_before_launch() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let state = AppState::new(adapter.clone());
+        let token = authorize_target(&state, TargetSelector::LaunchedByAgent, vec![ActionClass::Manage]).await;
+        let router = build_router(state);
+        let res = post_with_token(
+            router,
+            "/launches",
+            &token,
+            serde_json::json!({
+                "kind": { "type": "artifact", "path": "/tmp/x.pdf" },
+                "require_fresh_surface": true,
+                "force_place": true
+            }),
+        )
+        .await;
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let err: porthole_protocol::error::WireError = serde_json::from_slice(&body).unwrap();
+        assert_eq!(err.code, porthole_core::ErrorCode::InvalidArgument);
+        assert!(adapter.launch_artifact_calls().await.is_empty());
     }
 }
