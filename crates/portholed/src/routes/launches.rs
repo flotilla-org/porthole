@@ -1,13 +1,26 @@
 use std::{collections::BTreeMap, time::Duration};
 
-use axum::{Json, extract::State};
-use porthole_core::adapter::{ArtifactLaunchSpec, LaunchSpec, ProcessLaunchSpec, RequireConfidence};
+use axum::{Json, extract::State, http::HeaderMap};
+use porthole_core::{
+    adapter::{ArtifactLaunchSpec, LaunchSpec, ProcessLaunchSpec, RequireConfidence},
+    agent_policy::ActionClass,
+};
 use porthole_protocol::launches::{ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, WireConfidence, WireCorrelation};
 use uuid::Uuid;
 
-use crate::{routes::errors::ApiError, state::AppState};
+use crate::{
+    routes::{
+        agent_guard::{authorize_launch_actions, complete_route_execution},
+        errors::ApiError,
+    },
+    state::AppState,
+};
 
-pub async fn post_launches(State(state): State<AppState>, Json(req): Json<LaunchRequest>) -> Result<Json<LaunchResponse>, ApiError> {
+pub async fn post_launches(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<LaunchRequest>,
+) -> Result<Json<LaunchResponse>, ApiError> {
     // Validate auto_dismiss_after_ms before building spec.
     if req.auto_dismiss_after_ms == Some(0) {
         return Err(ApiError::from(porthole_core::PortholeError::new(
@@ -17,8 +30,10 @@ pub async fn post_launches(State(state): State<AppState>, Json(req): Json<Launch
     }
 
     let spec = request_to_launch_spec(&req)?;
+    let execution = authorize_launch_actions(&state, &headers, &[ActionClass::Manage], Some("launch surface")).await?;
     let placement = req.placement.as_ref();
     let result = state.pipeline.launch(&spec, placement).await?;
+    complete_route_execution(&state, execution, "/launches").await?;
 
     // Schedule auto-dismiss if requested.
     if let Some(ms) = req.auto_dismiss_after_ms {

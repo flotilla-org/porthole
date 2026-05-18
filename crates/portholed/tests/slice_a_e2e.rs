@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use porthole_core::{ErrorCode, agent_policy::ActionClass, in_memory::InMemoryAdapter, surface::SurfaceInfo};
-use porthole_protocol::agent_permissions::{
-    AgentPermissionConstraints, AgentPermissionDuration, AgentPermissionNeededDetails, AgentPermissionTarget,
-    ApproveAgentPermissionRequest, CreateAgentIdentityRequest, CreateAgentIdentityResponse,
-};
+mod common;
+
+use common::approve_permission_needed;
+use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
+use porthole_protocol::agent_permissions::{AgentPermissionDuration, CreateAgentIdentityRequest, CreateAgentIdentityResponse};
 use portholed::{agent_store::AgentPolicyStore, events::EventBus, server::serve_with_agent_policy};
 
 #[tokio::test]
@@ -48,13 +48,25 @@ async fn cli_through_daemon_key_text_click_wait_close() {
         .await
         .expect("create agent identity");
     let agent_client = porthole::client::DaemonClient::new(&socket).with_bearer_token(identity.token);
-    let launch: porthole_protocol::launches::LaunchResponse = client
+    let first_launch: Result<porthole_protocol::launches::LaunchResponse, porthole::client::ClientError> = agent_client
+        .post_json(
+            "/launches",
+            &serde_json::json!({ "kind": { "type": "process", "app": "X", "args": [] } }),
+        )
+        .await;
+    approve_permission_needed(
+        &client,
+        first_launch.expect_err("launch should need permission"),
+        AgentPermissionDuration::Once,
+    )
+    .await;
+    let launch: porthole_protocol::launches::LaunchResponse = agent_client
         .post_json(
             "/launches",
             &serde_json::json!({ "kind": { "type": "process", "app": "X", "args": [] } }),
         )
         .await
-        .expect("launch");
+        .expect("launch after approval");
 
     let first_key: Result<porthole_protocol::input::KeyResponse, porthole::client::ClientError> = agent_client
         .post_json(
@@ -62,25 +74,12 @@ async fn cli_through_daemon_key_text_click_wait_close() {
             &serde_json::json!({ "events": [{ "key": "Enter" }] }),
         )
         .await;
-    let permission_needed = match first_key {
-        Err(porthole::client::ClientError::Api(wire)) if wire.code == ErrorCode::AgentPermissionNeeded => wire,
-        other => panic!("expected permission-needed response, got {other:?}"),
-    };
-    let details: AgentPermissionNeededDetails = serde_json::from_value(permission_needed.details.unwrap()).unwrap();
-    let _: porthole_protocol::agent_permissions::AgentGrantResponse = client
-        .post_json(
-            &format!("/agent-permissions/requests/{}/approve", details.request_id),
-            &ApproveAgentPermissionRequest {
-                duration: AgentPermissionDuration::UntilSurfaceGone,
-                target: AgentPermissionTarget::Surface {
-                    surface_id: launch.surface_id.clone(),
-                },
-                actions: vec![ActionClass::Drive],
-                constraints: AgentPermissionConstraints::default(),
-            },
-        )
-        .await
-        .expect("approve drive permission");
+    approve_permission_needed(
+        &client,
+        first_key.expect_err("key should need permission"),
+        AgentPermissionDuration::UntilSurfaceGone,
+    )
+    .await;
 
     let _: porthole_protocol::input::KeyResponse = agent_client
         .post_json(
@@ -98,18 +97,39 @@ async fn cli_through_daemon_key_text_click_wait_close() {
         .await
         .expect("text");
     // wait exists
-    let _: porthole_protocol::wait::WaitResponse = client
+    let first_wait: Result<porthole_protocol::wait::WaitResponse, porthole::client::ClientError> = agent_client
+        .post_json(
+            &format!("/surfaces/{}/wait", launch.surface_id),
+            &serde_json::json!({ "condition": { "type": "exists" }, "timeout_ms": 1000 }),
+        )
+        .await;
+    approve_permission_needed(
+        &client,
+        first_wait.expect_err("wait should need permission"),
+        AgentPermissionDuration::UntilSurfaceGone,
+    )
+    .await;
+    let _: porthole_protocol::wait::WaitResponse = agent_client
         .post_json(
             &format!("/surfaces/{}/wait", launch.surface_id),
             &serde_json::json!({ "condition": { "type": "exists" }, "timeout_ms": 1000 }),
         )
         .await
-        .expect("wait");
+        .expect("wait after approval");
     // close
-    let _: porthole_protocol::close_focus::CloseResponse = client
+    let first_close: Result<porthole_protocol::close_focus::CloseResponse, porthole::client::ClientError> = agent_client
+        .post_json(&format!("/surfaces/{}/close", launch.surface_id), &serde_json::json!({}))
+        .await;
+    approve_permission_needed(
+        &client,
+        first_close.expect_err("close should need permission"),
+        AgentPermissionDuration::UntilSurfaceGone,
+    )
+    .await;
+    let _: porthole_protocol::close_focus::CloseResponse = agent_client
         .post_json(&format!("/surfaces/{}/close", launch.surface_id), &serde_json::json!({}))
         .await
-        .expect("close");
+        .expect("close after approval");
 
     server_task.abort();
 

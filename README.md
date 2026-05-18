@@ -100,7 +100,7 @@ See `docs/development.md` for first-time setup, rebuild workflow, and TCC reset 
 - **Launch** — starts a process or opens an artifact, correlates the resulting OS window to a surface id, tracks it for you.
 - **Attach** — takes an already-running window, hands you a handle to manage it. `search` lists candidates; `track` mints the handle.
 - **Session** — an optional opaque tag you attach to calls. Propagates into capture metadata. No query endpoint; just correlation-by-tag.
-- **Agent identity** — a local bearer-token principal used by protected routes. Drive routes default-deny until the operator approves a matching request.
+- **Agent identity** — a local bearer-token principal used by protected routes. Surface and desktop-control routes default-deny until the operator approves a matching request.
 - **Capability** — adapters declare what they actually support via `/info`. Probe before you commit to a workflow.
 
 ## Using porthole from an agent (HTTP)
@@ -109,7 +109,7 @@ The daemon speaks HTTP/1.1 over a Unix Domain Socket. SSE is available at `/even
 
 ### Agent permissions
 
-Drive routes (`key`, `text`, `click`, `scroll`, and pointer movement) require an agent bearer token and a matching local grant. Operator commands create identities, inspect pending requests, approve/deny requests, and revoke grants:
+Protected routes require an agent bearer token and a matching local grant. The current route map covers launch/search/track/attention/display metadata, surface observe routes (`screenshot`, `wait`, `content-rect`), drive routes (`focus`, `key`, `text`, `click`, `scroll`, pointer movement), manage routes (`place`, `replace`, `close`), and surface capture-session creation. Operator commands create identities, inspect pending requests, approve/deny requests, and revoke grants:
 
 ```sh
 porthole agents create --name "My Agent" --json
@@ -124,7 +124,7 @@ porthole agents grants --json
 porthole agents grant revoke <grant_id>
 ```
 
-When a protected route has no matching grant, the daemon returns `403 agent_permission_needed` with a `details.request_id`. Agent clients can retry after approval. Helper/UI clients should subscribe to `/events` for `agent_permission_requested` and `agent_permission_resolved` in the steady state; the CLI commands above provide a polling/operator fallback.
+When a protected route has no matching grant, the daemon returns `403 agent_permission_needed` with a `details.request_id`, `details.target`, and requested actions. Agent clients can retry after approval. Helper/UI clients should subscribe to `/events` for `agent_permission_requested` and `agent_permission_resolved` in the steady state; the CLI commands above provide a polling/operator fallback.
 
 ### Discover capabilities
 

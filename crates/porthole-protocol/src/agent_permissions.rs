@@ -51,7 +51,9 @@ pub struct AgentIdentityMetadata {
 pub struct AgentPermissionNeededDetails {
     pub request_id: PermissionRequestId,
     pub agent_id: AgentId,
-    pub surface_id: SurfaceId,
+    pub target: AgentPermissionTarget,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_id: Option<SurfaceId>,
     pub actions: Vec<ActionClass>,
     pub recommended_duration: AgentPermissionDuration,
 }
@@ -305,7 +307,10 @@ mod tests {
         let details = AgentPermissionNeededDetails {
             request_id: PermissionRequestId::from("apr_1"),
             agent_id: AgentId::from("agent_1"),
-            surface_id: SurfaceId::from("surf_1"),
+            target: AgentPermissionTarget::Surface {
+                surface_id: SurfaceId::from("surf_1"),
+            },
+            surface_id: Some(SurfaceId::from("surf_1")),
             actions: vec![ActionClass::Drive],
             recommended_duration: AgentPermissionDuration::UntilSurfaceGone,
         };

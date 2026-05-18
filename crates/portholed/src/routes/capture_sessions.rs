@@ -1,26 +1,57 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
 };
-use porthole_core::{ErrorCode, PortholeError};
+use porthole_core::{ErrorCode, PortholeError, agent_policy::ActionClass};
 use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
 
-use crate::{capture_registry::CaptureRegistryError, routes::errors::ApiError, state::AppState};
+use crate::{
+    capture_registry::CaptureRegistryError,
+    routes::{
+        agent_guard::{authorize_surface_actions, complete_route_execution},
+        errors::ApiError,
+    },
+    state::AppState,
+};
 
 pub async fn post_synthetic(State(state): State<AppState>) -> Result<Json<CreateCaptureSessionResponse>, ApiError> {
     state.capture.create_synthetic_session().map(Json).map_err(capture_error_to_api)
 }
 
-pub async fn post_surface(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<CreateCaptureSessionResponse>, ApiError> {
+pub async fn post_surface(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<CreateCaptureSessionResponse>, ApiError> {
     let surface_id = porthole_core::surface::SurfaceId::from(id);
+    let execution = authorize_surface_actions(
+        &state,
+        &headers,
+        surface_id.as_str(),
+        &[ActionClass::Observe, ActionClass::Record],
+        Some("record surface"),
+    )
+    .await?;
     let surface = state.handles.require_alive(&surface_id).await?;
-    state
+    let response = state
         .capture
         .create_surface_session(state.adapter.clone(), surface)
         .await
-        .map(Json)
-        .map_err(capture_error_to_api)
+        .map_err(capture_error_to_api)?;
+    let audit_state = state.clone();
+    // Do not delay the initial frame handoff on audit persistence; capture
+    // startup can race tight fd consumers in tests and real clients.
+    tokio::spawn(async move {
+        if let Err(error) = complete_route_execution(&audit_state, execution, "/capture-sessions/surfaces/{id}").await {
+            tracing::warn!(
+                code = %error.0.code,
+                message = %error.0.message,
+                "failed to write surface capture-session route execution audit"
+            );
+        }
+    });
+    Ok(Json(response))
 }
 
 pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<CaptureSessionResponse>, ApiError> {
