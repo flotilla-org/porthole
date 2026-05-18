@@ -22,6 +22,10 @@ use porthole_protocol::launches::WireConfidence;
 #[derive(Parser)]
 #[command(version, about = "porthole — OS-level presentation substrate")]
 struct Cli {
+    /// Agent bearer token for protected routes. Can also be supplied with
+    /// PORTHOLE_AGENT_TOKEN.
+    #[arg(long, global = true)]
+    agent_token: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -614,6 +618,13 @@ enum ConditionArg {
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let mut client = DaemonClient::new(socket_path());
+    let agent_token = cli
+        .agent_token
+        .or_else(|| std::env::var("PORTHOLE_AGENT_TOKEN").ok())
+        .filter(|token| !token.is_empty());
+    if let Some(agent_token) = agent_token {
+        client = client.with_bearer_token(agent_token);
+    }
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
         Command::Install {
@@ -1073,5 +1084,20 @@ async fn main() -> std::process::ExitCode {
             eprintln!("error: {e}");
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn global_agent_token_can_be_passed_before_drive_command() {
+        let cli = Cli::try_parse_from(["porthole", "--agent-token", "pta_agent.secret", "text", "surf_1", "hi"]).unwrap();
+
+        assert_eq!(cli.agent_token.as_deref(), Some("pta_agent.secret"));
+        assert!(matches!(cli.command, Command::Text { .. }));
     }
 }
