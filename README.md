@@ -39,7 +39,7 @@ cargo xtask bundle --platform macos --release
 porthole onboard
 
 # 3. From now on the helper is ambient and keeps the daemon running. Verify:
-porthole info
+porthole status
 ```
 
 Why install before onboard: TCC grants attach to bundle path. Granting in the build location and then moving the bundle to `/Applications` resets the grants, and onboarding the build location twice does no good. Install first → onboard against the final location → done.

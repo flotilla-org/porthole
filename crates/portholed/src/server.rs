@@ -548,6 +548,27 @@ mod tests {
         let info: porthole_protocol::info::InfoResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(info.adapters.len(), 1);
         assert_eq!(info.adapters[0].name, "in-memory");
+        assert_eq!(info.surface_count, 0);
+    }
+
+    #[tokio::test]
+    async fn get_info_reports_alive_surface_count() {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let state = AppState::new(adapter);
+        let alive = porthole_core::SurfaceInfo::window(porthole_core::SurfaceId::from("surf_alive"), 1);
+        let dead = porthole_core::SurfaceInfo::window(porthole_core::SurfaceId::from("surf_dead"), 2);
+        let dead_id = dead.id.clone();
+        state.handles.insert(alive).await;
+        state.handles.insert(dead).await;
+        state.handles.mark_dead(&dead_id).await.unwrap();
+        let router = build_router(state);
+
+        let req = Request::builder().method(Method::GET).uri("/info").body(Body::empty()).unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let info: porthole_protocol::info::InfoResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info.surface_count, 1);
     }
 
     #[tokio::test]

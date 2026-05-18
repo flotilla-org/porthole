@@ -299,6 +299,7 @@ mod tests {
         InfoResponse {
             daemon_version: "test".into(),
             uptime_seconds: 0,
+            surface_count: 0,
             adapters: vec![AdapterInfo {
                 name: "fake".into(),
                 loaded: true,

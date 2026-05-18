@@ -55,6 +55,11 @@ impl HandleStore {
             .map(|info| info.id.clone())
     }
 
+    pub async fn alive_count(&self) -> usize {
+        let guard = self.inner.read().await;
+        guard.values().filter(|info| info.state == SurfaceState::Alive).count()
+    }
+
     /// Atomic get-or-insert keyed by `cg_window_id`. Holds the write lock
     /// across both the lookup and the insert so concurrent callers cannot
     /// both mint a new handle for the same window.
@@ -226,5 +231,18 @@ mod tests {
         let (returned, reused) = store.track_or_get(fresh.clone()).await;
         assert!(!reused, "dead handle should not be reused");
         assert_eq!(returned.id, fresh.id);
+    }
+
+    #[tokio::test]
+    async fn alive_count_excludes_dead_handles() {
+        let store = HandleStore::new();
+        let alive = SurfaceInfo::window(SurfaceId::new(), 1);
+        let dead = SurfaceInfo::window(SurfaceId::new(), 2);
+        let dead_id = dead.id.clone();
+        store.insert(alive).await;
+        store.insert(dead).await;
+        store.mark_dead(&dead_id).await.unwrap();
+
+        assert_eq!(store.alive_count().await, 1);
     }
 }
