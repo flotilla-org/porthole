@@ -62,6 +62,7 @@ pub(crate) fn request_to_launch_spec(req: &LaunchRequest) -> Result<LaunchSpec, 
     let timeout = Duration::from_millis(req.timeout_ms);
     let require_confidence = wire_to_require(req.require_confidence);
     let require_fresh = req.require_fresh_surface;
+    let force_place = req.force_place;
     match &req.kind {
         LaunchKind::Process(p) => Ok(LaunchSpec::Process(ProcessLaunchSpec {
             app: p.app.clone(),
@@ -71,6 +72,7 @@ pub(crate) fn request_to_launch_spec(req: &LaunchRequest) -> Result<LaunchSpec, 
             timeout,
             require_confidence,
             require_fresh_surface: require_fresh,
+            force_place,
         })),
         LaunchKind::Artifact(ArtifactLaunch { path }) => {
             if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
@@ -83,6 +85,7 @@ pub(crate) fn request_to_launch_spec(req: &LaunchRequest) -> Result<LaunchSpec, 
                 path: std::path::PathBuf::from(path),
                 require_confidence,
                 require_fresh_surface: require_fresh,
+                force_place,
                 timeout,
             }))
         }

@@ -119,6 +119,7 @@ mod tests {
             timeout: Duration::from_millis(500),
             require_confidence: porthole_core::adapter::RequireConfidence::Strong,
             require_fresh_surface: false,
+            force_place: false,
         };
         let err = launch_process(&adapter, &spec).await.unwrap_err();
         // `open` will exit nonzero but our poll loop still hits the deadline.

@@ -23,6 +23,7 @@ pub struct LaunchArgs {
     pub timeout_ms: u64,
     pub require_confidence: WireConfidence,
     pub require_fresh_surface: bool,
+    pub force_place: bool,
     pub placement: Option<PlacementSpec>,
     pub auto_dismiss_after_ms: Option<u64>,
     pub json: bool,
@@ -54,6 +55,7 @@ pub async fn run(client: &DaemonClient, args: LaunchArgs) -> Result<(), ClientEr
         placement: args.placement,
         auto_dismiss_after_ms: args.auto_dismiss_after_ms,
         require_fresh_surface: args.require_fresh_surface,
+        force_place: args.force_place,
     };
     let res: LaunchResponse = client.post_json("/launches", &req).await?;
     if args.json {

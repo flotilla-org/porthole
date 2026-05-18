@@ -131,6 +131,7 @@ mod tests {
             path: path.into(),
             require_confidence: RequireConfidence::Strong,
             require_fresh_surface: fresh,
+            force_place: false,
             timeout: std::time::Duration::from_secs(5),
         })
     }

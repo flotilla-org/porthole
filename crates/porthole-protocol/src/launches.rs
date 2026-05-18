@@ -24,6 +24,8 @@ pub struct LaunchRequest {
     pub auto_dismiss_after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub require_fresh_surface: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_place: bool,
 }
 
 fn default_require_confidence() -> WireConfidence {
@@ -120,6 +122,22 @@ mod tests {
         let req: LaunchRequest = serde_json::from_str(json).unwrap();
         assert!(req.placement.is_some());
         assert!(req.placement.unwrap().is_effectively_empty());
+    }
+
+    #[test]
+    fn launch_request_force_place_defaults_false() {
+        let json = r#"{"kind":{"type":"process","app":"x"}}"#;
+        let req: LaunchRequest = serde_json::from_str(json).unwrap();
+        assert!(!req.force_place);
+    }
+
+    #[test]
+    fn launch_request_force_place_roundtrips_true() {
+        let json = r#"{"kind":{"type":"process","app":"x"},"force_place":true}"#;
+        let req: LaunchRequest = serde_json::from_str(json).unwrap();
+        assert!(req.force_place);
+        let serialized = serde_json::to_value(&req).unwrap();
+        assert_eq!(serialized["force_place"], true);
     }
 
     #[test]
