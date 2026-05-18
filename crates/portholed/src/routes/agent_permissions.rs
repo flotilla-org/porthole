@@ -163,7 +163,7 @@ pub async fn post_deny_request(
 }
 
 pub async fn get_grants(State(state): State<AppState>) -> Result<Json<Vec<AgentGrantResponse>>, ApiError> {
-    let grants = state.agent_store.list_grants().await?;
+    let grants = state.agent_store.list_active_grants(now_unix_ms()).await?;
     Ok(Json(grants.into_iter().map(grant_response).collect()))
 }
 
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(grants[0]["origin_request_id"], pending.request_id.to_string());
 
         let (status, revoked) = post(
-            router,
+            router.clone(),
             &format!("/agent-permissions/grants/{grant_id}/revoke"),
             serde_json::json!({}),
         )
@@ -421,6 +421,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(serde_json::from_value::<RevocationResponse>(revoked).unwrap().revoked);
         assert!(matches!(events.recv().await.unwrap(), AgentEvent::AgentPolicyChanged { .. }));
+
+        let (status, grants) = get(router, "/agent-permissions/grants").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(grants.as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

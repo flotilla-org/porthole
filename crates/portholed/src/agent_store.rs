@@ -381,6 +381,7 @@ impl AgentPolicyStore {
                 None,
                 None,
                 None,
+                stored_reason.as_deref(),
             )?;
             Ok(StoredPermissionRequest {
                 request_id,
@@ -461,6 +462,7 @@ impl AgentPolicyStore {
                 Some(decided_at_unix_ms),
                 expires_at_unix_ms,
                 None,
+                None,
             )?;
             tx.commit()?;
             Ok(StoredGrant {
@@ -494,14 +496,17 @@ impl AgentPolicyStore {
         .await
     }
 
-    pub async fn list_grants(&self) -> StoreResult<Vec<StoredGrant>> {
+    pub async fn list_active_grants(&self, now_unix_ms: u64) -> StoreResult<Vec<StoredGrant>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT grant_id, agent_id, origin_request_id, target_json, actions_json, duration_json, constraints_json, created_at_unix_ms, expires_at_unix_ms, consumed_at_unix_ms, revoked_at_unix_ms
                  FROM agent_grants
+                 WHERE revoked_at_unix_ms IS NULL
+                   AND consumed_at_unix_ms IS NULL
+                   AND (expires_at_unix_ms IS NULL OR expires_at_unix_ms > ?1)
                  ORDER BY created_at_unix_ms, grant_id",
             )?;
-            let rows = stmt.query_map([], grant_tuple_from_row)?;
+            let rows = stmt.query_map(params![now_unix_ms], grant_tuple_from_row)?;
             rows.map(|row| stored_grant_from_tuple(row?)).collect()
         })
         .await
@@ -526,7 +531,7 @@ impl AgentPolicyStore {
         &self,
         request_id: &PermissionRequestId,
         remember: bool,
-        _reason: Option<String>,
+        reason: Option<String>,
         decided_at_unix_ms: u64,
     ) -> StoreResult<Option<Denial>> {
         let request_id = request_id.clone();
@@ -541,13 +546,14 @@ impl AgentPolicyStore {
             let denial = if remember {
                 let denial_id = DenialId::from(format!("deny_{}", Uuid::new_v4().simple()));
                 tx.execute(
-                    "INSERT INTO agent_denials(denial_id, agent_id, target_json, actions_json, created_at_unix_ms, expires_at_unix_ms)
-                     VALUES(?1, ?2, ?3, ?4, ?5, NULL)",
+                    "INSERT INTO agent_denials(denial_id, agent_id, target_json, actions_json, reason, created_at_unix_ms, expires_at_unix_ms)
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL)",
                     params![
                         denial_id.as_str(),
                         request.agent_id.as_str(),
                         serde_json::to_string(&request.target)?,
                         serde_json::to_string(&actions)?,
+                        reason.as_deref(),
                         decided_at_unix_ms,
                     ],
                 )?;
@@ -581,6 +587,7 @@ impl AgentPolicyStore {
                 Some(decided_at_unix_ms),
                 None,
                 None,
+                reason.as_deref(),
             )?;
             tx.commit()?;
             Ok(denial)
@@ -717,6 +724,7 @@ impl AgentPolicyStore {
                 None,
                 None,
                 Some(record.executed_at_unix_ms),
+                None,
             )
         })
         .await
@@ -768,6 +776,26 @@ impl AgentPolicyStore {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare("SELECT decision FROM agent_permission_audit ORDER BY rowid")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    async fn debug_denial_reasons(&self) -> StoreResult<Vec<Option<String>>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare("SELECT reason FROM agent_denials ORDER BY rowid")?;
+            let rows = stmt.query_map([], |row| row.get::<_, Option<String>>(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    async fn debug_audit_reasons(&self) -> StoreResult<Vec<Option<String>>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare("SELECT reason FROM agent_permission_audit ORDER BY rowid")?;
+            let rows = stmt.query_map([], |row| row.get::<_, Option<String>>(0))?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
         })
         .await
@@ -829,6 +857,7 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
             agent_id TEXT NOT NULL,
             target_json TEXT NOT NULL,
             actions_json TEXT NOT NULL,
+            reason TEXT,
             created_at_unix_ms INTEGER NOT NULL,
             expires_at_unix_ms INTEGER
         );
@@ -852,6 +881,7 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
             decision TEXT NOT NULL,
             grant_id TEXT,
             denial_id TEXT,
+            reason TEXT,
             requested_at_unix_ms INTEGER,
             decided_at_unix_ms INTEGER,
             expires_at_unix_ms INTEGER,
@@ -1063,13 +1093,14 @@ fn insert_audit(
     decided_at_unix_ms: Option<u64>,
     expires_at_unix_ms: Option<u64>,
     executed_at_unix_ms: Option<u64>,
+    reason: Option<&str>,
 ) -> StoreResult<()> {
     let audit_id = format!("audit_{}", Uuid::new_v4().simple());
     let target_json = serde_json::to_string(target)?;
     let actions_json = serde_json::to_string(&canonicalize_actions(actions.to_vec()))?;
     conn.execute(
-        "INSERT INTO agent_permission_audit(audit_id, agent_id, request_id, route, target_json, actions_json, decision, grant_id, denial_id, requested_at_unix_ms, decided_at_unix_ms, expires_at_unix_ms, executed_at_unix_ms)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO agent_permission_audit(audit_id, agent_id, request_id, route, target_json, actions_json, decision, grant_id, denial_id, reason, requested_at_unix_ms, decided_at_unix_ms, expires_at_unix_ms, executed_at_unix_ms)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             audit_id,
             agent_id.as_str(),
@@ -1080,6 +1111,7 @@ fn insert_audit(
             decision,
             grant_id.map(GrantId::as_str),
             denial_id.map(DenialId::as_str),
+            reason,
             requested_at_unix_ms,
             decided_at_unix_ms,
             expires_at_unix_ms,
@@ -1306,6 +1338,95 @@ mod tests {
         assert_eq!(snapshot.grants[0].target, target("surf_1"));
         assert_eq!(snapshot.grants[0].actions, vec![ActionClass::Drive]);
         assert_eq!(snapshot.grants[0].constraints, vec![Constraint::RequiresFrontmost]);
+    }
+
+    #[tokio::test]
+    async fn list_active_grants_excludes_revoked_consumed_and_expired_grants() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let live_request = pending_request(&store).await;
+        let live_grant = store
+            .approve_request(&live_request.request_id, DurationSpec::Persistent, Vec::new(), NOW + 2)
+            .await
+            .unwrap();
+
+        let revoked_request = store
+            .create_pending_request(
+                live_request.agent_id.clone(),
+                target("surf_2"),
+                vec![ActionClass::Drive],
+                None,
+                NOW + 3,
+            )
+            .await
+            .unwrap();
+        let revoked_grant = store
+            .approve_request(&revoked_request.request_id, DurationSpec::Persistent, Vec::new(), NOW + 4)
+            .await
+            .unwrap();
+        store.revoke_grant(&revoked_grant.grant_id, NOW + 5).await.unwrap();
+
+        let expired_request = store
+            .create_pending_request(
+                live_request.agent_id.clone(),
+                target("surf_3"),
+                vec![ActionClass::Drive],
+                None,
+                NOW + 6,
+            )
+            .await
+            .unwrap();
+        store
+            .approve_request(
+                &expired_request.request_id,
+                DurationSpec::TimeBounded {
+                    expires_at_unix_ms: NOW + 7,
+                },
+                Vec::new(),
+                NOW + 6,
+            )
+            .await
+            .unwrap();
+
+        let once_request = store
+            .create_pending_request(live_request.agent_id, target("surf_4"), vec![ActionClass::Drive], None, NOW + 8)
+            .await
+            .unwrap();
+        let once_grant = store
+            .approve_request(&once_request.request_id, DurationSpec::Once, Vec::new(), NOW + 9)
+            .await
+            .unwrap();
+        store.try_consume_once_grant(&once_grant.grant_id, NOW + 10).await.unwrap();
+
+        let active = store.list_active_grants(NOW + 11).await.unwrap();
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].grant_id, live_grant.grant_id);
+    }
+
+    #[tokio::test]
+    async fn denying_request_persists_reason_for_denial_and_audit_rows() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let request = store
+            .create_pending_request(
+                store.create_identity("agent", None, NOW).await.unwrap().agent_id,
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                Some("needs typing".into()),
+                NOW + 1,
+            )
+            .await
+            .unwrap();
+
+        store
+            .deny_request(&request.request_id, true, Some("operator denied".into()), NOW + 2)
+            .await
+            .unwrap();
+
+        assert_eq!(store.debug_denial_reasons().await.unwrap(), vec![Some("operator denied".into())]);
+        assert_eq!(
+            store.debug_audit_reasons().await.unwrap(),
+            vec![Some("needs typing".into()), Some("operator denied".into())]
+        );
     }
 
     #[tokio::test]
