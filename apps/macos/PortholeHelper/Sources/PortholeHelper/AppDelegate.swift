@@ -12,10 +12,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
 
         let paths = BundlePaths.current()
-        supervisor = DaemonSupervisor(daemonURL: paths.daemonURL, cliURL: paths.cliURL) { [weak self] state in
-            self?.render(state)
-        }
-        supervisor?.start()
+        HelperStartup(
+            migrateLaunchAgent: { LaunchAgentMigrator().migrate() },
+            startSupervisor: { [weak self] in
+                guard let self else { return }
+                let nextSupervisor = DaemonSupervisor(daemonURL: paths.daemonURL, cliURL: paths.cliURL) { [weak self] state in
+                    self?.render(state)
+                }
+                supervisor = nextSupervisor
+                nextSupervisor.start()
+            },
+            reportMigration: { [weak self] result in self?.reportLaunchAgentMigration(result) }
+        ).start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -52,6 +60,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusMenuItem?.title = "Daemon: already running"
         case .crashed(let status):
             statusMenuItem?.title = "Daemon: restarting after exit \(status)"
+        }
+    }
+
+    private func reportLaunchAgentMigration(_ result: LaunchAgentMigrator.MigrationResult) {
+        switch result {
+        case .notNeeded:
+            break
+        case .migrated(let url):
+            NSLog("retired legacy Porthole LaunchAgent at \(url.path(percentEncoded: false))")
+        case .failed(let url, let reason):
+            NSLog("failed to retire legacy Porthole LaunchAgent at \(url.path(percentEncoded: false)): \(reason)")
+            statusMenuItem?.title = "LaunchAgent migration failed; daemon starting"
         }
     }
 
