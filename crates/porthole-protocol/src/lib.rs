@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod agent_permissions;
 pub mod attention;
 pub mod capture_sessions;
 pub mod close_focus;
