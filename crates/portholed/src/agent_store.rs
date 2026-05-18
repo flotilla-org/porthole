@@ -348,12 +348,25 @@ impl AgentPolicyStore {
         reason: Option<String>,
         created_at_unix_ms: u64,
     ) -> StoreResult<StoredPermissionRequest> {
+        self.find_or_create_pending_request(agent_id, target, actions, reason, created_at_unix_ms)
+            .await
+            .map(|(request, _created)| request)
+    }
+
+    pub async fn find_or_create_pending_request(
+        &self,
+        agent_id: AgentId,
+        target: TargetSelector,
+        actions: Vec<ActionClass>,
+        reason: Option<String>,
+        created_at_unix_ms: u64,
+    ) -> StoreResult<(StoredPermissionRequest, bool)> {
         self.with_conn(move |conn| {
             let actions = canonicalize_actions(actions);
             let target_json = serde_json::to_string(&target)?;
             let actions_json = serde_json::to_string(&actions)?;
             if let Some(existing) = select_pending_request(conn, &agent_id, &target_json, &actions_json)? {
-                return Ok(existing);
+                return Ok((existing, false));
             }
 
             let request_id = PermissionRequestId::from(format!("apr_{}", Uuid::new_v4().simple()));
@@ -388,7 +401,7 @@ impl AgentPolicyStore {
                 stored_reason.as_deref(),
             )?;
             tx.commit()?;
-            Ok(StoredPermissionRequest {
+            let request = StoredPermissionRequest {
                 request_id,
                 agent_id,
                 target,
@@ -397,7 +410,8 @@ impl AgentPolicyStore {
                 status: PermissionRequestStatus::Pending,
                 created_at_unix_ms,
                 resolved_at_unix_ms: None,
-            })
+            };
+            Ok((request, true))
         })
         .await
     }
@@ -513,6 +527,22 @@ impl AgentPolicyStore {
             )?;
             let rows = stmt.query_map(params![now_unix_ms], grant_tuple_from_row)?;
             rows.map(|row| stored_grant_from_tuple(row?)).collect()
+        })
+        .await
+    }
+
+    pub async fn get_grant(&self, grant_id: &GrantId) -> StoreResult<Option<StoredGrant>> {
+        let grant_id = grant_id.clone();
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT grant_id, agent_id, origin_request_id, target_json, actions_json, duration_json, constraints_json, created_at_unix_ms, expires_at_unix_ms, consumed_at_unix_ms, revoked_at_unix_ms
+                 FROM agent_grants
+                 WHERE grant_id = ?1",
+            )?;
+            let row = stmt
+                .query_row(params![grant_id.as_str()], grant_tuple_from_row)
+                .optional()?;
+            row.map(stored_grant_from_tuple).transpose()
         })
         .await
     }
@@ -787,10 +817,25 @@ impl AgentPolicyStore {
     }
 
     #[cfg(test)]
-    async fn debug_audit_decisions(&self) -> StoreResult<Vec<String>> {
+    pub(crate) async fn debug_audit_decisions(&self) -> StoreResult<Vec<String>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare("SELECT decision FROM agent_permission_audit ORDER BY rowid")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn debug_executed_audit_times(&self) -> StoreResult<Vec<u64>> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT executed_at_unix_ms
+                 FROM agent_permission_audit
+                 WHERE decision = 'executed'
+                 ORDER BY rowid",
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, u64>(0))?;
             rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
         })
         .await
@@ -911,6 +956,21 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
             WHERE origin_request_id IS NOT NULL;
         ",
     )?;
+    add_column_if_missing(conn, "agent_denials", "reason", "reason TEXT")?;
+    add_column_if_missing(conn, "agent_permission_requests", "reason", "reason TEXT")?;
+    add_column_if_missing(conn, "agent_permission_audit", "reason", "reason TEXT")?;
+    Ok(())
+}
+
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, column_definition: &str) -> StoreResult<()> {
+    // SQLite cannot parameterize identifiers. Keep this helper limited to the
+    // compile-time literals passed from init_schema.
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let columns = rows.collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|existing| existing == column) {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column_definition}"), [])?;
+    }
     Ok(())
 }
 
@@ -1248,6 +1308,50 @@ mod tests {
         assert!(tables.contains(&"agent_permission_requests".to_string()));
     }
 
+    #[tokio::test]
+    async fn file_backed_store_adds_missing_audit_reason_column() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("agent-policy.sqlite");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE agent_permission_audit(
+                audit_id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                request_id TEXT,
+                route TEXT,
+                target_json TEXT NOT NULL,
+                actions_json TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                grant_id TEXT,
+                denial_id TEXT,
+                requested_at_unix_ms INTEGER,
+                decided_at_unix_ms INTEGER,
+                expires_at_unix_ms INTEGER,
+                executed_at_unix_ms INTEGER
+            );
+            ",
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = AgentPolicyStore::open_at_path(&db_path).await.unwrap();
+        let identity = store.create_identity("agent", None, NOW).await.unwrap();
+
+        store
+            .create_pending_request(
+                identity.agent_id,
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                Some("typing".into()),
+                NOW + 1,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(store.debug_audit_reasons().await.unwrap(), vec![Some("typing".into())]);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn file_backed_store_restricts_database_file_permissions() {
@@ -1344,6 +1448,25 @@ mod tests {
 
         assert_eq!(first.request_id, second.request_id);
         assert_eq!(store.debug_permission_request_count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn find_or_create_pending_request_reports_whether_it_inserted() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let identity = store.create_identity("agent", None, NOW).await.unwrap();
+
+        let (first, first_created) = store
+            .find_or_create_pending_request(identity.agent_id.clone(), target("surf_1"), vec![ActionClass::Drive], None, NOW + 1)
+            .await
+            .unwrap();
+        let (second, second_created) = store
+            .find_or_create_pending_request(identity.agent_id, target("surf_1"), vec![ActionClass::Drive], None, NOW + 2)
+            .await
+            .unwrap();
+
+        assert!(first_created);
+        assert!(!second_created);
+        assert_eq!(second.request_id, first.request_id);
     }
 
     #[tokio::test]

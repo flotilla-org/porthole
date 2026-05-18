@@ -1,3 +1,4 @@
+pub mod agent_guard;
 pub mod agent_permissions;
 pub mod attach;
 pub mod attention;
