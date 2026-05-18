@@ -2,12 +2,14 @@ import Foundation
 
 @MainActor
 final class DaemonSupervisor {
+    struct ManagedDaemon {
+        let pid: Int32
+        let terminate: () -> Void
+    }
+
     enum State: Equatable {
         case stopped
         case running(pid: Int32)
-        // External daemons are detected before launching a child process. They
-        // are not watched yet; the roadmap tracks passive recovery for this
-        // transitional state.
         case runningExternal
         case crashed(status: Int32)
     }
@@ -19,15 +21,29 @@ final class DaemonSupervisor {
 
     private let daemonURL: URL
     private let cliURL: URL
+    private let externalReprobeInterval: TimeInterval
+    private let probeExistingDaemon: @Sendable (URL) -> Bool
+    private let launchDaemonProcess: @Sendable (URL, @escaping @Sendable (Int32) -> Void) throws -> ManagedDaemon
     private(set) var currentState: State = .stopped
-    private var process: Process?
+    private var process: ManagedDaemon?
+    private var externalReprobeTimer: Timer?
     private var shouldRestart = true
     private var startupProbeInFlight = false
     private let onStateChange: (State) -> Void
 
-    init(daemonURL: URL, cliURL: URL, onStateChange: @escaping (State) -> Void) {
+    init(
+        daemonURL: URL,
+        cliURL: URL,
+        externalReprobeInterval: TimeInterval = 5,
+        probeExistingDaemon: @escaping @Sendable (URL) -> Bool = DaemonSupervisor.daemonIsAlreadyRunning,
+        launchDaemonProcess: @escaping @Sendable (URL, @escaping @Sendable (Int32) -> Void) throws -> ManagedDaemon = DaemonSupervisor.launchProcess,
+        onStateChange: @escaping (State) -> Void
+    ) {
         self.daemonURL = daemonURL
         self.cliURL = cliURL
+        self.externalReprobeInterval = externalReprobeInterval
+        self.probeExistingDaemon = probeExistingDaemon
+        self.launchDaemonProcess = launchDaemonProcess
         self.onStateChange = onStateChange
     }
 
@@ -48,8 +64,9 @@ final class DaemonSupervisor {
         shouldRestart = true
         startupProbeInFlight = true
 
+        let probeExistingDaemon = probeExistingDaemon
         DispatchQueue.global(qos: .utility).async { [cliURL] in
-            let alreadyRunning = Self.daemonIsAlreadyRunning(cliURL: cliURL)
+            let alreadyRunning = probeExistingDaemon(cliURL)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 startupProbeInFlight = false
@@ -57,6 +74,7 @@ final class DaemonSupervisor {
                 guard process == nil else { return }
                 if alreadyRunning {
                     setState(.runningExternal)
+                    startExternalReprobeTimer()
                     return
                 }
                 launchDaemon()
@@ -65,18 +83,15 @@ final class DaemonSupervisor {
     }
 
     private func launchDaemon() {
-        let next = Process()
-        next.executableURL = daemonURL
-        next.terminationHandler = { [weak self] terminated in
-            Task { @MainActor in
-                self?.handleTermination(terminated.terminationStatus)
-            }
-        }
-
         do {
-            try next.run()
+            stopExternalReprobeTimer()
+            let next = try launchDaemonProcess(daemonURL) { [weak self] status in
+                Task { @MainActor in
+                    self?.handleTermination(status)
+                }
+            }
             process = next
-            setState(.running(pid: next.processIdentifier))
+            setState(.running(pid: next.pid))
         } catch {
             NSLog("failed to launch portholed: \(error)")
             setState(.crashed(status: -1))
@@ -85,6 +100,7 @@ final class DaemonSupervisor {
 
     func restart() {
         shouldRestart = true
+        stopExternalReprobeTimer()
         if let process {
             process.terminate()
         } else {
@@ -95,6 +111,7 @@ final class DaemonSupervisor {
     func stopForQuit() {
         shouldRestart = false
         startupProbeInFlight = false
+        stopExternalReprobeTimer()
         if let process {
             process.terminate()
         } else {
@@ -115,6 +132,53 @@ final class DaemonSupervisor {
     private func setState(_ state: State) {
         currentState = state
         onStateChange(state)
+    }
+
+    private func startExternalReprobeTimer() {
+        stopExternalReprobeTimer()
+        externalReprobeTimer = Timer.scheduledTimer(withTimeInterval: externalReprobeInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // Timer callbacks enter from the run loop; hop into the actor
+            // before touching supervisor state.
+            Task { @MainActor in
+                self.reprobeExternalDaemon()
+            }
+        }
+    }
+
+    private func stopExternalReprobeTimer() {
+        externalReprobeTimer?.invalidate()
+        externalReprobeTimer = nil
+    }
+
+    private func reprobeExternalDaemon() {
+        guard currentState == .runningExternal else {
+            stopExternalReprobeTimer()
+            return
+        }
+        let probeExistingDaemon = probeExistingDaemon
+        DispatchQueue.global(qos: .utility).async { [cliURL] in
+            let stillRunning = probeExistingDaemon(cliURL)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard shouldRestart, currentState == .runningExternal else { return }
+                if !stillRunning {
+                    launchDaemon()
+                }
+            }
+        }
+    }
+
+    nonisolated private static func launchProcess(daemonURL: URL, onTermination: @escaping @Sendable (Int32) -> Void) throws -> ManagedDaemon {
+        let process = Process()
+        process.executableURL = daemonURL
+        process.terminationHandler = { terminated in
+            onTermination(terminated.terminationStatus)
+        }
+        try process.run()
+        return ManagedDaemon(pid: process.processIdentifier) {
+            process.terminate()
+        }
     }
 
     nonisolated private static func daemonIsAlreadyRunning(cliURL: URL) -> Bool {
