@@ -72,12 +72,16 @@ private func pathString(_ url: URL) -> String {
 
 struct HelperStartup {
     var migrateLaunchAgent: () -> LaunchAgentMigrator.MigrationResult
+    var registerLoginItem: () -> LoginItemRegistrar.RegistrationResult
     var startSupervisor: () -> Void
     var reportMigration: (LaunchAgentMigrator.MigrationResult) -> Void
+    var reportLoginItem: (LoginItemRegistrar.RegistrationResult) -> Void
 
     func start() {
-        let result = migrateLaunchAgent()
-        reportMigration(result)
+        let migrationResult = migrateLaunchAgent()
+        reportMigration(migrationResult)
+        let loginItemResult = registerLoginItem()
+        reportLoginItem(loginItemResult)
         startSupervisor()
     }
 }
