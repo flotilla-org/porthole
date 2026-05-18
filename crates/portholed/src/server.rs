@@ -88,6 +88,18 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::Result<()> {
+    let agent_store = AgentPolicyStore::open_default()
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    serve_with_agent_policy(adapter, socket_path, agent_store, EventBus::new()).await
+}
+
+pub async fn serve_with_agent_policy(
+    adapter: Arc<dyn Adapter>,
+    socket_path: PathBuf,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
+) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -98,15 +110,7 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
     let capture = crate::capture_registry::CaptureRegistry::with_fd_socket(capture_socket_path)?;
-    let agent_store = AgentPolicyStore::open_default()
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-    let app = build_router(AppState::new_with_agent_policy_and_capture(
-        adapter,
-        capture,
-        agent_store,
-        EventBus::new(),
-    ));
+    let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
     axum::serve(listener, app).await
 }
 
@@ -125,7 +129,11 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use capture_transfer::control_page::VideoTrackControlPage;
-    use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
+    use porthole_core::{
+        agent_policy::{ActionClass, DurationSpec, TargetSelector},
+        in_memory::InMemoryAdapter,
+        surface::SurfaceInfo,
+    };
     use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
     use tower::ServiceExt;
 
@@ -140,11 +148,47 @@ mod tests {
         (build_router(state), id)
     }
 
+    async fn router_with_authorized_tracked_surface() -> (Router, String, String) {
+        let adapter = Arc::new(InMemoryAdapter::new());
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let identity = store.create_identity("agent", None, 1_000).await.unwrap();
+        let state = AppState::new_with_agent_policy(adapter, store.clone(), EventBus::new());
+        let info = SurfaceInfo::window(porthole_core::SurfaceId::new(), 1);
+        let id = info.id.clone();
+        state.handles.insert(info).await;
+        let request = store
+            .create_pending_request(
+                identity.agent_id.clone(),
+                TargetSelector::Surface { surface_id: id.clone() },
+                vec![ActionClass::Drive],
+                None,
+                1_001,
+            )
+            .await
+            .unwrap();
+        store
+            .approve_request(&request.request_id, DurationSpec::UntilSurfaceGone, Vec::new(), 1_002)
+            .await
+            .unwrap();
+        (build_router(state), id.to_string(), identity.token)
+    }
+
     async fn post(router: Router, uri: &str, body: serde_json::Value) -> axum::http::Response<Body> {
         let req = Request::builder()
             .method(Method::POST)
             .uri(uri)
             .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        router.oneshot(req).await.unwrap()
+    }
+
+    async fn post_with_token(router: Router, uri: &str, token: &str, body: serde_json::Value) -> axum::http::Response<Body> {
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::from(body.to_string()))
             .unwrap();
         router.oneshot(req).await.unwrap()
@@ -476,10 +520,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_key_sends_events() {
-        let (router, id) = router_with_tracked_surface().await;
-        let res = post(
+        let (router, id, token) = router_with_authorized_tracked_surface().await;
+        let res = post_with_token(
             router,
             &format!("/surfaces/{id}/key"),
+            &token,
             serde_json::json!({ "events": [{ "key": "Enter" }] }),
         )
         .await;
@@ -491,10 +536,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_key_with_unsupported_name_returns_bad_request() {
-        let (router, id) = router_with_tracked_surface().await;
-        let res = post(
+        let (router, id, token) = router_with_authorized_tracked_surface().await;
+        let res = post_with_token(
             router,
             &format!("/surfaces/{id}/key"),
+            &token,
             serde_json::json!({ "events": [{ "key": "NotAKey" }] }),
         )
         .await;
@@ -503,8 +549,8 @@ mod tests {
 
     #[tokio::test]
     async fn post_text_reports_char_count() {
-        let (router, id) = router_with_tracked_surface().await;
-        let res = post(router, &format!("/surfaces/{id}/text"), serde_json::json!({ "text": "hi" })).await;
+        let (router, id, token) = router_with_authorized_tracked_surface().await;
+        let res = post_with_token(router, &format!("/surfaces/{id}/text"), &token, serde_json::json!({ "text": "hi" })).await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let resp: porthole_protocol::input::TextResponse = serde_json::from_slice(&body).unwrap();

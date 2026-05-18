@@ -1,7 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use porthole_core::{in_memory::InMemoryAdapter, surface::SurfaceInfo};
-use portholed::server::serve;
+use porthole_core::{ErrorCode, agent_policy::ActionClass, in_memory::InMemoryAdapter, surface::SurfaceInfo};
+use porthole_protocol::agent_permissions::{
+    AgentPermissionConstraints, AgentPermissionDuration, AgentPermissionNeededDetails, AgentPermissionTarget,
+    ApproveAgentPermissionRequest, CreateAgentIdentityRequest, CreateAgentIdentityResponse,
+};
+use portholed::{agent_store::AgentPolicyStore, events::EventBus, server::serve_with_agent_policy};
 
 #[tokio::test]
 async fn cli_through_daemon_key_text_click_wait_close() {
@@ -11,7 +15,9 @@ async fn cli_through_daemon_key_text_click_wait_close() {
     let adapter = Arc::new(InMemoryAdapter::new());
     let socket_for_serve = socket.clone();
     let adapter_for_serve: Arc<dyn porthole_core::adapter::Adapter> = adapter.clone();
-    let server_task = tokio::spawn(async move { serve(adapter_for_serve, socket_for_serve).await });
+    let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
+    let server_task =
+        tokio::spawn(async move { serve_with_agent_policy(adapter_for_serve, socket_for_serve, agent_store, EventBus::new()).await });
 
     for _ in 0..200 {
         if socket.exists() {
@@ -31,6 +37,17 @@ async fn cli_through_daemon_key_text_click_wait_close() {
     let _ = (info, id);
 
     let client = porthole::client::DaemonClient::new(&socket);
+    let identity: CreateAgentIdentityResponse = client
+        .post_json(
+            "/agent-identities",
+            &CreateAgentIdentityRequest {
+                display_name: "e2e-agent".into(),
+                metadata: None,
+            },
+        )
+        .await
+        .expect("create agent identity");
+    let agent_client = porthole::client::DaemonClient::new(&socket).with_bearer_token(identity.token);
     let launch: porthole_protocol::launches::LaunchResponse = client
         .post_json(
             "/launches",
@@ -39,16 +56,41 @@ async fn cli_through_daemon_key_text_click_wait_close() {
         .await
         .expect("launch");
 
-    // key
-    let _: porthole_protocol::input::KeyResponse = client
+    let first_key: Result<porthole_protocol::input::KeyResponse, porthole::client::ClientError> = agent_client
+        .post_json(
+            &format!("/surfaces/{}/key", launch.surface_id),
+            &serde_json::json!({ "events": [{ "key": "Enter" }] }),
+        )
+        .await;
+    let permission_needed = match first_key {
+        Err(porthole::client::ClientError::Api(wire)) if wire.code == ErrorCode::AgentPermissionNeeded => wire,
+        other => panic!("expected permission-needed response, got {other:?}"),
+    };
+    let details: AgentPermissionNeededDetails = serde_json::from_value(permission_needed.details.unwrap()).unwrap();
+    let _: porthole_protocol::agent_permissions::AgentGrantResponse = client
+        .post_json(
+            &format!("/agent-permissions/requests/{}/approve", details.request_id),
+            &ApproveAgentPermissionRequest {
+                duration: AgentPermissionDuration::UntilSurfaceGone,
+                target: AgentPermissionTarget::Surface {
+                    surface_id: launch.surface_id.clone(),
+                },
+                actions: vec![ActionClass::Drive],
+                constraints: AgentPermissionConstraints::default(),
+            },
+        )
+        .await
+        .expect("approve drive permission");
+
+    let _: porthole_protocol::input::KeyResponse = agent_client
         .post_json(
             &format!("/surfaces/{}/key", launch.surface_id),
             &serde_json::json!({ "events": [{ "key": "Enter" }] }),
         )
         .await
-        .expect("key");
+        .expect("key after approval");
     // text
-    let _: porthole_protocol::input::TextResponse = client
+    let _: porthole_protocol::input::TextResponse = agent_client
         .post_json(
             &format!("/surfaces/{}/text", launch.surface_id),
             &serde_json::json!({ "text": "hi" }),
