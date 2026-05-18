@@ -4,10 +4,10 @@ use clap::{Parser, Subcommand};
 use porthole::{
     client::DaemonClient,
     commands::{
-        attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays, focus as focus_cmd,
-        install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd,
-        record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd,
-        send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
+        agents as agents_cmd, attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays,
+        focus as focus_cmd, install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs,
+        place as place_cmd, record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd,
+        send as send_cmd, send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -43,6 +43,11 @@ enum Command {
         /// Seconds to wait for the daemon to come back up after each restart.
         #[arg(long, default_value_t = 10)]
         restart_timeout: u64,
+    },
+    /// Manage agent identities, tokens, permission requests, and grants.
+    Agents {
+        #[command(subcommand)]
+        command: agents_cmd::AgentsCommand,
     },
     /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
     /// and register a LaunchAgent so the daemon starts at login.
@@ -653,6 +658,7 @@ async fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Command::Agents { command } => agents_cmd::run(&mut client, command).await,
         Command::Launch {
             kind,
             app,
