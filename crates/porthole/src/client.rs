@@ -31,6 +31,10 @@ impl DaemonClient {
         self
     }
 
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
         let req = self.build_empty_request(Method::GET, path)?;
         self.send_and_parse(req).await
@@ -151,5 +155,6 @@ mod tests {
         let request = client.build_empty_request(Method::GET, "/info").unwrap();
 
         assert_eq!(request.headers().get(AUTHORIZATION).unwrap(), "Bearer pta_agent.secret");
+        assert_eq!(client.bearer_token(), Some("pta_agent.secret"));
     }
 }

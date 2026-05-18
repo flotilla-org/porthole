@@ -22,7 +22,7 @@ What has shipped on `main`:
 What's known missing or rough:
 
 - No native notification surface for agent-permission approvals; operators use `porthole agents ...` for now.
-- Agent-permission enforcement covers drive routes plus most observe/manage/record HTTP routes. Raw capture-transfer fd-socket consumption still relies on the authorized session-creation path rather than its own bearer-token handshake.
+- Agent-permission enforcement covers drive routes plus most observe/manage/record HTTP routes. Protected surface capture-session fd-socket consumption requires a bearer-token handshake on the capture-transfer channel; synthetic capture sessions remain public because they do not touch the real desktop.
 - Recording live-smoke remains permission-blocked for freshly built daemon identities unless the installed bundle has Accessibility and Screen Recording grants.
 
 ---
@@ -78,7 +78,7 @@ What's known missing or rough:
 - [x] Default-deny route guard for the first `drive` vertical slice: key, text, click, scroll, and pointer movement.
 - [x] CLI operator commands: `porthole agents create/list/show/revoke`, token mint/revoke, pending request list/show/approve/deny, grant list/revoke.
 - [x] Map remaining HTTP route classes: `observe`, `manage`, and surface-session `record` creation.
-- [ ] Add bearer-auth handshaking to raw capture-transfer fd-socket consumption, or replace it with a daemon-mediated read path.
+- [x] Add bearer-auth handshaking to raw capture-transfer fd-socket consumption, or replace it with a daemon-mediated read path.
 - [ ] Helper/private operator authority for identity and policy mutation; current CLI operator path relies on the local-user trust boundary.
 
 ---

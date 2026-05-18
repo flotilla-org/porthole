@@ -109,7 +109,7 @@ pub async fn serve_with_agent_policy(
     let listener = UnixListener::bind(&socket_path)?;
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
-    let capture = crate::capture_registry::CaptureRegistry::with_fd_socket(capture_socket_path)?;
+    let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
     let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
     axum::serve(listener, app).await
 }
@@ -400,6 +400,19 @@ mod tests {
         .unwrap();
     }
 
+    fn authorize_capture_transfer_stream(stream: &mut UnixStream, created: &CreateCaptureSessionResponse, token: &str) {
+        writeln!(
+            stream,
+            "{}",
+            serde_json::json!({
+                "op": "authorize",
+                "session_id": created.session_id,
+                "bearer_token": token
+            })
+        )
+        .unwrap();
+    }
+
     fn read_json_line(reader: &mut BufReader<UnixStream>) -> serde_json::Value {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
@@ -504,6 +517,7 @@ mod tests {
         let reader_stream = stream.try_clone().unwrap();
         let mut reader = BufReader::new(reader_stream);
         let mut pools = BTreeMap::new();
+        authorize_capture_transfer_stream(&mut stream, &created, &token);
         let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_eq!(frame.session_id, created.session_id);
         assert_eq!(frame.track_id, created.track_id);

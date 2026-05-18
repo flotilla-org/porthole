@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -28,7 +29,7 @@ pub struct RecordSummary {
     pub duration: Duration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RecordSession {
     pub session_id: String,
     pub track_id: u64,
@@ -37,6 +38,22 @@ pub struct RecordSession {
     pub stride: u32,
     pub pixel_format: String,
     pub fd_socket_path: String,
+    pub bearer_token: Option<String>,
+}
+
+impl fmt::Debug for RecordSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecordSession")
+            .field("session_id", &self.session_id)
+            .field("track_id", &self.track_id)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("stride", &self.stride)
+            .field("pixel_format", &self.pixel_format)
+            .field("fd_socket_path", &self.fd_socket_path)
+            .field("bearer_token", &self.bearer_token.as_deref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +323,7 @@ impl RecordSessionClient for DaemonClient {
             stride: session.stride,
             pixel_format: session.pixel_format,
             fd_socket_path: session.fd_socket_path,
+            bearer_token: self.bearer_token().map(ToOwned::to_owned),
         })
     }
 
@@ -371,6 +389,7 @@ impl RecorderFactory for ProductionRecorderFactory {
             stride: session.stride,
             pixel_format,
             fd_socket_path: session.fd_socket_path.clone(),
+            bearer_token: session.bearer_token.clone(),
         };
         capture_transfer::daemon::DaemonConsumer::connect(info)
             .map(|inner| DaemonOrderedFrameConsumer { inner })

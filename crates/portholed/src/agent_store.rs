@@ -315,29 +315,15 @@ impl AgentPolicyStore {
 
     pub async fn authenticate_agent_token(&self, token: &str) -> StoreResult<Option<AgentId>> {
         let token = token.to_string();
-        self.with_conn(move |conn| {
-            let Some(agent_id) = parse_token_agent_id(&token) else {
-                return Ok(None);
-            };
-            let candidate_hash = hash_token(&token);
-            let mut stmt = conn.prepare(
-                "SELECT t.token_hash
-                 FROM agent_tokens t
-                 INNER JOIN agent_identities i ON i.agent_id = t.agent_id
-                 WHERE t.agent_id = ?1
-                   AND t.revoked_at_unix_ms IS NULL
-                   AND i.revoked_at_unix_ms IS NULL",
-            )?;
-            let rows = stmt.query_map(params![agent_id.as_str()], |row| row.get::<_, String>(0))?;
-            for row in rows {
-                let stored_hash = row?;
-                if bool::from(candidate_hash.as_bytes().ct_eq(stored_hash.as_bytes())) {
-                    return Ok(Some(agent_id));
-                }
-            }
-            Ok(None)
-        })
-        .await
+        self.with_conn(move |conn| authenticate_agent_token_in_conn(conn, &token)).await
+    }
+
+    pub fn authenticate_agent_token_blocking(&self, token: &str) -> StoreResult<Option<AgentId>> {
+        // The raw fd listener is a blocking std thread. This deliberately shares
+        // the policy connection; keep the query narrow so HTTP policy handlers
+        // are not held behind capture auth longer than necessary.
+        let mut conn = self.conn.lock().map_err(|_| AgentStoreError::LockPoisoned)?;
+        authenticate_agent_token_in_conn(&mut conn, token)
     }
 
     pub async fn create_pending_request(
@@ -1217,6 +1203,29 @@ fn canonicalize_actions(mut actions: Vec<ActionClass>) -> Vec<ActionClass> {
 
 fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+fn authenticate_agent_token_in_conn(conn: &mut Connection, token: &str) -> StoreResult<Option<AgentId>> {
+    let Some(agent_id) = parse_token_agent_id(token) else {
+        return Ok(None);
+    };
+    let candidate_hash = hash_token(token);
+    let mut stmt = conn.prepare(
+        "SELECT t.token_hash
+         FROM agent_tokens t
+         INNER JOIN agent_identities i ON i.agent_id = t.agent_id
+         WHERE t.agent_id = ?1
+           AND t.revoked_at_unix_ms IS NULL
+           AND i.revoked_at_unix_ms IS NULL",
+    )?;
+    let rows = stmt.query_map(params![agent_id.as_str()], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let stored_hash = row?;
+        if bool::from(candidate_hash.as_bytes().ct_eq(stored_hash.as_bytes())) {
+            return Ok(Some(agent_id));
+        }
+    }
+    Ok(None)
 }
 
 fn parse_token_agent_id(token: &str) -> Option<AgentId> {

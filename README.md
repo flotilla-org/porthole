@@ -109,7 +109,7 @@ The daemon speaks HTTP/1.1 over a Unix Domain Socket. SSE is available at `/even
 
 ### Agent permissions
 
-Protected routes require an agent bearer token and a matching local grant. The current route map covers launch/search/track/attention/display metadata, surface observe routes (`screenshot`, `wait`, `content-rect`), drive routes (`focus`, `key`, `text`, `click`, `scroll`, pointer movement), manage routes (`place`, `replace`, `close`), and surface capture-session creation. Operator commands create identities, inspect pending requests, approve/deny requests, and revoke grants:
+Protected routes require an agent bearer token and a matching local grant. The current route map covers launch/search/track/attention/display metadata, surface observe routes (`screenshot`, `wait`, `content-rect`), drive routes (`focus`, `key`, `text`, `click`, `scroll`, pointer movement), manage routes (`place`, `replace`, `close`), surface capture-session creation, and protected capture-transfer fd-channel consumption. Operator commands create identities, inspect pending requests, approve/deny requests, and revoke grants:
 
 ```sh
 porthole agents create --name "My Agent" --json
