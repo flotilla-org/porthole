@@ -212,7 +212,7 @@ fn grant_response(grant: StoredGrant) -> AgentGrantResponse {
 }
 
 fn not_found(message: &str) -> ApiError {
-    ApiError::from(PortholeError::new(ErrorCode::CandidateRefUnknown, message))
+    ApiError::from(PortholeError::new(ErrorCode::AgentIdentityNotFound, message))
 }
 
 fn now_unix_ms() -> u64 {
@@ -323,6 +323,11 @@ mod tests {
         let (status, identity) = get(router.clone(), &format!("/agent-identities/{}", created.agent_id)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(identity["agent_id"], created.agent_id.to_string());
+
+        let (status, missing) = get(router.clone(), "/agent-identities/agent_missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let missing: WireError = serde_json::from_value(missing).unwrap();
+        assert_eq!(missing.code, ErrorCode::AgentIdentityNotFound);
 
         let (status, token) = post(
             router.clone(),

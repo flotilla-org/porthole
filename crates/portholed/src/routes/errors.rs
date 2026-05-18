@@ -34,7 +34,7 @@ impl From<AgentStoreError> for ApiError {
             AgentStoreError::PermissionRequestNotPending => {
                 (ErrorCode::InvalidArgument, "agent permission request is not pending".to_string())
             }
-            AgentStoreError::IdentityNotFound => (ErrorCode::InvalidArgument, "agent identity not found".to_string()),
+            AgentStoreError::IdentityNotFound => (ErrorCode::AgentIdentityNotFound, "agent identity not found".to_string()),
             other => (ErrorCode::InternalError, other.to_string()),
         };
         Self(WireError {
@@ -133,6 +133,7 @@ impl IntoResponse for ApiError {
             ErrorCode::CloseFailed => StatusCode::CONFLICT,
             ErrorCode::LaunchReturnedExisting => StatusCode::CONFLICT,
             ErrorCode::ContentRectUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::AgentIdentityNotFound => StatusCode::NOT_FOUND,
             ErrorCode::AgentIdentityRequired => StatusCode::UNAUTHORIZED,
             ErrorCode::AgentIdentityRevoked => StatusCode::UNAUTHORIZED,
             ErrorCode::AgentOperatorRequired => StatusCode::FORBIDDEN,
@@ -206,6 +207,16 @@ mod tests {
 
     #[test]
     fn agent_permission_errors_map_to_auth_statuses() {
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentIdentityNotFound,
+                message: "missing".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
         assert_eq!(
             ApiError(WireError {
                 code: ErrorCode::AgentIdentityRequired,

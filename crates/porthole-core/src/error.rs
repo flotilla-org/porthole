@@ -23,6 +23,7 @@ pub enum ErrorCode {
     CloseFailed,
     LaunchReturnedExisting,
     ContentRectUnavailable,
+    AgentIdentityNotFound,
     AgentIdentityRequired,
     AgentIdentityRevoked,
     AgentOperatorRequired,
@@ -52,6 +53,7 @@ impl fmt::Display for ErrorCode {
             Self::CloseFailed => "close_failed",
             Self::LaunchReturnedExisting => "launch_returned_existing",
             Self::ContentRectUnavailable => "content_rect_unavailable",
+            Self::AgentIdentityNotFound => "agent_identity_not_found",
             Self::AgentIdentityRequired => "agent_identity_required",
             Self::AgentIdentityRevoked => "agent_identity_revoked",
             Self::AgentOperatorRequired => "agent_operator_required",
@@ -124,6 +126,7 @@ mod tests {
     #[test]
     fn agent_permission_error_codes_display_as_snake_case() {
         assert_eq!(ErrorCode::AgentIdentityRequired.to_string(), "agent_identity_required");
+        assert_eq!(ErrorCode::AgentIdentityNotFound.to_string(), "agent_identity_not_found");
         assert_eq!(ErrorCode::AgentIdentityRevoked.to_string(), "agent_identity_revoked");
         assert_eq!(ErrorCode::AgentOperatorRequired.to_string(), "agent_operator_required");
         assert_eq!(ErrorCode::AgentPermissionNeeded.to_string(), "agent_permission_needed");
