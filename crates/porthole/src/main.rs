@@ -4,10 +4,10 @@ use clap::{Parser, Subcommand};
 use porthole::{
     client::DaemonClient,
     commands::{
-        attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays, focus as focus_cmd,
-        install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs, place as place_cmd,
-        record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd, send as send_cmd,
-        send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
+        agents as agents_cmd, attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays,
+        focus as focus_cmd, install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs,
+        place as place_cmd, record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd,
+        send as send_cmd, send_keys as send_keys_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -22,6 +22,12 @@ use porthole_protocol::launches::WireConfidence;
 #[derive(Parser)]
 #[command(version, about = "porthole — OS-level presentation substrate")]
 struct Cli {
+    /// Agent bearer token for protected routes.
+    ///
+    /// Prefer PORTHOLE_AGENT_TOKEN to avoid exposing the token in process
+    /// listings or shell history.
+    #[arg(long, global = true)]
+    agent_token: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -43,6 +49,11 @@ enum Command {
         /// Seconds to wait for the daemon to come back up after each restart.
         #[arg(long, default_value_t = 10)]
         restart_timeout: u64,
+    },
+    /// Manage agent identities, tokens, permission requests, and grants.
+    Agents {
+        #[command(subcommand)]
+        command: agents_cmd::AgentsCommand,
     },
     /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
     /// and register a LaunchAgent so the daemon starts at login.
@@ -609,6 +620,13 @@ enum ConditionArg {
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let mut client = DaemonClient::new(socket_path());
+    let agent_token = cli
+        .agent_token
+        .or_else(|| std::env::var("PORTHOLE_AGENT_TOKEN").ok())
+        .filter(|token| !token.is_empty());
+    if let Some(agent_token) = agent_token {
+        client = client.with_bearer_token(agent_token);
+    }
     let result = match cli.command {
         Command::Info => porthole::commands::info::run(&client).await,
         Command::Install {
@@ -653,6 +671,7 @@ async fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Command::Agents { command } => agents_cmd::run(&mut client, command).await,
         Command::Launch {
             kind,
             app,
@@ -1067,5 +1086,20 @@ async fn main() -> std::process::ExitCode {
             eprintln!("error: {e}");
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn global_agent_token_can_be_passed_before_drive_command() {
+        let cli = Cli::try_parse_from(["porthole", "--agent-token", "pta_agent.secret", "text", "surf_1", "hi"]).unwrap();
+
+        assert_eq!(cli.agent_token.as_deref(), Some("pta_agent.secret"));
+        assert!(matches!(cli.command, Command::Text { .. }));
     }
 }

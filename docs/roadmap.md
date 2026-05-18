@@ -16,12 +16,13 @@ What has shipped on `main`:
 - Install/uninstall flow: `porthole install` copies the bundle, symlinks the CLI, and registers a per-user LaunchAgent; `porthole uninstall` reverses it.
 - Dev bundle script (`scripts/dev-bundle.sh`) producing an Apple Development signed `.app` with `portholed` and `porthole` in one bundle for stable TCC identity across rebuilds; ad-hoc signing is a hard failure because it invalidates TCC grants on rebuild.
 - macOS recording command (`porthole record surface ... --duration ... --output ...`) built on ordered capture-transfer cursors and AVFoundation `.mov` writing.
+- Agent-permissions enforcement foundation: daemon-owned identities/tokens/grants/denials/pending requests/audit store, `/events` policy publication, default-deny drive-route guard for input and pointer movement, and `porthole agents ...` operator commands.
 - CI: `cargo build --workspace --locked` / `cargo test --workspace --locked` / `cargo clippy --workspace --all-targets --locked -- -D warnings` / `cargo +nightly-2026-03-12 fmt --check`.
 
 What's known missing or rough:
 
-- No native UI — onboard flow is CLI-only, no menu bar presence, no notification surface for future agent-permission approvals.
-- No helper-backed agent-permissions enforcement yet - the design is pinned, but protected routes do not yet prompt for per-agent approval.
+- No native notification surface for agent-permission approvals; operators use `porthole agents ...` for now.
+- Agent-permission enforcement currently covers the first `drive` vertical slice only. Observe/manage/record route mapping remains future work.
 - Recording live-smoke remains permission-blocked for freshly built daemon identities unless the installed bundle has Accessibility and Screen Recording grants.
 
 ---
@@ -67,6 +68,18 @@ What's known missing or rough:
     - Relationship to system-permissions: what's separate, what overlaps.
     - Default-deny vs default-allow tradeoffs.
 
+## Phase 2.5 — agent-permissions enforcement foundation
+
+**Goal:** Ship the daemon-owned policy core and first protected vertical slice before helper notification UI consumes it.
+
+- [x] Pure Rust policy model for agent identities, target selectors, action classes, durations, constraints, grants, denials, and authorization decisions.
+- [x] SQLite policy store for identities, token hashes, grants, denials, pending requests, and execution audit rows.
+- [x] Daemon identity/request/grant endpoints and `/events` publication for requested/resolved/policy-changed state.
+- [x] Default-deny route guard for the first `drive` vertical slice: key, text, click, scroll, and pointer movement.
+- [x] CLI operator commands: `porthole agents create/list/show/revoke`, token mint/revoke, pending request list/show/approve/deny, grant list/revoke.
+- [ ] Map remaining route classes: `observe`, `manage`, and `record`.
+- [ ] Helper/private operator authority for identity and policy mutation; current CLI operator path relies on the local-user trust boundary.
+
 ---
 
 ## Phase 3 — platform UI apps, starting with macOS `Porthole.app`
@@ -80,7 +93,7 @@ What's known missing or rough:
 - [x] `NSStatusItem` with monochrome glyph + optional badge (surface count, "broken" state).
 - [x] Helper spawns `portholed` on launch via `Process` if not already running; restarts on crash.
 - [x] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
-- [ ] Notification surface for agent-permission approvals (depends on phase 2). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
+- [ ] Notification surface for agent-permission approvals (depends on the phase 2.5 enforcement endpoints). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
 - [ ] `SMAppService.daemon(plistName:)` registration so the user gets a System Settings → General → Login Items entry. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
 - [ ] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
 - [ ] Helper passively re-probes an externally running daemon so the `runningExternal` status recovers if that daemon exits after helper launch.
