@@ -348,12 +348,25 @@ impl AgentPolicyStore {
         reason: Option<String>,
         created_at_unix_ms: u64,
     ) -> StoreResult<StoredPermissionRequest> {
+        self.find_or_create_pending_request(agent_id, target, actions, reason, created_at_unix_ms)
+            .await
+            .map(|(request, _created)| request)
+    }
+
+    pub async fn find_or_create_pending_request(
+        &self,
+        agent_id: AgentId,
+        target: TargetSelector,
+        actions: Vec<ActionClass>,
+        reason: Option<String>,
+        created_at_unix_ms: u64,
+    ) -> StoreResult<(StoredPermissionRequest, bool)> {
         self.with_conn(move |conn| {
             let actions = canonicalize_actions(actions);
             let target_json = serde_json::to_string(&target)?;
             let actions_json = serde_json::to_string(&actions)?;
             if let Some(existing) = select_pending_request(conn, &agent_id, &target_json, &actions_json)? {
-                return Ok(existing);
+                return Ok((existing, false));
             }
 
             let request_id = PermissionRequestId::from(format!("apr_{}", Uuid::new_v4().simple()));
@@ -388,7 +401,7 @@ impl AgentPolicyStore {
                 stored_reason.as_deref(),
             )?;
             tx.commit()?;
-            Ok(StoredPermissionRequest {
+            let request = StoredPermissionRequest {
                 request_id,
                 agent_id,
                 target,
@@ -397,7 +410,8 @@ impl AgentPolicyStore {
                 status: PermissionRequestStatus::Pending,
                 created_at_unix_ms,
                 resolved_at_unix_ms: None,
-            })
+            };
+            Ok((request, true))
         })
         .await
     }
@@ -949,6 +963,8 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
 }
 
 fn add_column_if_missing(conn: &Connection, table: &str, column: &str, column_definition: &str) -> StoreResult<()> {
+    // SQLite cannot parameterize identifiers. Keep this helper limited to the
+    // compile-time literals passed from init_schema.
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
     let columns = rows.collect::<Result<Vec<_>, _>>()?;
@@ -1432,6 +1448,25 @@ mod tests {
 
         assert_eq!(first.request_id, second.request_id);
         assert_eq!(store.debug_permission_request_count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn find_or_create_pending_request_reports_whether_it_inserted() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let identity = store.create_identity("agent", None, NOW).await.unwrap();
+
+        let (first, first_created) = store
+            .find_or_create_pending_request(identity.agent_id.clone(), target("surf_1"), vec![ActionClass::Drive], None, NOW + 1)
+            .await
+            .unwrap();
+        let (second, second_created) = store
+            .find_or_create_pending_request(identity.agent_id, target("surf_1"), vec![ActionClass::Drive], None, NOW + 2)
+            .await
+            .unwrap();
+
+        assert!(first_created);
+        assert!(!second_created);
+        assert_eq!(second.request_id, first.request_id);
     }
 
     #[tokio::test]

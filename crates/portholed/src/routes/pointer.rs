@@ -8,7 +8,7 @@ use porthole_protocol::input::{PointerMoveRequest, PointerMoveResponse};
 
 use crate::{
     routes::{
-        agent_guard::{authorize_surface_actions, complete_route_execution, with_route},
+        agent_guard::{authorize_surface_actions, complete_route_execution},
         errors::ApiError,
     },
     state::AppState,
@@ -25,7 +25,7 @@ pub async fn post_pointer_move(
     let units = req.units;
     let spec = (&req).into();
     state.input.pointer_move(&surface_id, &spec, units).await?;
-    complete_route_execution(&state, with_route(execution, "/surfaces/{id}/pointer/move")).await?;
+    complete_route_execution(&state, execution, "/surfaces/{id}/pointer/move").await?;
     Ok(Json(PointerMoveResponse {
         surface_id: surface_id.to_string(),
     }))
@@ -137,20 +137,6 @@ mod tests {
         let info = SurfaceInfo::window(SurfaceId::new(), 1);
         let id = info.id.clone();
         state.handles.insert(info).await;
-        let request = store
-            .create_pending_request(
-                identity.agent_id,
-                TargetSelector::Surface { surface_id: id.clone() },
-                vec![ActionClass::Drive],
-                None,
-                1_001,
-            )
-            .await
-            .unwrap();
-        store
-            .approve_request(&request.request_id, DurationSpec::UntilSurfaceGone, Vec::new(), 1_002)
-            .await
-            .unwrap();
         state.handles.mark_dead(&id).await.unwrap();
         let router = build_router(state);
         let (status, body) = post(

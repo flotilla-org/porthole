@@ -18,7 +18,6 @@ pub struct AuthorizedRouteExecution {
     pub grant_id: GrantId,
     pub origin_request_id: Option<PermissionRequestId>,
     pub consumes_grant: bool,
-    pub route: &'static str,
     pub target: TargetSelector,
     pub actions: Vec<ActionClass>,
 }
@@ -94,7 +93,6 @@ async fn authorize_surface_actions_inner(
                 grant_id,
                 origin_request_id: grant.origin_request_id,
                 consumes_grant,
-                route: "",
                 target,
                 actions: actions.to_vec(),
             })
@@ -108,13 +106,13 @@ async fn authorize_surface_actions_inner(
     }
 }
 
-pub async fn complete_route_execution(state: &AppState, execution: AuthorizedRouteExecution) -> Result<(), ApiError> {
+pub async fn complete_route_execution(state: &AppState, execution: AuthorizedRouteExecution, route: &'static str) -> Result<(), ApiError> {
     let result = state
         .agent_store
         .insert_execution_audit(ExecutionAuditRecord {
             agent_id: execution.agent_id,
             request_id: execution.origin_request_id,
-            route: execution.route.into(),
+            route: route.into(),
             target: execution.target,
             actions: execution.actions,
             grant_id: Some(execution.grant_id),
@@ -128,11 +126,6 @@ pub async fn complete_route_execution(state: &AppState, execution: AuthorizedRou
     Ok(())
 }
 
-pub fn with_route(mut execution: AuthorizedRouteExecution, route: &'static str) -> AuthorizedRouteExecution {
-    execution.route = route;
-    execution
-}
-
 async fn permission_needed(
     state: &AppState,
     agent_id: AgentId,
@@ -142,15 +135,9 @@ async fn permission_needed(
     reason: Option<&str>,
     publish_new_request: bool,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
-    let existing = state
+    let (request, created) = state
         .agent_store
-        .list_pending_permission_requests()
-        .await?
-        .into_iter()
-        .find(|request| request.agent_id == agent_id && request.target == target && request.actions == actions);
-    let request = state
-        .agent_store
-        .create_pending_request(
+        .find_or_create_pending_request(
             agent_id.clone(),
             target,
             actions.to_vec(),
@@ -158,7 +145,6 @@ async fn permission_needed(
             now_unix_ms(),
         )
         .await?;
-    let created = existing.is_none() || existing.as_ref().map(|existing| &existing.request_id) != Some(&request.request_id);
     if publish_new_request && created {
         state.events.publish(AgentEvent::AgentPermissionRequested {
             request_id: request.request_id.clone(),
@@ -186,10 +172,14 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, ApiError> {
     let Ok(value) = value.to_str() else {
         return Err(identity_required());
     };
-    value
-        .strip_prefix("Bearer ")
-        .filter(|token| !token.is_empty())
-        .ok_or_else(identity_required)
+    let Some((scheme, token)) = value.split_once(' ') else {
+        return Err(identity_required());
+    };
+    if scheme.eq_ignore_ascii_case("Bearer") && !token.is_empty() {
+        Ok(token)
+    } else {
+        Err(identity_required())
+    }
 }
 
 fn identity_required() -> ApiError {
@@ -264,12 +254,21 @@ mod tests {
     }
 
     async fn post_text(router: axum::Router, surface_id: &SurfaceId, token: Option<&str>) -> (StatusCode, serde_json::Value) {
+        let authorization = token.map(|token| format!("Bearer {token}"));
+        post_text_with_auth_header(router, surface_id, authorization.as_deref()).await
+    }
+
+    async fn post_text_with_auth_header(
+        router: axum::Router,
+        surface_id: &SurfaceId,
+        authorization: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
         let mut builder = Request::builder()
             .method(Method::POST)
             .uri(format!("/surfaces/{surface_id}/text"))
             .header("content-type", "application/json");
-        if let Some(token) = token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
+        if let Some(authorization) = authorization {
+            builder = builder.header("authorization", authorization);
         }
         let req = builder
             .body(Body::from(serde_json::json!({ "text": "hello" }).to_string()))
@@ -328,6 +327,23 @@ mod tests {
             AgentEvent::AgentPermissionRequested { .. }
         ));
         assert!(h.adapter.text_calls().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_guard_accepts_case_insensitive_bearer_scheme() {
+        let h = harness().await;
+        let (_, body) = post_text(h.router.clone(), &h.surface_id, Some(&h.token)).await;
+        let err: WireError = serde_json::from_value(body).unwrap();
+        let details: AgentPermissionNeededDetails = serde_json::from_value(err.details.unwrap()).unwrap();
+        h.store
+            .approve_request(&details.request_id, DurationSpec::UntilSurfaceGone, Vec::new(), NOW + 1)
+            .await
+            .unwrap();
+
+        let auth_header = format!("bearer {}", h.token);
+        let (status, _) = post_text_with_auth_header(h.router, &h.surface_id, Some(&auth_header)).await;
+
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[tokio::test]
