@@ -9,9 +9,12 @@ use tokio::net::UnixListener;
 use tracing::info;
 
 use crate::{
+    agent_store::AgentPolicyStore,
+    events::EventBus,
     routes::{
-        attach as attach_route, attention as attention_route, capture_sessions as capture_sessions_route, close_focus as close_focus_route,
-        content_rect as content_rect_route, info as info_route, input as input_route, launches as launches_route, place as place_route,
+        agent_permissions as agent_permissions_route, attach as attach_route, attention as attention_route,
+        capture_sessions as capture_sessions_route, close_focus as close_focus_route, content_rect as content_rect_route,
+        events as events_route, info as info_route, input as input_route, launches as launches_route, place as place_route,
         pointer as pointer_route, replace as replace_route, screenshot as screenshot_route, system_permissions as system_permissions_route,
         wait as wait_route,
     },
@@ -23,6 +26,42 @@ pub fn build_router(state: AppState) -> Router {
         .route("/info", get(info_route::get_info))
         .route("/attention", get(attention_route::get_attention))
         .route("/displays", get(attention_route::get_displays))
+        .route(
+            "/agent-identities",
+            post(agent_permissions_route::post_identity).get(agent_permissions_route::get_identities),
+        )
+        .route("/agent-identities/{agent_id}", get(agent_permissions_route::get_identity))
+        .route(
+            "/agent-identities/{agent_id}/revoke",
+            post(agent_permissions_route::post_revoke_identity),
+        )
+        .route(
+            "/agent-identities/{agent_id}/tokens",
+            post(agent_permissions_route::post_identity_token),
+        )
+        .route(
+            "/agent-identities/{agent_id}/tokens/{token_id}/revoke",
+            post(agent_permissions_route::post_revoke_identity_token),
+        )
+        .route("/agent-permissions/requests", get(agent_permissions_route::get_requests))
+        .route(
+            "/agent-permissions/requests/{request_id}",
+            get(agent_permissions_route::get_request),
+        )
+        .route(
+            "/agent-permissions/requests/{request_id}/approve",
+            post(agent_permissions_route::post_approve_request),
+        )
+        .route(
+            "/agent-permissions/requests/{request_id}/deny",
+            post(agent_permissions_route::post_deny_request),
+        )
+        .route("/agent-permissions/grants", get(agent_permissions_route::get_grants))
+        .route(
+            "/agent-permissions/grants/{grant_id}/revoke",
+            post(agent_permissions_route::post_revoke_grant),
+        )
+        .route("/events", get(events_route::get_events))
         .route("/launches", post(launches_route::post_launches))
         .route("/surfaces/search", post(attach_route::post_search))
         .route("/surfaces/track", post(attach_route::post_track))
@@ -58,7 +97,16 @@ pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::
     let listener = UnixListener::bind(&socket_path)?;
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
-    let app = build_router(AppState::new_with_capture_socket(adapter, capture_socket_path)?);
+    let capture = crate::capture_registry::CaptureRegistry::with_fd_socket(capture_socket_path)?;
+    let agent_store = AgentPolicyStore::open_default()
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let app = build_router(AppState::new_with_agent_policy_and_capture(
+        adapter,
+        capture,
+        agent_store,
+        EventBus::new(),
+    ));
     axum::serve(listener, app).await
 }
 

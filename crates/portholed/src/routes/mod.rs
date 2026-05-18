@@ -1,9 +1,11 @@
+pub mod agent_permissions;
 pub mod attach;
 pub mod attention;
 pub mod capture_sessions;
 pub mod close_focus;
 pub mod content_rect;
 pub mod errors;
+pub mod events;
 pub mod info;
 pub mod input;
 pub mod launches;

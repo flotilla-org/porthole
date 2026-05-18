@@ -5,7 +5,7 @@ use porthole_core::{
     replace_pipeline::ReplacePipeline, wait_pipeline::WaitPipeline,
 };
 
-use crate::capture_registry::CaptureRegistry;
+use crate::{agent_store::AgentPolicyStore, capture_registry::CaptureRegistry, events::EventBus};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -17,6 +17,8 @@ pub struct AppState {
     pub wait: Arc<WaitPipeline>,
     pub attach: Arc<AttachPipeline>,
     pub capture: CaptureRegistry,
+    pub agent_store: AgentPolicyStore,
+    pub events: EventBus,
     pub started_at: Instant,
     pub daemon_version: &'static str,
 }
@@ -34,6 +36,24 @@ impl AppState {
     }
 
     pub fn new_with_capture_registry(adapter: Arc<dyn Adapter>, capture: CaptureRegistry) -> Self {
+        Self::new_with_agent_policy_and_capture(
+            adapter,
+            capture,
+            AgentPolicyStore::open_in_memory_sync().expect("in-memory agent policy store should initialize"),
+            EventBus::new(),
+        )
+    }
+
+    pub fn new_with_agent_policy(adapter: Arc<dyn Adapter>, agent_store: AgentPolicyStore, events: EventBus) -> Self {
+        Self::new_with_agent_policy_and_capture(adapter, CaptureRegistry::disabled(), agent_store, events)
+    }
+
+    pub fn new_with_agent_policy_and_capture(
+        adapter: Arc<dyn Adapter>,
+        capture: CaptureRegistry,
+        agent_store: AgentPolicyStore,
+        events: EventBus,
+    ) -> Self {
         let handles = HandleStore::new();
         let pipeline = Arc::new(LaunchPipeline::new(adapter.clone(), handles.clone()));
         let replace = Arc::new(ReplacePipeline::new(adapter.clone(), handles.clone(), pipeline.clone()));
@@ -49,6 +69,8 @@ impl AppState {
             wait,
             attach,
             capture,
+            agent_store,
+            events,
             started_at: Instant::now(),
             daemon_version: env!("CARGO_PKG_VERSION"),
         }
