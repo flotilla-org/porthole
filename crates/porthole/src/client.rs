@@ -5,7 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::{Method, Request};
+use hyper::{Method, Request, header::AUTHORIZATION};
 use hyper_util::client::legacy::Client;
 use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use porthole_protocol::error::WireError;
@@ -14,6 +14,7 @@ use serde::{Serialize, de::DeserializeOwned};
 pub struct DaemonClient {
     socket: std::path::PathBuf,
     http: Client<UnixConnector, Full<Bytes>>,
+    bearer_token: Option<String>,
 }
 
 impl DaemonClient {
@@ -21,29 +22,27 @@ impl DaemonClient {
         Self {
             socket: socket.as_ref().to_path_buf(),
             http: Client::unix(),
+            bearer_token: None,
         }
     }
 
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.bearer_token = Some(token.into());
+        self
+    }
+
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
-        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
-        let req = Request::builder().method(Method::GET).uri(uri).body(Full::new(Bytes::new()))?;
+        let req = self.build_empty_request(Method::GET, path)?;
         self.send_and_parse(req).await
     }
 
     pub async fn post_json<B: Serialize, T: DeserializeOwned>(&self, path: &str, body: &B) -> Result<T, ClientError> {
-        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
-        let body_bytes = serde_json::to_vec(body)?;
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header("content-type", "application/json")
-            .body(Full::new(Bytes::from(body_bytes)))?;
+        let req = self.build_json_request(Method::POST, path, body)?;
         self.send_and_parse(req).await
     }
 
     pub async fn delete_empty(&self, path: &str) -> Result<(), ClientError> {
-        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
-        let req = Request::builder().method(Method::DELETE).uri(uri).body(Full::new(Bytes::new()))?;
+        let req = self.build_empty_request(Method::DELETE, path)?;
         let res = self.http.request(req).await?;
         let status = res.status();
         let body = res.into_body().collect().await?.to_bytes();
@@ -52,6 +51,28 @@ impl DaemonClient {
             return Err(ClientError::Api(wire));
         }
         Ok(())
+    }
+
+    fn build_empty_request(&self, method: Method, path: &str) -> Result<Request<Full<Bytes>>, hyper::http::Error> {
+        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(token) = &self.bearer_token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Full::new(Bytes::new()))
+    }
+
+    fn build_json_request<B: Serialize>(&self, method: Method, path: &str, body: &B) -> Result<Request<Full<Bytes>>, ClientError> {
+        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
+        let body_bytes = serde_json::to_vec(body)?;
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json");
+        if let Some(token) = &self.bearer_token {
+            builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
+        }
+        Ok(builder.body(Full::new(Bytes::from(body_bytes)))?)
     }
 
     /// Block until /info responds successfully, with exponential backoff up to
@@ -106,4 +127,29 @@ pub enum ClientError {
     Api(WireError),
     #[error("{0}")]
     Local(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use hyper::header::AUTHORIZATION;
+
+    use super::*;
+
+    #[test]
+    fn client_request_omits_bearer_token_by_default() {
+        let client = DaemonClient::new("/tmp/porthole.sock");
+
+        let request = client.build_empty_request(Method::GET, "/info").unwrap();
+
+        assert!(request.headers().get(AUTHORIZATION).is_none());
+    }
+
+    #[test]
+    fn client_request_adds_bearer_token_when_configured() {
+        let client = DaemonClient::new("/tmp/porthole.sock").with_bearer_token("pta_agent.secret");
+
+        let request = client.build_empty_request(Method::GET, "/info").unwrap();
+
+        assert_eq!(request.headers().get(AUTHORIZATION).unwrap(), "Bearer pta_agent.secret");
+    }
 }
