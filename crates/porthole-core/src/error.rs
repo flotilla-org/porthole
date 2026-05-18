@@ -23,6 +23,12 @@ pub enum ErrorCode {
     CloseFailed,
     LaunchReturnedExisting,
     ContentRectUnavailable,
+    AgentIdentityRequired,
+    AgentIdentityRevoked,
+    AgentOperatorRequired,
+    AgentPermissionNeeded,
+    AgentPermissionDenied,
+    AgentPermissionRequestExpired,
 }
 
 impl fmt::Display for ErrorCode {
@@ -46,6 +52,12 @@ impl fmt::Display for ErrorCode {
             Self::CloseFailed => "close_failed",
             Self::LaunchReturnedExisting => "launch_returned_existing",
             Self::ContentRectUnavailable => "content_rect_unavailable",
+            Self::AgentIdentityRequired => "agent_identity_required",
+            Self::AgentIdentityRevoked => "agent_identity_revoked",
+            Self::AgentOperatorRequired => "agent_operator_required",
+            Self::AgentPermissionNeeded => "agent_permission_needed",
+            Self::AgentPermissionDenied => "agent_permission_denied",
+            Self::AgentPermissionRequestExpired => "agent_permission_request_expired",
         };
         f.write_str(s)
     }
@@ -107,6 +119,19 @@ mod tests {
         assert_eq!(ErrorCode::InvalidCoordinate.to_string(), "invalid_coordinate");
         assert_eq!(ErrorCode::InvalidArgument.to_string(), "invalid_argument");
         assert_eq!(ErrorCode::CloseFailed.to_string(), "close_failed");
+    }
+
+    #[test]
+    fn agent_permission_error_codes_display_as_snake_case() {
+        assert_eq!(ErrorCode::AgentIdentityRequired.to_string(), "agent_identity_required");
+        assert_eq!(ErrorCode::AgentIdentityRevoked.to_string(), "agent_identity_revoked");
+        assert_eq!(ErrorCode::AgentOperatorRequired.to_string(), "agent_operator_required");
+        assert_eq!(ErrorCode::AgentPermissionNeeded.to_string(), "agent_permission_needed");
+        assert_eq!(ErrorCode::AgentPermissionDenied.to_string(), "agent_permission_denied");
+        assert_eq!(
+            ErrorCode::AgentPermissionRequestExpired.to_string(),
+            "agent_permission_request_expired"
+        );
     }
 
     #[test]

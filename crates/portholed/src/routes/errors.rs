@@ -110,6 +110,12 @@ impl IntoResponse for ApiError {
             ErrorCode::CloseFailed => StatusCode::CONFLICT,
             ErrorCode::LaunchReturnedExisting => StatusCode::CONFLICT,
             ErrorCode::ContentRectUnavailable => StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorCode::AgentIdentityRequired => StatusCode::UNAUTHORIZED,
+            ErrorCode::AgentIdentityRevoked => StatusCode::UNAUTHORIZED,
+            ErrorCode::AgentOperatorRequired => StatusCode::FORBIDDEN,
+            ErrorCode::AgentPermissionNeeded => StatusCode::FORBIDDEN,
+            ErrorCode::AgentPermissionDenied => StatusCode::FORBIDDEN,
+            ErrorCode::AgentPermissionRequestExpired => StatusCode::GONE,
         };
         (status, Json(self.0)).into_response()
     }
@@ -173,6 +179,70 @@ mod tests {
         let api_err = ApiError::from(err);
         let response = api_err.into_response();
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn agent_permission_errors_map_to_auth_statuses() {
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentIdentityRequired,
+                message: "missing".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentIdentityRevoked,
+                message: "revoked".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentOperatorRequired,
+                message: "operator".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentPermissionNeeded,
+                message: "needed".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentPermissionDenied,
+                message: "denied".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            ApiError(WireError {
+                code: ErrorCode::AgentPermissionRequestExpired,
+                message: "expired".into(),
+                details: None,
+            })
+            .into_response()
+            .status(),
+            StatusCode::GONE
+        );
     }
 
     #[test]
