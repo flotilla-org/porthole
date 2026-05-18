@@ -109,7 +109,7 @@ What's known missing or rough:
 Candidates, roughly ordered by leverage:
 
 - [x] **Recording on macOS** — AVFoundation or ScreenCaptureKit. Biggest user-visible feature gap.
-- [ ] **Multi-display placement verbs** — extends the phase-0 `/place` route (which takes explicit geometry) with anchor-based placement (e.g. `anchor: focused_display`, `anchor: by_id`).
+- [x] **Multi-display placement verbs** — extends the phase-0 `/place` route (which takes explicit geometry) with anchor-based placement (e.g. `anchor: focused_display`, display id targeting).
 - [ ] **Browser tabs via CDP** — Chrome / Edge tab coverage that AX can't reach. Expanded tab verb set (input, wait, replace) and content-area screenshot crop.
 - [ ] **`force_place: true` launch option** — placement on preexisting surfaces.
 - [ ] **Hyprland adapter (Linux)** — second platform via `hyprctl` IPC.

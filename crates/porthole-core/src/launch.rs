@@ -1,12 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 #[cfg(test)]
-use crate::adapter::ArtifactLaunchSpec;
+use crate::adapter::{ArtifactLaunchSpec, Rect};
 use crate::{
     ErrorCode, PortholeError,
-    adapter::{Adapter, LaunchOutcome, LaunchSpec, ProcessLaunchSpec, Rect},
+    adapter::{Adapter, LaunchOutcome, LaunchSpec, ProcessLaunchSpec},
     handle::HandleStore,
-    placement::{Anchor, DisplayTarget, PlacementOutcome, PlacementSpec},
+    placement::{PlacementOutcome, PlacementSpec, resolve_placement_rect, validate_placement},
     surface::{SurfaceId, SurfaceInfo},
 };
 
@@ -142,128 +142,6 @@ impl From<PortholeError> for LaunchPipelineError {
     }
 }
 
-/// Validates user-supplied placement spec against the current display set.
-/// Fails with `invalid_argument` when display ids don't resolve. Runtime
-/// AX failures during actual apply are NOT in scope — those become
-/// PlacementOutcome::Failed.
-async fn validate_placement(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>) -> Result<(), PortholeError> {
-    if spec.is_effectively_empty() {
-        return Ok(());
-    }
-    // Validate DisplayTarget::Id references an existing display.
-    if let Some(DisplayTarget::Id(id)) = &spec.on_display {
-        let displays = adapter.displays().await?;
-        if !displays.iter().any(|d| &d.id == id) {
-            let known: Vec<String> = displays.iter().map(|d| d.id.as_str().to_string()).collect();
-            return Err(PortholeError::new(
-                ErrorCode::InvalidArgument,
-                format!("unknown on_display id '{}'; known ids: [{}]", id.as_str(), known.join(", ")),
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Resolve a PlacementSpec to a global screen rectangle. Uses the adapter's
-/// displays() and attention() to find target display; applies anchor/geometry
-/// semantics per spec §5.
-async fn resolve_placement_rect(spec: &PlacementSpec, adapter: &Arc<dyn Adapter>) -> Result<Rect, String> {
-    let displays = adapter.displays().await.map_err(|e| e.message)?;
-    if displays.is_empty() {
-        return Err("no displays enumerated".into());
-    }
-
-    // Fetch attention info once if any display/anchor resolution needs it.
-    let needs_attention = matches!(&spec.on_display, Some(DisplayTarget::Focused))
-        || matches!(spec.anchor, Some(Anchor::Cursor) | Some(Anchor::FocusedDisplay));
-    let attn_opt = if needs_attention {
-        Some(adapter.attention().await.map_err(|e| e.message)?)
-    } else {
-        None
-    };
-
-    // 1. Determine target display.
-    let target = match &spec.on_display {
-        Some(DisplayTarget::Id(id)) => displays
-            .iter()
-            .find(|d| &d.id == id)
-            .cloned()
-            // By the time we get here, validate_placement has already confirmed the id exists.
-            // This fallback handles the rare race where displays change between validation and apply.
-            .unwrap_or_else(|| displays[0].clone()),
-        Some(DisplayTarget::Primary) => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
-        Some(DisplayTarget::Focused) => {
-            let attn = attn_opt.as_ref().unwrap();
-            match &attn.focused_display_id {
-                Some(id) => displays
-                    .iter()
-                    .find(|d| &d.id == id)
-                    .cloned()
-                    .unwrap_or_else(|| displays[0].clone()),
-                None => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
-            }
-        }
-        None => match spec.anchor {
-            Some(Anchor::Cursor) => {
-                let attn = attn_opt.as_ref().unwrap();
-                displays
-                    .iter()
-                    .find(|d| {
-                        attn.cursor.x >= d.bounds.x
-                            && attn.cursor.x < d.bounds.x + d.bounds.w
-                            && attn.cursor.y >= d.bounds.y
-                            && attn.cursor.y < d.bounds.y + d.bounds.h
-                    })
-                    .cloned()
-                    .unwrap_or_else(|| displays[0].clone())
-            }
-            Some(Anchor::FocusedDisplay) => {
-                let attn = attn_opt.as_ref().unwrap();
-                match &attn.focused_display_id {
-                    Some(id) => displays
-                        .iter()
-                        .find(|d| &d.id == id)
-                        .cloned()
-                        .unwrap_or_else(|| displays[0].clone()),
-                    None => displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone()),
-                }
-            }
-            None => {
-                // Geometry supplied without on_display or anchor — applies to primary.
-                displays.iter().find(|d| d.primary).cloned().unwrap_or_else(|| displays[0].clone())
-            }
-        },
-    };
-
-    // 2. Compute geometry on that display.
-    let global = if let Some(local) = &spec.geometry {
-        Rect {
-            x: target.bounds.x + local.x,
-            y: target.bounds.y + local.y,
-            w: local.w,
-            h: local.h,
-        }
-    } else {
-        // No explicit geometry — synthesise a conservative default.
-        let w = (target.bounds.w * 0.7).min(1400.0);
-        let h = (target.bounds.h * 0.7).min(1000.0);
-        // For Cursor anchor: center at the cursor position, clamped to display bounds
-        // so the window never falls off-screen (spec §5.4).
-        // For all other anchors: center on the display.
-        let (cx, cy) = if matches!(spec.anchor, Some(Anchor::Cursor)) {
-            let attn = attn_opt.as_ref().unwrap();
-            (attn.cursor.x, attn.cursor.y)
-        } else {
-            (target.bounds.x + target.bounds.w / 2.0, target.bounds.y + target.bounds.h / 2.0)
-        };
-        let x = (cx - w / 2.0).clamp(target.bounds.x, target.bounds.x + target.bounds.w - w);
-        let y = (cy - h / 2.0).clamp(target.bounds.y, target.bounds.y + target.bounds.h - h);
-        Rect { x, y, w, h }
-    };
-
-    Ok(global)
-}
-
 /// Schedule an auto-dismiss of the surface after `delay`. Returns a JoinHandle
 /// that the caller can abort to cancel early. Fire-and-forget is also fine —
 /// the timer swallows dead-surface errors.
@@ -292,6 +170,7 @@ mod tests {
     use crate::{
         adapter::{Confidence, Correlation, RequireConfidence},
         in_memory::InMemoryAdapter,
+        placement::{Anchor, DisplayTarget},
         surface::SurfaceState,
     };
 

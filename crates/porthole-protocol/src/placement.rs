@@ -1,12 +1,16 @@
-use porthole_core::{display::Rect, input::CoordUnits};
+use porthole_core::{display::Rect, input::CoordUnits, placement::PlacementSpec};
 use serde::{Deserialize, Serialize};
 
-/// Body for `POST /surfaces/{id}/place`. Explicit screen-coordinate rectangle;
-/// anchor / display-target placement is launch-time only for now (phase 4 will
-/// extend this with anchor support).
+/// Body for `POST /surfaces/{id}/place`.
+///
+/// Use `rect` for exact global screen coordinates, or `placement` for the
+/// same display/anchor vocabulary accepted by launch and replace.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaceRequest {
-    pub rect: Rect,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rect: Option<Rect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<PlacementSpec>,
     /// Coordinate units for `rect`. Default `logical` (unchanged behaviour).
     /// `physical` triggers daemon-side division by the surface's display
     /// scale across all four of `rect.x/y/w/h`.
@@ -29,18 +33,19 @@ mod tests {
     #[test]
     fn place_request_roundtrip() {
         let r = PlaceRequest {
-            rect: Rect {
+            rect: Some(Rect {
                 x: 100.0,
                 y: 200.0,
                 w: 800.0,
                 h: 600.0,
-            },
+            }),
+            placement: None,
             units: CoordUnits::Logical,
             session: None,
         };
         let json = serde_json::to_string(&r).unwrap();
         let back: PlaceRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.rect.w, 800.0);
+        assert_eq!(back.rect.unwrap().w, 800.0);
         assert!(matches!(back.units, CoordUnits::Logical));
     }
 
@@ -58,6 +63,14 @@ mod tests {
         let json = r#"{ "rect": { "x": 0, "y": 0, "w": 100, "h": 100 }, "units": "physical" }"#;
         let r: PlaceRequest = serde_json::from_str(json).unwrap();
         assert!(matches!(r.units, CoordUnits::Physical));
+    }
+
+    #[test]
+    fn place_request_accepts_placement_object_without_rect() {
+        let json = r#"{ "placement": { "anchor": "focused_display" } }"#;
+        let r: PlaceRequest = serde_json::from_str(json).unwrap();
+        assert!(r.rect.is_none());
+        assert!(r.placement.is_some());
     }
 
     #[test]
