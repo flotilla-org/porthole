@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adapter;
+pub mod agent_policy;
 pub mod attach_pipeline;
 pub mod attention;
 pub mod content_rect;
