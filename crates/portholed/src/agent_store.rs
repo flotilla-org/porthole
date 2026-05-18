@@ -209,16 +209,18 @@ impl AgentPolicyStore {
             let token = format!("pta_{}.{secret}", agent_id.as_str());
             let token_hash = hash_token(&token);
             let metadata_json = serde_json::to_string(&metadata)?;
-            conn.execute(
+            let tx = conn.transaction()?;
+            tx.execute(
                 "INSERT INTO agent_identities(agent_id, display_name, metadata_json, created_at_unix_ms, revoked_at_unix_ms)
                  VALUES(?1, ?2, ?3, ?4, NULL)",
                 params![agent_id.as_str(), display_name, metadata_json, created_at_unix_ms],
             )?;
-            conn.execute(
+            tx.execute(
                 "INSERT INTO agent_tokens(token_id, agent_id, token_hash, created_at_unix_ms, revoked_at_unix_ms)
                  VALUES(?1, ?2, ?3, ?4, NULL)",
                 params![token_id, agent_id.as_str(), token_hash, created_at_unix_ms],
             )?;
+            tx.commit()?;
             Ok(CreatedAgentIdentity { agent_id, token_id, token })
         })
         .await
