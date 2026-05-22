@@ -15,7 +15,7 @@ final class OnboardingWindowControllerTests: XCTestCase {
         XCTAssertEqual(controller.window?.contentMinSize, NSSize(width: 480, height: 360))
     }
 
-    func testBlockedStateShowsSingleRefreshButton() async {
+    func testBlockedStateHasNoExtraRefreshButton() async {
         let supervisor = DaemonSupervisor(
             daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
             cliURL: URL(fileURLWithPath: "/tmp/porthole")
@@ -62,7 +62,13 @@ final class OnboardingWindowControllerTests: XCTestCase {
             }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        throw NSError(domain: "OnboardingWindowControllerTests", code: 1)
+        throw NSError(
+            domain: "OnboardingWindowControllerTests",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Timed out waiting for label '\(accessibilityLabel)' to match expected value"
+            ]
+        )
     }
 
     private func visibleButtons(in controller: OnboardingWindowController) -> [NSButton] {

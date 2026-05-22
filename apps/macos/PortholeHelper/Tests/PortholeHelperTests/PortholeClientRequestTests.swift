@@ -2,6 +2,13 @@ import XCTest
 @testable import PortholeHelper
 
 final class PortholeClientRequestTests: XCTestCase {
+    func testSocketTimeoutPreservesFractionalSeconds() {
+        let timeout = PortholeSocketTimeout.makeTimeval(for: 2.3)
+
+        XCTAssertEqual(timeout.tv_sec, 2)
+        XCTAssertEqual(timeout.tv_usec, 300_000)
+    }
+
     func testBuildsGetInfoRequest() throws {
         let request = PortholeHttpRequest.get(path: "/info")
         let text = String(data: request.bytes, encoding: .utf8)!

@@ -28,6 +28,23 @@ struct PortholeHttpRequest {
     }
 }
 
+enum PortholeSocketTimeout {
+    static func makeTimeval(for timeoutSeconds: TimeInterval) -> timeval {
+        let clampedSeconds = max(0, timeoutSeconds)
+        let wholeSeconds = floor(clampedSeconds)
+        var seconds = Int(wholeSeconds)
+        var microseconds = Int(((clampedSeconds - wholeSeconds) * 1_000_000).rounded())
+        if microseconds >= 1_000_000 {
+            seconds += 1
+            microseconds -= 1_000_000
+        }
+        return timeval(
+            tv_sec: __darwin_time_t(seconds),
+            tv_usec: __darwin_suseconds_t(microseconds)
+        )
+    }
+}
+
 enum PortholeClientError: Error, Equatable {
     case connectionFailed(String)
     case invalidResponse(String)
@@ -163,26 +180,23 @@ private final class PortholeRawConnection: @unchecked Sendable {
     }
 
     private func configureTimeouts(_ socketFD: Int32) throws {
-        var timeout = timeval(
-            tv_sec: __darwin_time_t(timeoutSeconds.rounded(.up)),
-            tv_usec: 0
-        )
-        let timeoutSize = socklen_t(MemoryLayout<timeval>.size)
-        let readResult = withUnsafePointer(to: &timeout) { pointer in
-            pointer.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<timeval>.size) {
-                Darwin.setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, $0, timeoutSize)
-            }
+        var timeout = PortholeSocketTimeout.makeTimeval(for: timeoutSeconds)
+        for (option, name) in [(SO_RCVTIMEO, "SO_RCVTIMEO"), (SO_SNDTIMEO, "SO_SNDTIMEO")] {
+            try setSocketTimeout(socketFD, option: option, name: name, timeout: &timeout)
         }
-        guard readResult == 0 else {
-            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "setsockopt(SO_RCVTIMEO)"))
+    }
+
+    private func setSocketTimeout(
+        _ socketFD: Int32,
+        option: Int32,
+        name: String,
+        timeout: inout timeval
+    ) throws {
+        let result = withUnsafeBytes(of: &timeout) { pointer in
+            Darwin.setsockopt(socketFD, SOL_SOCKET, option, pointer.baseAddress, socklen_t(pointer.count))
         }
-        let writeResult = withUnsafePointer(to: &timeout) { pointer in
-            pointer.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<timeval>.size) {
-                Darwin.setsockopt(socketFD, SOL_SOCKET, SO_SNDTIMEO, $0, timeoutSize)
-            }
-        }
-        guard writeResult == 0 else {
-            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "setsockopt(SO_SNDTIMEO)"))
+        guard result == 0 else {
+            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "setsockopt(\(name))"))
         }
     }
 
@@ -218,6 +232,7 @@ private final class PortholeRawConnection: @unchecked Sendable {
 
     private func writeAll(_ socketFD: Int32, _ data: Data) throws {
         try data.withUnsafeBytes { rawBuffer in
+            // Empty Data has no backing pointer; valid HTTP callers always provide request bytes.
             guard let base = rawBuffer.baseAddress else { return }
             var offset = 0
             while offset < rawBuffer.count {

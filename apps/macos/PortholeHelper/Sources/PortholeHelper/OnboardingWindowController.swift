@@ -194,6 +194,7 @@ final class OnboardingWindowController: NSWindowController {
             do {
                 try await Task.sleep(nanoseconds: 250_000_000)
             } catch {
+                // Cancellation means the window task is being torn down; leave state untouched.
                 return
             }
         }
