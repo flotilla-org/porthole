@@ -188,7 +188,7 @@ final class OnboardingWindowController: NSWindowController {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             if let currentPID = helperOwnedDaemonPID(), currentPID != previousPID {
-                await waitForInfo(timeoutSeconds: max(0.5, deadline.timeIntervalSinceNow), restartPermission: restartPermission)
+                await waitForInfo(timeoutSeconds: max(2.0, deadline.timeIntervalSinceNow), restartPermission: restartPermission)
                 return
             }
             do {

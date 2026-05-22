@@ -9,6 +9,13 @@ final class PortholeClientRequestTests: XCTestCase {
         XCTAssertEqual(timeout.tv_usec, 300_000)
     }
 
+    func testUnixSocketAddressLengthIncludesPathTerminator() {
+        let path = "/tmp/porthole.sock"
+        let length = PortholeUnixSocketAddress.length(pathByteCount: path.utf8.count)
+
+        XCTAssertEqual(length, socklen_t(2 + path.utf8.count + 1))
+    }
+
     func testBuildsGetInfoRequest() throws {
         let request = PortholeHttpRequest.get(path: "/info")
         let text = String(data: request.bytes, encoding: .utf8)!

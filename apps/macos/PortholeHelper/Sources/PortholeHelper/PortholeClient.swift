@@ -45,6 +45,12 @@ enum PortholeSocketTimeout {
     }
 }
 
+enum PortholeUnixSocketAddress {
+    static func length(pathByteCount: Int) -> socklen_t {
+        socklen_t(MemoryLayout<UInt8>.size + MemoryLayout<sa_family_t>.size + pathByteCount + 1)
+    }
+}
+
 enum PortholeClientError: Error, Equatable {
     case connectionFailed(String)
     case invalidResponse(String)
@@ -145,6 +151,7 @@ private final class PortholeRawConnection: @unchecked Sendable {
 
     func start() async throws -> Data {
         try await withTaskCancellationHandler {
+            // The helper sends low-frequency UI requests; do not reuse this blocking POSIX path for high-concurrency callers.
             try connectWriteRead()
         } onCancel: {
             cancel()
@@ -202,7 +209,6 @@ private final class PortholeRawConnection: @unchecked Sendable {
 
     private func connect(_ socketFD: Int32) throws {
         var addr = sockaddr_un()
-        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         addr.sun_family = sa_family_t(AF_UNIX)
 
         let pathBytes = Array(socketURL.path.utf8)
@@ -210,6 +216,8 @@ private final class PortholeRawConnection: @unchecked Sendable {
         guard pathBytes.count < pathCapacity else {
             throw PortholeClientError.connectionFailed("socket path is too long: \(socketURL.path)")
         }
+        let socketAddressLength = PortholeUnixSocketAddress.length(pathByteCount: pathBytes.count)
+        addr.sun_len = UInt8(socketAddressLength)
 
         withUnsafeMutablePointer(to: &addr.sun_path) { pointer in
             pointer.withMemoryRebound(to: CChar.self, capacity: pathCapacity) { chars in
@@ -222,7 +230,7 @@ private final class PortholeRawConnection: @unchecked Sendable {
 
         let result = withUnsafePointer(to: &addr) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                Darwin.connect(socketFD, $0, socketAddressLength)
             }
         }
         guard result == 0 else {
@@ -231,9 +239,13 @@ private final class PortholeRawConnection: @unchecked Sendable {
     }
 
     private func writeAll(_ socketFD: Int32, _ data: Data) throws {
+        guard !data.isEmpty else {
+            throw PortholeClientError.connectionFailed("empty HTTP request")
+        }
         try data.withUnsafeBytes { rawBuffer in
-            // Empty Data has no backing pointer; valid HTTP callers always provide request bytes.
-            guard let base = rawBuffer.baseAddress else { return }
+            guard let base = rawBuffer.baseAddress else {
+                throw PortholeClientError.connectionFailed("HTTP request bytes have no backing pointer")
+            }
             var offset = 0
             while offset < rawBuffer.count {
                 let written = Darwin.write(socketFD, base.advanced(by: offset), rawBuffer.count - offset)

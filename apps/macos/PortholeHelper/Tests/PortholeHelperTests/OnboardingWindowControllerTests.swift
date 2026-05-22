@@ -54,19 +54,23 @@ final class OnboardingWindowControllerTests: XCTestCase {
         matching predicate: @escaping (String) -> Bool
     ) async throws -> String {
         let deadline = Date().addingTimeInterval(1)
+        var lastObservedValue: String?
         while Date() < deadline {
-            if let label = labels(in: controller.window?.contentView).first(where: {
-                $0.accessibilityLabel() == accessibilityLabel && predicate($0.stringValue)
-            }) {
+            let matchingLabels = labels(in: controller.window?.contentView).filter {
+                $0.accessibilityLabel() == accessibilityLabel
+            }
+            lastObservedValue = matchingLabels.last?.stringValue ?? lastObservedValue
+            if let label = matchingLabels.first(where: { predicate($0.stringValue) }) {
                 return label.stringValue
             }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
+        let actualValue = lastObservedValue.map { "'\($0)'" } ?? "not found"
         throw NSError(
             domain: "OnboardingWindowControllerTests",
             code: 1,
             userInfo: [
-                NSLocalizedDescriptionKey: "Timed out waiting for label '\(accessibilityLabel)' to match expected value"
+                NSLocalizedDescriptionKey: "Timed out waiting for label '\(accessibilityLabel)' to match expected value; actual value was \(actualValue)"
             ]
         )
     }
