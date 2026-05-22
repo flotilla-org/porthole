@@ -172,8 +172,35 @@ final class OnboardingWindowController: NSWindowController {
         }
 
         // Callers transition the reducer into .restarting before invoking this.
+        let previousPID = helperOwnedDaemonPID()
         supervisor.restart()
-        await waitForInfo(timeoutSeconds: 10, restartPermission: permission)
+        await waitForRestartedInfo(timeoutSeconds: 10, restartPermission: permission, previousPID: previousPID)
+    }
+
+    private func helperOwnedDaemonPID() -> Int32? {
+        if case .running(let pid) = supervisor.currentState {
+            return pid
+        }
+        return nil
+    }
+
+    private func waitForRestartedInfo(timeoutSeconds: TimeInterval, restartPermission: String, previousPID: Int32?) async {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let currentPID = helperOwnedDaemonPID(), currentPID != previousPID {
+                await waitForInfo(timeoutSeconds: max(2.0, deadline.timeIntervalSinceNow), restartPermission: restartPermission)
+                return
+            }
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                // Cancellation means the window task is being torn down; leave state untouched.
+                return
+            }
+        }
+
+        flow.apply(.restartTimedOut(restartPermission))
+        render()
     }
 
     private func waitForInfo(timeoutSeconds: TimeInterval, restartPermission: String? = nil) async {
@@ -208,6 +235,7 @@ final class OnboardingWindowController: NSWindowController {
         let activePermission = flow.state.activePermissionName
         renderPermissions()
 
+        primaryButton.isHidden = false
         settingsButton.isEnabled = activePermission.flatMap { SettingsLinks.link(for: $0) } != nil
         refreshButton.isEnabled = true
         restartButton.isEnabled = supervisor.restartCapability == .helperOwned
@@ -262,8 +290,9 @@ final class OnboardingWindowController: NSWindowController {
         case .blocked(let message):
             statusLabel.stringValue = "Action needed"
             detailLabel.stringValue = message
-            primaryButton.title = "Refresh"
-            primaryButton.isEnabled = true
+            primaryButton.title = "Request Permission"
+            primaryButton.isEnabled = false
+            primaryButton.isHidden = true
             settingsButton.isEnabled = false
         }
     }
@@ -288,7 +317,6 @@ final class OnboardingWindowController: NSWindowController {
             row.orientation = .horizontal
             row.alignment = .centerY
             row.spacing = 8
-            row.widthAnchor.constraint(equalTo: permissionsStack.widthAnchor).isActive = true
 
             let name = NSTextField(labelWithString: SettingsLinks.displayName(for: permission.name))
             name.font = .preferredFont(forTextStyle: .body)
@@ -303,6 +331,7 @@ final class OnboardingWindowController: NSWindowController {
             row.addArrangedSubview(state)
             row.setAccessibilityLabel("\(SettingsLinks.displayName(for: permission.name)): \(state.stringValue)")
             permissionsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: permissionsStack.widthAnchor).isActive = true
         }
     }
 
