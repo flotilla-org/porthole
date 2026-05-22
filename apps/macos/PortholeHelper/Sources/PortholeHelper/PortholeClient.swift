@@ -243,9 +243,7 @@ private final class PortholeRawConnection: @unchecked Sendable {
             throw PortholeClientError.connectionFailed("empty HTTP request")
         }
         try data.withUnsafeBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else {
-                throw PortholeClientError.connectionFailed("HTTP request bytes have no backing pointer")
-            }
+            let base = rawBuffer.baseAddress!
             var offset = 0
             while offset < rawBuffer.count {
                 let written = Darwin.write(socketFD, base.advanced(by: offset), rawBuffer.count - offset)
@@ -253,6 +251,8 @@ private final class PortholeRawConnection: @unchecked Sendable {
                     offset += written
                 } else if written == -1 && errno == EINTR {
                     continue
+                } else if written == -1 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    throw PortholeClientError.timedOut(timeoutSeconds)
                 } else {
                     throw PortholeClientError.connectionFailed(errnoMessage(prefix: "write"))
                 }

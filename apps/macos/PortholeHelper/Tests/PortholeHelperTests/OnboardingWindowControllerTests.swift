@@ -15,14 +15,14 @@ final class OnboardingWindowControllerTests: XCTestCase {
         XCTAssertEqual(controller.window?.contentMinSize, NSSize(width: 480, height: 360))
     }
 
-    func testBlockedStateHasNoExtraRefreshButton() async {
+    func testBlockedStateHasNoExtraRefreshButton() async throws {
         let supervisor = DaemonSupervisor(
             daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
             cliURL: URL(fileURLWithPath: "/tmp/porthole")
         ) { _ in }
         let controller = OnboardingWindowController(client: FailingPortholeClient(), supervisor: supervisor)
 
-        let status = try? await waitForLabel("Onboarding status", in: controller) { $0 == "Action needed" }
+        let status = try await waitForLabel("Onboarding status", in: controller) { $0 == "Action needed" }
         XCTAssertEqual(status, "Action needed")
 
         let refreshButtons = visibleButtons(in: controller).filter { $0.title == "Refresh" }
