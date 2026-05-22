@@ -1,5 +1,5 @@
 import Foundation
-import Network
+import Darwin
 
 protocol PortholeClientProtocol: Sendable {
     func info() async throws -> InfoResponse
@@ -35,6 +35,25 @@ enum PortholeClientError: Error, Equatable {
     case httpError(statusCode: Int, wire: WireError?)
 }
 
+extension PortholeClientError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .connectionFailed(let message):
+            "Could not connect to portholed: \(message)"
+        case .invalidResponse(let message):
+            "Invalid response from portholed: \(message)"
+        case .timedOut(let seconds):
+            "Timed out waiting for portholed after \(seconds) seconds"
+        case .httpError(let statusCode, let wire):
+            if let wire {
+                "\(wire.message) (\(wire.code), HTTP \(statusCode))"
+            } else {
+                "portholed returned HTTP \(statusCode)"
+            }
+        }
+    }
+}
+
 final class PortholeClient: PortholeClientProtocol, @unchecked Sendable {
     private let socketURL: URL
     private let requestTimeoutSeconds: TimeInterval
@@ -67,7 +86,7 @@ final class PortholeClient: PortholeClientProtocol, @unchecked Sendable {
     }
 
     private func sendRaw(_ bytes: Data) async throws -> Data {
-        let operation = PortholeRawConnection(socketURL: socketURL, bytes: bytes)
+        let operation = PortholeRawConnection(socketURL: socketURL, bytes: bytes, timeoutSeconds: requestTimeoutSeconds)
         let timeoutSeconds = requestTimeoutSeconds
         defer { operation.cancel() }
 
@@ -95,90 +114,145 @@ final class PortholeClient: PortholeClientProtocol, @unchecked Sendable {
 }
 
 private final class PortholeRawConnection: @unchecked Sendable {
-    private let connection: NWConnection
+    private let socketURL: URL
     private let bytes: Data
-    private let queue = DispatchQueue(label: "dev.porthole.helper.client")
-    private var response = Data()
-    private var continuation: CheckedContinuation<Data, Error>?
-    private var didResume = false
+    private let timeoutSeconds: TimeInterval
+    private let lock = NSLock()
+    private var fd: Int32 = -1
 
-    init(socketURL: URL, bytes: Data) {
+    init(socketURL: URL, bytes: Data, timeoutSeconds: TimeInterval) {
+        self.socketURL = socketURL
         self.bytes = bytes
-        self.connection = NWConnection(to: .unix(path: socketURL.path), using: .tcp)
+        self.timeoutSeconds = timeoutSeconds
     }
 
     func start() async throws -> Data {
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                queue.async {
-                    self.continuation = continuation
-                    self.installHandlersAndStart()
-                }
-            }
+            try connectWriteRead()
         } onCancel: {
             cancel()
         }
     }
 
     func cancel() {
-        queue.async {
-            self.connection.cancel()
+        let current: Int32 = lock.withLock {
+            let current = fd
+            fd = -1
+            return current
+        }
+        if current >= 0 {
+            Darwin.close(current)
         }
     }
 
-    private func installHandlersAndStart() {
-        connection.stateUpdateHandler = { [weak self] state in
-            guard let self else { return }
-            self.queue.async {
-                self.handle(state)
+    private func connectWriteRead() throws -> Data {
+        let socketFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard socketFD >= 0 else {
+            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "socket"))
+        }
+
+        lock.withLock {
+            fd = socketFD
+        }
+        defer { cancel() }
+
+        try configureTimeouts(socketFD)
+        try connect(socketFD)
+        try writeAll(socketFD, bytes)
+        return try readAll(socketFD)
+    }
+
+    private func configureTimeouts(_ socketFD: Int32) throws {
+        var timeout = timeval(
+            tv_sec: __darwin_time_t(timeoutSeconds.rounded(.up)),
+            tv_usec: 0
+        )
+        let timeoutSize = socklen_t(MemoryLayout<timeval>.size)
+        let readResult = withUnsafePointer(to: &timeout) { pointer in
+            pointer.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<timeval>.size) {
+                Darwin.setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, $0, timeoutSize)
             }
         }
-        connection.start(queue: queue)
-    }
-
-    private func handle(_ state: NWConnection.State) {
-        switch state {
-        case .ready:
-            connection.send(content: bytes, completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
-                self.queue.async {
-                    if let error {
-                        self.resume(.failure(PortholeClientError.connectionFailed(error.localizedDescription)))
-                    } else {
-                        self.receiveNext()
-                    }
-                }
-            })
-        case .failed(let error):
-            resume(.failure(PortholeClientError.connectionFailed(error.localizedDescription)))
-        default:
-            break
+        guard readResult == 0 else {
+            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "setsockopt(SO_RCVTIMEO)"))
+        }
+        let writeResult = withUnsafePointer(to: &timeout) { pointer in
+            pointer.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<timeval>.size) {
+                Darwin.setsockopt(socketFD, SOL_SOCKET, SO_SNDTIMEO, $0, timeoutSize)
+            }
+        }
+        guard writeResult == 0 else {
+            throw PortholeClientError.connectionFailed(errnoMessage(prefix: "setsockopt(SO_SNDTIMEO)"))
         }
     }
 
-    private func receiveNext() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
-            self.queue.async {
-                if let data {
-                    self.response.append(data)
+    private func connect(_ socketFD: Int32) throws {
+        var addr = sockaddr_un()
+        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        addr.sun_family = sa_family_t(AF_UNIX)
+
+        let pathBytes = Array(socketURL.path.utf8)
+        let pathCapacity = MemoryLayout.size(ofValue: addr.sun_path)
+        guard pathBytes.count < pathCapacity else {
+            throw PortholeClientError.connectionFailed("socket path is too long: \(socketURL.path)")
+        }
+
+        withUnsafeMutablePointer(to: &addr.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: pathCapacity) { chars in
+                for index in 0..<pathBytes.count {
+                    chars[index] = CChar(bitPattern: pathBytes[index])
                 }
-                if let error {
-                    self.resume(.failure(PortholeClientError.connectionFailed(error.localizedDescription)))
-                } else if isComplete {
-                    self.resume(.success(self.response))
+                chars[pathBytes.count] = 0
+            }
+        }
+
+        let result = withUnsafePointer(to: &addr) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard result == 0 else {
+            throw PortholeClientError.connectionFailed("\(socketURL.path): \(errnoMessage(prefix: "connect"))")
+        }
+    }
+
+    private func writeAll(_ socketFD: Int32, _ data: Data) throws {
+        try data.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let written = Darwin.write(socketFD, base.advanced(by: offset), rawBuffer.count - offset)
+                if written > 0 {
+                    offset += written
+                } else if written == -1 && errno == EINTR {
+                    continue
                 } else {
-                    self.receiveNext()
+                    throw PortholeClientError.connectionFailed(errnoMessage(prefix: "write"))
                 }
             }
         }
     }
 
-    private func resume(_ result: Result<Data, Error>) {
-        guard !didResume else { return }
-        didResume = true
-        connection.cancel()
-        continuation?.resume(with: result)
-        continuation = nil
+    private func readAll(_ socketFD: Int32) throws -> Data {
+        var response = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let readCount = Darwin.read(socketFD, &buffer, buffer.count)
+            if readCount > 0 {
+                response.append(buffer, count: readCount)
+            } else if readCount == 0 {
+                return response
+            } else if errno == EINTR {
+                continue
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                throw PortholeClientError.timedOut(timeoutSeconds)
+            } else {
+                throw PortholeClientError.connectionFailed(errnoMessage(prefix: "read"))
+            }
+        }
+    }
+
+    private func errnoMessage(prefix: String) -> String {
+        "\(prefix): \(String(cString: strerror(errno)))"
     }
 }
