@@ -271,7 +271,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
         let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_eq!(frame.session_id, created.session_id);
@@ -306,7 +306,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
 
         let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
@@ -329,7 +329,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
 
         request_latest_frame(&mut stream, &created);
         let control = read_json_line(&mut reader);
@@ -515,7 +515,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
         authorize_capture_transfer_stream(&mut stream, &created, &token);
         let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
