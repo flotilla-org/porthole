@@ -2,6 +2,7 @@ pub mod bridge;
 
 mod launch;
 mod remote_desktop;
+mod screenshot;
 mod snapshot;
 
 use std::{
@@ -300,8 +301,8 @@ impl Adapter for KWinAdapter {
         launch::launch_process(self, spec).await
     }
 
-    async fn screenshot(&self, _surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
-        Err(unsupported("KWin adapter does not support screenshots yet"))
+    async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
+        screenshot::screenshot(self, surface).await
     }
 
     async fn start_video_capture(&self, _surface: &SurfaceInfo) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
@@ -573,6 +574,7 @@ impl Adapter for KWinAdapter {
         vec![
             "search",
             "launch_process",
+            "screenshot",
             "wait",
             "close",
             "focus",

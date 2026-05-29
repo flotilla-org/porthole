@@ -155,15 +155,34 @@ Expected modified files across the branch chain:
 
 ## Branch 6: `kwin-screenshot-capture`
 
-- [ ] Implement `screenshot(surface)` for KWin.
-- [ ] Prefer KWin `org.kde.KWin.ScreenShot2.CaptureWindow` if the KWin platform
+- [x] Implement `screenshot(surface)` for KWin.
+- [x] Prefer KWin `org.kde.KWin.ScreenShot2.CaptureWindow` if the KWin platform
   ref can be mapped to the API's expected window identifier.
 - [ ] Fall back to portal screenshot/area only when window capture is
   unavailable.
-- [ ] Preserve Porthole screenshot response semantics: PNG bytes, bounds, scale,
+- [x] Preserve Porthole screenshot response semantics: PNG bytes, bounds, scale,
   and capture timestamp.
-- [ ] Keep `start_video_capture` unsupported in this branch.
-- [ ] Add manual consent-cancelled and successful screenshot smoke notes.
+- [x] Keep `start_video_capture` unsupported in this branch.
+- [x] Add manual consent-cancelled and successful screenshot smoke notes.
+
+Notes from dogfood smoke:
+
+- KWin `ScreenShot2.CaptureWindow` is usable for porthole's per-window
+  screenshot semantics, but it is restricted by KDE. The calling daemon needs a
+  desktop entry that declares
+  `X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2`.
+- For local development, a per-user desktop entry at
+  `~/.local/share/applications/work.flotilla.Porthole.desktop` with
+  `Exec=/home/robert/dev/porthole/target/debug/portholed` was enough; no sudo
+  was needed. This is now wired as `porthole kwin install-desktop-entry`, which
+  writes the entry and runs `kbuildsycoca6 --noincremental`.
+- The KWin API writes raw `QImage` bytes to the pipe and returns
+  `type/width/height/stride/format` metadata, so the adapter must encode PNG
+  itself before returning the core `Screenshot`.
+- Successful live smoke on 2026-05-29: launched Konsole through
+  `launch_process`, approved the surface observe request, captured
+  `/tmp/kwin-shot-smoke.png` as a PNG, then approved manage and closed the
+  surface.
 
 ## Branch 7: `kwin-pipewire-recording`
 
@@ -186,8 +205,13 @@ Expected modified files across the branch chain:
 ## Current Sudo State
 
 No known runtime step for KWin support requires sudo. KWin script installation,
-session D-Bus, portal consent, and PipeWire/EIS runtime interaction are
-per-user/session operations.
+session D-Bus, portal consent, KWin screenshot trust metadata, and PipeWire/EIS
+runtime interaction are per-user/session operations for local development.
+
+Production packaging will need to install a KDE desktop entry for the daemon or
+platform app that includes
+`X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2`. That packaging path
+may be system-wide later, but it was not required for dogfood development.
 
 The expected development headers have been installed on the dogfood Fedora KDE
 machine:

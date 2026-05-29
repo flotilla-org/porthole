@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 futures-util = { workspace = true }
+image = { workspace = true }
 porthole-core = { path = "../porthole-core" }
 regex = { workspace = true }
 serde = { workspace = true }

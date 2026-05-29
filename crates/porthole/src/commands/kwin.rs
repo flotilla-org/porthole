@@ -14,6 +14,8 @@ const SCRIPT_ENABLED_KEY: &str = "porthole-controlEnabled";
 const SCRIPT_PACKAGE_TYPE: &str = "KWin/Script";
 const SCRIPT_METADATA: &str = include_str!("../../../../apps/linux/kwin/porthole-control-script/metadata.json");
 const SCRIPT_MAIN: &str = include_str!("../../../../apps/linux/kwin/porthole-control-script/contents/code/main.js");
+const DESKTOP_ENTRY_ID: &str = "work.flotilla.Porthole";
+const DESKTOP_ENTRY_FILENAME: &str = "work.flotilla.Porthole.desktop";
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum KwinCommand {
@@ -25,6 +27,8 @@ pub enum KwinCommand {
     Status,
     /// Reload the installed KWin control script.
     ReloadScript,
+    /// Install the per-user KDE desktop entry that authorizes KWin screenshots.
+    InstallDesktopEntry,
 }
 
 pub fn run(command: KwinCommand) -> Result<(), ClientError> {
@@ -33,6 +37,7 @@ pub fn run(command: KwinCommand) -> Result<(), ClientError> {
         KwinCommand::UninstallScript => uninstall_script(),
         KwinCommand::Status => status(),
         KwinCommand::ReloadScript => reload_script(),
+        KwinCommand::InstallDesktopEntry => install_desktop_entry(),
     }
     .map_err(|error| ClientError::Local(error.to_string()))
 }
@@ -81,7 +86,55 @@ fn status() -> Result<(), KwinError> {
     println!("kwinrc_enabled: {enabled}");
     println!("kwin_loaded: {loaded}");
     println!("package_path: {}", installed_script_dir()?.display());
+    println!("desktop_entry_path: {}", desktop_entry_path()?.display());
+    println!("desktop_entry_installed: {}", desktop_entry_path()?.is_file());
     Ok(())
+}
+
+fn install_desktop_entry() -> Result<(), KwinError> {
+    let daemon = infer_daemon_path()?;
+    let path = desktop_entry_path()?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| KwinError::Message(format!("desktop entry path has no parent: {}", path.display())))?;
+    fs::create_dir_all(parent).map_err(|source| KwinError::io(parent, source))?;
+    write_file(&path, &render_desktop_entry(&daemon))?;
+    run_checked("kbuildsycoca6", &["--noincremental"])?;
+    println!("KDE desktop entry installed: {}", path.display());
+    println!("Exec={}", daemon.display());
+    Ok(())
+}
+
+fn render_desktop_entry(daemon: &Path) -> String {
+    format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=Porthole\n\
+         Exec={}\n\
+         NoDisplay=true\n\
+         X-DBUS-StartupType=Unique\n\
+         X-DBUS-ServiceName={DESKTOP_ENTRY_ID}\n\
+         X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2\n",
+        daemon.display()
+    )
+}
+
+fn infer_daemon_path() -> Result<PathBuf, KwinError> {
+    let mut path = env::current_exe().map_err(|source| KwinError::Exec {
+        program: "current_exe".into(),
+        source,
+    })?;
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("portholed") => Ok(path),
+        Some("porthole") => {
+            path.set_file_name("portholed");
+            Ok(path)
+        }
+        _ => Err(KwinError::Message(format!(
+            "cannot infer portholed path from current executable {}; run this command from the porthole CLI",
+            path.display()
+        ))),
+    }
 }
 
 fn package_installed() -> bool {
@@ -175,6 +228,10 @@ fn installed_script_dir() -> Result<PathBuf, KwinError> {
 
 fn installed_script_file() -> Result<PathBuf, KwinError> {
     Ok(installed_script_dir()?.join("contents/code/main.js"))
+}
+
+fn desktop_entry_path() -> Result<PathBuf, KwinError> {
+    Ok(home()?.join(format!(".local/share/applications/{DESKTOP_ENTRY_FILENAME}")))
 }
 
 fn write_temp_package() -> Result<PathBuf, KwinError> {
@@ -273,5 +330,14 @@ mod tests {
     fn embedded_package_metadata_names_script_id() {
         assert!(SCRIPT_METADATA.contains("\"Id\": \"porthole-control\""));
         assert!(SCRIPT_MAIN.contains("work.flotilla.Porthole.KWin"));
+    }
+
+    #[test]
+    fn desktop_entry_authorizes_kwin_screenshot2() {
+        let entry = render_desktop_entry(Path::new("/tmp/portholed"));
+
+        assert!(entry.contains("Exec=/tmp/portholed"));
+        assert!(entry.contains("X-DBUS-ServiceName=work.flotilla.Porthole"));
+        assert!(entry.contains("X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2"));
     }
 }
