@@ -22,8 +22,8 @@ struct LaunchAgentMigrator {
         )
     }
 
-    static let launchAgentLabel = "org.flotilla.porthole"
-    static let plistName = "org.flotilla.porthole.plist"
+    static let launchAgentLabel = "work.flotilla.porthole"
+    static let plistName = "work.flotilla.porthole.plist"
 
     private let dependencies: Dependencies
 

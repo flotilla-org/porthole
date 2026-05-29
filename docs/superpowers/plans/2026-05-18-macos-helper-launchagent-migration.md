@@ -4,7 +4,7 @@
 
 **Goal:** Make `PortholeHelper` retire the legacy per-user LaunchAgent before it starts supervising `portholed`, so helper-owned daemon lifecycle cannot compete with an old launchd-owned daemon.
 
-**Architecture:** Add a small Swift `LaunchAgentMigrator` unit owned by the helper. It detects `~/Library/LaunchAgents/org.flotilla.porthole.plist`, best-effort runs `launchctl bootout gui/$UID <plist>`, removes the plist, and reports a typed result. `AppDelegate` invokes it before constructing `DaemonSupervisor`; failures are logged and surfaced in the status menu without inventing daemon workarounds.
+**Architecture:** Add a small Swift `LaunchAgentMigrator` unit owned by the helper. It detects `~/Library/LaunchAgents/work.flotilla.porthole.plist`, best-effort runs `launchctl bootout gui/$UID <plist>`, removes the plist, and reports a typed result. `AppDelegate` invokes it before constructing `DaemonSupervisor`; failures are logged and surfaced in the status menu without inventing daemon workarounds.
 
 **Tech Stack:** Swift 6 package under `apps/macos/PortholeHelper`, XCTest, macOS `Process`, Foundation file APIs.
 
@@ -49,15 +49,15 @@ struct LaunchAgentMigrator {
         case failed(URL, String)
     }
 
-    static let launchAgentLabel = "org.flotilla.porthole"
-    static let plistName = "org.flotilla.porthole.plist"
+    static let launchAgentLabel = "work.flotilla.porthole"
+    static let plistName = "work.flotilla.porthole.plist"
 
     func migrate() -> Result
 }
 ```
 
 Use default live dependencies:
-- plist path: `FileManager.default.homeDirectoryForCurrentUser/Library/LaunchAgents/org.flotilla.porthole.plist`
+- plist path: `FileManager.default.homeDirectoryForCurrentUser/Library/LaunchAgents/work.flotilla.porthole.plist`
 - bootout command: `/bin/launchctl bootout gui/<uid> <plist-path>`
 - remove command: `FileManager.default.removeItem(at:)`
 

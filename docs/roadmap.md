@@ -48,7 +48,7 @@ What's known missing or rough:
     - [x] Copy bundle to `/Applications/Porthole.app` (fall back to `~/Applications/Porthole.app` with `--user`).
     - [x] Symlink `~/.local/bin/porthole` → bundle's CLI.
     - [x] Detect whether `~/.local/bin` is on `PATH`; print a copy-pasteable export line if missing. (No auto-edit of dotfiles — too intrusive; the print-and-let-the-user-paste shape was a deliberate scope decision.)
-    - [x] Drop `~/Library/LaunchAgents/org.flotilla.porthole.plist` (`RunAtLoad=true`, `KeepAlive(Crashed=true)`, `LimitLoadToSessionType=Aqua`, `Program` pointing at `Porthole.app/Contents/MacOS/portholed`, stdout/stderr to `~/Library/Logs/porthole/portholed.log`).
+    - [x] Drop `~/Library/LaunchAgents/work.flotilla.porthole.plist` (`RunAtLoad=true`, `KeepAlive(Crashed=true)`, `LimitLoadToSessionType=Aqua`, `Program` pointing at `Porthole.app/Contents/MacOS/portholed`, stdout/stderr to `~/Library/Logs/porthole/portholed.log`).
     - [x] `launchctl bootstrap gui/$UID <plist>`. Idempotent: bootouts any prior load before writing.
 - [x] `porthole uninstall` subcommand: reverse of the above. `--keep-bundle` to leave the `.app` for the user to manage manually.
 - [x] Recommended sequence documented in README: install bundle → `porthole onboard` → `porthole install`. Order matters because TCC dialogs need an active user; auto-start before grants exist queues prompts the user has no context for.
@@ -96,7 +96,7 @@ What's known missing or rough:
 - [x] Onboard UI flow — native equivalent of `porthole onboard`. Pulls grant state from `/info`, deep-links to System Settings panes via `x-apple.systempreferences:` URLs, "re-arm prompt" actions POST to `/system-permissions/request`.
 - [ ] Notification surface for agent-permission approvals (depends on the phase 2.5 enforcement endpoints). `UNUserNotificationCenter` actions Allow / Deny POST back to `/agent-permissions/{id}/approve|deny`.
 - [x] `SMAppService.mainApp` registration so the user gets a System Settings → General → Login Items entry for the per-user helper app. Subsumes phase 1's CLI-installed LaunchAgent for users who have the helper.
-- [x] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/org.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
+- [x] Migration: helper's first launch detects and removes any phase-1 LaunchAgent plist at `~/Library/LaunchAgents/work.flotilla.porthole.plist` (and `launchctl bootout`s it) before registering its own, so the user doesn't end up with two start mechanisms competing.
 - [x] Helper passively re-probes an externally running daemon so the `runningExternal` status recovers if that daemon exits after helper launch.
 - [x] Quit / Restart daemon menu items.
 
@@ -126,7 +126,7 @@ End-state layout (post-phase 3):
 ```
 /Applications/Porthole.app/
   Contents/
-    Info.plist            # CFBundleIdentifier = org.flotilla.porthole
+    Info.plist            # CFBundleIdentifier = work.flotilla.porthole
     MacOS/
       PortholeHelper      # SwiftUI menu-bar app (CFBundleExecutable)
       portholed           # daemon, spawned by helper

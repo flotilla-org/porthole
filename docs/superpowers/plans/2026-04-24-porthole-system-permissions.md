@@ -2312,7 +2312,7 @@ set -euo pipefail
 
 PROFILE="debug"
 REFRESH_ONLY=0
-BUNDLE_ID="org.flotilla.porthole.dev"
+BUNDLE_ID="work.flotilla.porthole.dev"
 
 usage() {
     cat <<EOF
@@ -2476,8 +2476,8 @@ or just `cargo build` and run the binary from `target/<profile>/portholed` direc
 macOS's TCC database can report stale state after crashes, force-quits, or bundle-identity changes. Reset:
 
 ```sh
-tccutil reset Accessibility org.flotilla.porthole.dev
-tccutil reset ScreenCapture org.flotilla.porthole.dev
+tccutil reset Accessibility work.flotilla.porthole.dev
+tccutil reset ScreenCapture work.flotilla.porthole.dev
 ./scripts/dev-bundle.sh --refresh
 ./target/debug/Portholed.app/Contents/MacOS/portholed &
 ./target/debug/porthole onboard

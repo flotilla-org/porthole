@@ -45,14 +45,14 @@ Expected modified files across the branch chain:
 
 ## Branch 1: `identity-flotilla-work`
 
-- [ ] Rename macOS dev bundle id from `org.flotilla.porthole.dev` to
+- [x] Rename macOS dev bundle id from `org.flotilla.porthole.dev` to
   `work.flotilla.porthole.dev`.
-- [ ] Rename macOS production identity examples from `org.flotilla.porthole` to
+- [x] Rename macOS production identity examples from `org.flotilla.porthole` to
   `work.flotilla.porthole`.
-- [ ] Rename LaunchAgent labels, plist filenames, Swift constants, Rust
+- [x] Rename LaunchAgent labels, plist filenames, Swift constants, Rust
   constants, tests, and docs.
-- [ ] Update TCC reset instructions.
-- [ ] Document one-time local cleanup for pre-release installs using the old
+- [x] Update TCC reset instructions.
+- [x] Document one-time local cleanup for pre-release installs using the old
   identity.
 - [ ] Run relevant Swift helper tests and workspace cargo gates.
 

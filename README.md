@@ -46,7 +46,18 @@ Why install before onboard: TCC grants attach to bundle path. Granting in the bu
 
 `Porthole.app` holds the native helper, daemon, and CLI in `Contents/MacOS/`, sharing one TCC bundle identity so a single Privacy & Security entry covers all three. The helper owns native startup/status UI and daemon supervision; the daemon still owns HTTP-over-UDS, desktop actions, and permission truth.
 
-To reverse: `porthole uninstall` removes the LaunchAgent, the symlink, and the bundle. TCC grants persist; clear with `tccutil reset Accessibility org.flotilla.porthole.dev` (and `ScreenCapture`) if needed.
+To reverse: `porthole uninstall` removes the LaunchAgent, the symlink, and the bundle. TCC grants persist; clear with `tccutil reset Accessibility work.flotilla.porthole.dev` (and `ScreenCapture`) if needed.
+
+Pre-release builds before the `flotilla.work` identity rename used
+`org.flotilla.porthole*`. If one of those is installed locally, remove the old
+LaunchAgent and stale TCC grants once:
+
+```sh
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/org.flotilla.porthole.plist" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/org.flotilla.porthole.plist"
+tccutil reset Accessibility org.flotilla.porthole.dev
+tccutil reset ScreenCapture org.flotilla.porthole.dev
+```
 
 The daemon listens on a UDS under `$XDG_RUNTIME_DIR/porthole/porthole.sock` (or `$TMPDIR/porthole-<uid>/porthole.sock` as a fallback). Override with `PORTHOLE_RUNTIME_DIR`.
 
@@ -77,8 +88,8 @@ ad-hoc build and `porthole onboard` still reports missing permissions, reset TCC
 once after rebuilding with a certificate:
 
 ```sh
-tccutil reset Accessibility org.flotilla.porthole.dev
-tccutil reset ScreenCapture org.flotilla.porthole.dev
+tccutil reset Accessibility work.flotilla.porthole.dev
+tccutil reset ScreenCapture work.flotilla.porthole.dev
 ```
 
 `scripts/dev-bundle.sh` remains as a compatibility wrapper around

@@ -23,7 +23,7 @@ final class LaunchAgentMigratorTests: XCTestCase {
         home
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("LaunchAgents", isDirectory: true)
-            .appendingPathComponent("org.flotilla.porthole.plist")
+            .appendingPathComponent("work.flotilla.porthole.plist")
     }
 
     func testMissingPlistDoesNotRunBootout() {

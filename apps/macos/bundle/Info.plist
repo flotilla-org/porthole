@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>org.flotilla.porthole.dev</string>
+    <string>work.flotilla.porthole.dev</string>
     <key>CFBundleName</key>
     <string>Porthole</string>
     <key>CFBundleExecutable</key>
