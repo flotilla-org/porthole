@@ -11,6 +11,7 @@ pub mod info;
 pub mod install;
 pub mod interrupt;
 pub mod key;
+pub mod kwin;
 pub mod launch;
 pub mod onboard;
 pub mod place;

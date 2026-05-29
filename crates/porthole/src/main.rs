@@ -5,9 +5,9 @@ use porthole::{
     client::DaemonClient,
     commands::{
         agents as agents_cmd, attention, click as click_cmd, close as close_cmd, content_rect as content_rect_cmd, displays,
-        focus as focus_cmd, install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, launch as launch_cmd, launch::LaunchArgs,
-        place as place_cmd, record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs, scroll as scroll_cmd,
-        send as send_cmd, send_keys as send_keys_cmd, status as status_cmd, text as text_cmd, wait as wait_cmd,
+        focus as focus_cmd, install as install_cmd, interrupt as interrupt_cmd, key as key_cmd, kwin as kwin_cmd, launch as launch_cmd,
+        launch::LaunchArgs, place as place_cmd, record as record_cmd, replace as replace_cmd, screenshot::ScreenshotArgs,
+        scroll as scroll_cmd, send as send_cmd, send_keys as send_keys_cmd, status as status_cmd, text as text_cmd, wait as wait_cmd,
     },
     runtime::socket_path,
 };
@@ -56,6 +56,11 @@ enum Command {
     Agents {
         #[command(subcommand)]
         command: agents_cmd::AgentsCommand,
+    },
+    /// KDE Plasma / KWin setup and diagnostics.
+    Kwin {
+        #[command(subcommand)]
+        command: kwin_cmd::KwinCommand,
     },
     /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
     /// and register a LaunchAgent so the daemon starts at login.
@@ -691,6 +696,7 @@ async fn main() -> std::process::ExitCode {
             }
         }
         Command::Agents { command } => agents_cmd::run(&mut client, command).await,
+        Command::Kwin { command } => kwin_cmd::run(command),
         Command::Launch {
             kind,
             app,
@@ -1200,5 +1206,15 @@ mod tests {
         let err = require_full_geometry(Some(10.0), Some(20.0), Some(800.0), None, "--x, --y, --w, --h").unwrap_err();
 
         assert_eq!(err, "partial geometry: must specify all of --x, --y, --w, --h together");
+    }
+
+    #[test]
+    fn kwin_install_script_command_parses() {
+        let cli = Cli::try_parse_from(["porthole", "kwin", "install-script"]).unwrap();
+
+        match cli.command {
+            Command::Kwin { command } => assert!(matches!(command, super::kwin_cmd::KwinCommand::InstallScript)),
+            _ => panic!("expected kwin command"),
+        }
     }
 }

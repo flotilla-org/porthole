@@ -58,18 +58,20 @@ Expected modified files across the branch chain:
 
 ## Branch 2: `kwin-control-script-spike`
 
-- [ ] Add `apps/linux/kwin/porthole-control-script/` as a KPackage
+- [x] Add `apps/linux/kwin/porthole-control-script/` as a KPackage
   `KWin/Script` package.
-- [ ] Add a minimal `metadata.json` and `contents/code/main.js`.
-- [ ] Add `porthole kwin install-script`.
-- [ ] Add `porthole kwin uninstall-script`.
-- [ ] Add `porthole kwin status`.
-- [ ] Add a reload/load path using KWin's `org.kde.kwin.Scripting` D-Bus API.
-- [ ] Add a dev harness that owns a temporary session-bus service and confirms
+- [x] Add a minimal `metadata.json` and `contents/code/main.js`.
+- [x] Add `porthole kwin install-script`.
+- [x] Add `porthole kwin uninstall-script`.
+- [x] Add `porthole kwin status`.
+- [x] Add a reload/load path using KWin's `org.kde.kwin.Scripting` D-Bus API.
+- [x] Add a dev harness that owns a temporary session-bus service and confirms
   the script can call out.
-- [ ] Publish a minimal snapshot: active window caption plus window count is
+- [x] Publish a minimal snapshot: active window caption plus window count is
   enough for the spike.
-- [ ] Document that script install is per-user and does not require sudo.
+- [x] Document that script install is per-user and does not require sudo.
+- [x] Live-smoke the script against `scripts/kwin-bridge-dev-harness.py` in a
+  Plasma Wayland session and verify a real window snapshot reaches the harness.
 
 ## Branch 3: `kwin-dbus-bridge`
 
