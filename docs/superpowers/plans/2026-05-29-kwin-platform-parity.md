@@ -124,20 +124,20 @@ Expected modified files across the branch chain:
 
 ## Branch 5: `kwin-input-plane`
 
-- [ ] Add minimal Portal consent protocol/core language for runtime consent and
+- [x] Add minimal Portal consent protocol/core language for runtime consent and
   active sessions.
-- [ ] Establish xdg-desktop-portal RemoteDesktop sessions.
-- [ ] Store the active RemoteDesktop session in KWin adapter runtime state.
-- [ ] Implement keyboard input first:
+- [x] Establish xdg-desktop-portal RemoteDesktop sessions.
+- [x] Store the active RemoteDesktop session in KWin adapter runtime state.
+- [x] Implement keyboard input first:
   - `key`
   - `text`
-- [ ] Implement pointer input after keyboard:
+- [x] Implement pointer input after keyboard:
   - `click`
   - `scroll`
   - `pointer_move`
-- [ ] Use EIS/libei only if portal D-Bus methods are insufficient.
-- [ ] Return honest consent-cancelled/permission-needed errors.
-- [ ] Do not use `/dev/uinput`.
+- [x] Use EIS/libei only if portal D-Bus methods are insufficient.
+- [x] Return honest consent-cancelled/permission-needed errors.
+- [x] Do not use `/dev/uinput`.
 
 ## Branch 5a: `kwin-launch-correlation`
 

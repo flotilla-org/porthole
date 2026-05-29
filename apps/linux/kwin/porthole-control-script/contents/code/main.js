@@ -131,6 +131,11 @@ function handleCommand(commandJson) {
         return;
     }
     const commandId = command.commandId || "";
+    if (command.kind === "publish_snapshot") {
+        publishSnapshot("command-publish-snapshot");
+        completeCommand(commandId, { ok: true });
+        return;
+    }
     const windowId = command.payload ? command.payload.windowId : "";
     const args = command.payload && command.payload.args ? command.payload.args : {};
     const window = findWindow(windowId);

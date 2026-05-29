@@ -1,8 +1,12 @@
 pub mod bridge;
 
+mod remote_desktop;
 mod snapshot;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use porthole_core::{
@@ -11,7 +15,7 @@ use porthole_core::{
     attention::{AttentionInfo, CursorPos},
     content_rect::ContentRectInfo,
     display::{DisplayId, DisplayInfo},
-    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
+    input::{ClickButton, ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery, encode_ref},
@@ -20,10 +24,11 @@ use porthole_core::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use tokio::time::sleep;
+use tokio::{sync::Mutex, time::sleep};
 
 use crate::{
     bridge::KWinBridge,
+    remote_desktop::{RemoteDesktopDevice, RemoteDesktopPortal, RemoteDesktopSession},
     snapshot::{KWinSnapshotPayload, KWinWindow},
 };
 
@@ -33,6 +38,8 @@ const COMMAND_POLL: Duration = Duration::from_millis(10);
 #[derive(Clone, Debug)]
 pub struct KWinAdapter {
     bridge: KWinBridge,
+    remote_desktop: RemoteDesktopPortal,
+    remote_desktop_session: Arc<Mutex<Option<RemoteDesktopSession>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +51,11 @@ struct CommandResult {
 
 impl KWinAdapter {
     pub fn new(bridge: KWinBridge) -> Self {
-        Self { bridge }
+        Self {
+            bridge,
+            remote_desktop: RemoteDesktopPortal::new(),
+            remote_desktop_session: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn bridge(&self) -> KWinBridge {
@@ -122,6 +133,101 @@ impl KWinAdapter {
             }
             sleep(COMMAND_POLL).await;
         }
+    }
+
+    async fn refresh_snapshot(&self) -> Result<(), PortholeError> {
+        let command = self
+            .bridge
+            .queue_command("publish_snapshot", json!({ "windowId": "", "args": {} }))
+            .await;
+        let deadline = Instant::now() + COMMAND_TIMEOUT;
+        loop {
+            if let Some(completion) = self.bridge.completion(&command.command_id).await {
+                let result: CommandResult = serde_json::from_str(&completion.result_json).map_err(|error| {
+                    PortholeError::new(
+                        ErrorCode::InternalError,
+                        format!("KWin command {} returned invalid completion JSON: {error}", command.command_id),
+                    )
+                })?;
+                if result.ok {
+                    return Ok(());
+                }
+                return Err(PortholeError::new(
+                    ErrorCode::InternalError,
+                    format!(
+                        "KWin command publish_snapshot failed: {}",
+                        result.error.unwrap_or_else(|| "unknown error".to_string())
+                    ),
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(PortholeError::new(
+                    ErrorCode::InternalError,
+                    "KWin command publish_snapshot timed out waiting for the control script",
+                ));
+            }
+            sleep(COMMAND_POLL).await;
+        }
+    }
+
+    async fn ensure_remote_desktop_session(&self, required: RemoteDesktopDevice) -> Result<RemoteDesktopSession, PortholeError> {
+        let mut session = self.remote_desktop_session.lock().await;
+        if let Some(existing) = session.as_ref()
+            && existing.has(required)
+        {
+            return Ok(existing.clone());
+        }
+        let requested = match required {
+            RemoteDesktopDevice::Keyboard => RemoteDesktopDevice::KEYBOARD,
+            RemoteDesktopDevice::Pointer => RemoteDesktopDevice::POINTER,
+        };
+        let started = self.remote_desktop.start_session(requested).await?;
+        if !started.has(required) {
+            return Err(remote_desktop::permission_needed(format!(
+                "RemoteDesktop portal session started without {:?} access",
+                required
+            )));
+        }
+        *session = Some(started.clone());
+        Ok(started)
+    }
+
+    async fn window_local_to_global(&self, surface: &SurfaceInfo, x: f64, y: f64) -> Result<(f64, f64), PortholeError> {
+        let snapshot = self.snapshot().await?;
+        let Some(platform_ref) = &surface.platform_ref else {
+            return Err(PortholeError::new(ErrorCode::InvalidArgument, "surface has no platform_ref"));
+        };
+        let PlatformSurfaceRef::Kwin { window_id } = platform_ref else {
+            return Err(PortholeError::new(ErrorCode::InvalidArgument, "surface is not a KWin surface"));
+        };
+        let window = snapshot
+            .windows
+            .into_iter()
+            .find(|window| &window.window_id == window_id)
+            .ok_or_else(|| PortholeError::new(ErrorCode::SurfaceDead, "KWin surface is no longer alive"))?;
+        let rect = window
+            .frame_geometry
+            .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "KWin snapshot did not include frame geometry"))?;
+        const TOLERANCE: f64 = 1.0;
+        if x < -TOLERANCE || x > rect.width + TOLERANCE || y < -TOLERANCE || y > rect.height + TOLERANCE {
+            return Err(PortholeError::new(
+                ErrorCode::InvalidCoordinate,
+                format!(
+                    "coordinate ({x}, {y}) is outside window bounds (w={w}, h={h})",
+                    w = rect.width,
+                    h = rect.height,
+                ),
+            ));
+        }
+        Ok((rect.x + x, rect.y + y))
+    }
+
+    async fn move_pointer_to_global(&self, session: &RemoteDesktopSession, x: f64, y: f64) -> Result<(), PortholeError> {
+        self.refresh_snapshot().await?;
+        let snapshot = self.snapshot().await?;
+        let cursor_x = snapshot.cursor.as_ref().map_or(0.0, |cursor| cursor.x);
+        let cursor_y = snapshot.cursor.as_ref().map_or(0.0, |cursor| cursor.y);
+        session.pointer_motion(x - cursor_x, y - cursor_y).await
     }
 }
 
@@ -201,24 +307,50 @@ impl Adapter for KWinAdapter {
         Err(unsupported("KWin adapter does not support recording yet"))
     }
 
-    async fn key(&self, _surface: &SurfaceInfo, _events: &[KeyEvent]) -> Result<(), PortholeError> {
-        Err(unsupported("KWin adapter does not support keyboard input yet"))
+    async fn key(&self, surface: &SurfaceInfo, events: &[KeyEvent]) -> Result<(), PortholeError> {
+        self.focus(surface).await?;
+        let session = self.ensure_remote_desktop_session(RemoteDesktopDevice::Keyboard).await?;
+        for event in events {
+            session.key_event(event).await?;
+        }
+        Ok(())
     }
 
-    async fn text(&self, _surface: &SurfaceInfo, _text: &str) -> Result<(), PortholeError> {
-        Err(unsupported("KWin adapter does not support text input yet"))
+    async fn text(&self, surface: &SurfaceInfo, text: &str) -> Result<(), PortholeError> {
+        self.focus(surface).await?;
+        let session = self.ensure_remote_desktop_session(RemoteDesktopDevice::Keyboard).await?;
+        session.text(text).await
     }
 
-    async fn click(&self, _surface: &SurfaceInfo, _spec: &ClickSpec) -> Result<(), PortholeError> {
-        Err(unsupported("KWin adapter does not support pointer input yet"))
+    async fn click(&self, surface: &SurfaceInfo, spec: &ClickSpec) -> Result<(), PortholeError> {
+        self.focus(surface).await?;
+        let session = self.ensure_remote_desktop_session(RemoteDesktopDevice::Pointer).await?;
+        let (x, y) = self.window_local_to_global(surface, spec.x, spec.y).await?;
+        self.move_pointer_to_global(&session, x, y).await?;
+        let button = match spec.button {
+            ClickButton::Left => remote_desktop::BTN_LEFT,
+            ClickButton::Right => remote_desktop::BTN_RIGHT,
+            ClickButton::Middle => remote_desktop::BTN_MIDDLE,
+        };
+        for _ in 0..spec.count.max(1) {
+            session.pointer_button(button, true).await?;
+            session.pointer_button(button, false).await?;
+        }
+        Ok(())
     }
 
-    async fn scroll(&self, _surface: &SurfaceInfo, _spec: &ScrollSpec) -> Result<(), PortholeError> {
-        Err(unsupported("KWin adapter does not support pointer input yet"))
+    async fn scroll(&self, surface: &SurfaceInfo, spec: &ScrollSpec) -> Result<(), PortholeError> {
+        self.focus(surface).await?;
+        let session = self.ensure_remote_desktop_session(RemoteDesktopDevice::Pointer).await?;
+        let (x, y) = self.window_local_to_global(surface, spec.x, spec.y).await?;
+        self.move_pointer_to_global(&session, x, y).await?;
+        session.pointer_axis(spec.delta_x, spec.delta_y).await
     }
 
-    async fn pointer_move(&self, _surface: &SurfaceInfo, _spec: &PointerMoveSpec) -> Result<(), PortholeError> {
-        Err(unsupported("KWin adapter does not support pointer input yet"))
+    async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
+        let session = self.ensure_remote_desktop_session(RemoteDesktopDevice::Pointer).await?;
+        let (x, y) = self.window_local_to_global(surface, spec.x, spec.y).await?;
+        self.move_pointer_to_global(&session, x, y).await
     }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
@@ -333,11 +465,35 @@ impl Adapter for KWinAdapter {
     }
 
     async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError> {
-        Ok(vec![])
+        let active = self.remote_desktop_session.lock().await.is_some();
+        Ok(vec![SystemPermissionStatus {
+            name: "remote_desktop".to_string(),
+            granted: active,
+            purpose: "keyboard and pointer injection through xdg-desktop-portal RemoteDesktop".to_string(),
+        }])
     }
 
-    async fn request_system_permission_prompt(&self, _name: &str) -> Result<SystemPermissionPromptOutcome, PortholeError> {
-        Err(unsupported("KWin adapter has no system permission prompt integration"))
+    async fn request_system_permission_prompt(&self, name: &str) -> Result<SystemPermissionPromptOutcome, PortholeError> {
+        if name != "remote_desktop" {
+            return Err(
+                PortholeError::new(ErrorCode::InvalidArgument, format!("unknown system permission: {name}"))
+                    .with_details(json!({ "supported_names": ["remote_desktop"] })),
+            );
+        }
+        let granted_before = self.remote_desktop_session.lock().await.is_some();
+        let session = self
+            .remote_desktop
+            .start_session(RemoteDesktopDevice::KEYBOARD | RemoteDesktopDevice::POINTER)
+            .await?;
+        let granted_after = session.has(RemoteDesktopDevice::Keyboard) || session.has(RemoteDesktopDevice::Pointer);
+        *self.remote_desktop_session.lock().await = Some(session);
+        Ok(SystemPermissionPromptOutcome {
+            permission: name.to_string(),
+            granted_before,
+            granted_after,
+            requires_daemon_restart: false,
+            notes: "RemoteDesktop portal consent is active for this daemon session.".to_string(),
+        })
     }
 
     async fn ensure_system_permission(&self, _name: &str) -> Result<(), PortholeError> {
@@ -418,6 +574,11 @@ impl Adapter for KWinAdapter {
             "wait",
             "close",
             "focus",
+            "input_key",
+            "input_text",
+            "input_click",
+            "input_scroll",
+            "input_pointer_move",
             "attention",
             "attention_cursor",
             "attention_focused_app",
@@ -426,6 +587,7 @@ impl Adapter for KWinAdapter {
             "displays",
             "place_surface",
             "snapshot_geometry",
+            "system_permission_prompt",
         ]
     }
 }
