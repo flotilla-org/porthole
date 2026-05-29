@@ -158,8 +158,8 @@ Expected modified files across the branch chain:
 - [x] Implement `screenshot(surface)` for KWin.
 - [x] Prefer KWin `org.kde.KWin.ScreenShot2.CaptureWindow` if the KWin platform
   ref can be mapped to the API's expected window identifier.
-- [ ] Fall back to portal screenshot/area only when window capture is
-  unavailable.
+- [x] Decide against a generic portal screenshot/area fallback for
+  `screenshot(surface)`.
 - [x] Preserve Porthole screenshot response semantics: PNG bytes, bounds, scale,
   and capture timestamp.
 - [x] Keep `start_video_capture` unsupported in this branch.
@@ -179,6 +179,12 @@ Notes from dogfood smoke:
 - The KWin API writes raw `QImage` bytes to the pipe and returns
   `type/width/height/stride/format` metadata, so the adapter must encode PNG
   itself before returning the core `Screenshot`.
+- The xdg-desktop-portal Screenshot API on KDE exposes interactive whole-screen
+  screenshot selection, not a KWin window-id capture primitive. Falling back to
+  that API when `CaptureWindow` is unavailable would break Porthole's
+  per-surface screenshot contract by asking the user to pick an arbitrary
+  region. Keep this path unsupported with explicit remediation instead of
+  returning an ambiguously selected image.
 - Successful live smoke on 2026-05-29: launched Konsole through
   `launch_process`, approved the surface observe request, captured
   `/tmp/kwin-shot-smoke.png` as a PNG, then approved manage and closed the
