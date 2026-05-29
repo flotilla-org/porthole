@@ -91,16 +91,16 @@ Expected modified files across the branch chain:
 
 ## Branch 4a: `platform-surface-ref`
 
-- [ ] Introduce a platform-neutral `PlatformSurfaceRef` in core.
-- [ ] Migrate `SurfaceInfo` away from public/core `cg_window_id`.
-- [ ] Migrate search candidate refs and attach/track decoding to platform refs.
-- [ ] Replace `Adapter::frontmost_window_id` with a platform-neutral focus
+- [x] Introduce a platform-neutral `PlatformSurfaceRef` in core.
+- [x] Migrate `SurfaceInfo` away from public/core `cg_window_id`.
+- [x] Migrate search candidate refs and attach/track decoding to platform refs.
+- [x] Replace `Adapter::frontmost_window_id` with a platform-neutral focus
   identity path.
-- [ ] Replace `Adapter::window_alive(pid, cg_window_id)` with a platform-ref
+- [x] Replace `Adapter::window_alive(pid, cg_window_id)` with a platform-ref
   liveness method.
-- [ ] Update `HandleStore` to deduplicate and resolve focus by platform ref.
-- [ ] Keep macOS adapter-internal code free to use `CGWindowID`.
-- [ ] Update tests that currently assert `cg_window_id`.
+- [x] Update `HandleStore` to deduplicate and resolve focus by platform ref.
+- [x] Keep macOS adapter-internal code free to use `CGWindowID`.
+- [x] Update tests that currently assert `cg_window_id`.
 
 ## Branch 4: `kwin-compositor-adapter`
 

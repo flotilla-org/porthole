@@ -144,7 +144,7 @@ fn surface_is_alive(surface: &SurfaceInfo) -> Result<bool, PortholeError> {
         return Ok(false);
     }
     let windows = list_windows()?;
-    if let Some(cg_id) = surface.cg_window_id {
+    if let Some(cg_id) = surface.macos_cg_window_id() {
         Ok(windows.iter().any(|w| w.cg_window_id == cg_id))
     } else {
         Ok(windows
@@ -159,7 +159,7 @@ fn current_title(surface: &SurfaceInfo) -> Result<Option<String>, PortholeError>
         return Ok(None);
     }
     let windows = list_windows()?;
-    if let Some(cg_id) = surface.cg_window_id {
+    if let Some(cg_id) = surface.macos_cg_window_id() {
         Ok(windows.iter().find(|w| w.cg_window_id == cg_id).and_then(|w| w.title.clone()))
     } else {
         Ok(windows.iter().find(|w| w.owner_pid == pid).and_then(|w| w.title.clone()))

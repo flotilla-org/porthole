@@ -12,7 +12,7 @@ use crate::{
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
-    surface::SurfaceInfo,
+    surface::{PlatformSurfaceRef, SurfaceInfo},
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
 };
 
@@ -326,10 +326,10 @@ pub trait Adapter: Send + Sync {
 
     async fn attention(&self) -> Result<AttentionInfo, PortholeError>;
 
-    /// Returns the CGWindowID of the currently frontmost on-screen window, or
-    /// `None` if it cannot be determined. Used by the attention route to resolve
-    /// `focused_surface_id` against the handle store.
-    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError>;
+    /// Returns the platform ref of the currently focused/frontmost surface, or
+    /// `None` if it cannot be determined. Used by the attention route to
+    /// resolve `focused_surface_id` against the handle store.
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError>;
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError>;
 
@@ -356,11 +356,11 @@ pub trait Adapter: Send + Sync {
     /// return `Ok(vec![])`, not an error.
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>, PortholeError>;
 
-    /// Return a live `SurfaceInfo` for the window identified by
-    /// `(pid, cg_window_id)` if it still exists. The liveness check
-    /// encompasses *all* windows, including hidden / minimized /
-    /// other-Space windows — not just on-screen enumeration.
-    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError>;
+    /// Return a live `SurfaceInfo` for the window identified by `platform_ref`
+    /// if it still exists. The liveness check encompasses *all* windows,
+    /// including hidden / minimized / other-Space windows where the platform can
+    /// answer that broader question.
+    async fn surface_alive(&self, pid: u32, platform_ref: &PlatformSurfaceRef) -> Result<Option<SurfaceInfo>, PortholeError>;
 
     /// Launch a file artifact via OS default handler (macOS: `open <path>`).
     /// Correlates via DocumentMatch (strong) / FrontmostChanged (plausible) /

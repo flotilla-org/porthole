@@ -12,7 +12,7 @@ pub async fn place_surface(adapter: &MacOsAdapter, surface: &SurfaceInfo, rect: 
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "place_surface: no pid on surface"))? as i32;
     let cg = surface
-        .cg_window_id
+        .macos_cg_window_id()
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "place_surface: no cg_window_id on surface"))?;
 
     crate::close_focus::with_ax_window_by_cg_id(pid, cg, |raw| {

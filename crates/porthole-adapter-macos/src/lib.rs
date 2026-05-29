@@ -10,7 +10,7 @@ use porthole_core::{
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
-    surface::SurfaceInfo,
+    surface::{PlatformSurfaceRef, SurfaceInfo},
     wait::{LastObserved, WaitCondition, WaitOutcome, WaitTimeout},
 };
 
@@ -165,8 +165,8 @@ impl Adapter for MacOsAdapter {
         attention::attention().await
     }
 
-    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
-        Ok(attention::frontmost_cg_window_id())
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError> {
+        Ok(attention::frontmost_cg_window_id().map(PlatformSurfaceRef::macos))
     }
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {
@@ -226,7 +226,14 @@ impl Adapter for MacOsAdapter {
         search::search(self, query).await
     }
 
-    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+    async fn surface_alive(
+        &self,
+        pid: u32,
+        platform_ref: &PlatformSurfaceRef,
+    ) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+        let Some(cg_window_id) = platform_ref.as_macos_cg_window_id() else {
+            return Ok(None);
+        };
         window_alive::window_alive(self, pid, cg_window_id).await
     }
 
@@ -363,7 +370,7 @@ impl Adapter for MacOsAdapter {
         unsupported()
     }
 
-    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError> {
         unsupported()
     }
 
@@ -387,7 +394,11 @@ impl Adapter for MacOsAdapter {
         unsupported()
     }
 
-    async fn window_alive(&self, _pid: u32, _cg_window_id: u32) -> Result<Option<porthole_core::SurfaceInfo>, PortholeError> {
+    async fn surface_alive(
+        &self,
+        _pid: u32,
+        _platform_ref: &PlatformSurfaceRef,
+    ) -> Result<Option<porthole_core::SurfaceInfo>, PortholeError> {
         unsupported()
     }
 

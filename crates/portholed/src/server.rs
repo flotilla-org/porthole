@@ -134,7 +134,7 @@ mod tests {
     use porthole_core::{
         agent_policy::{ActionClass, DurationSpec, TargetSelector},
         in_memory::InMemoryAdapter,
-        surface::SurfaceInfo,
+        surface::{PlatformSurfaceRef, SurfaceInfo},
     };
     use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
     use tower::ServiceExt;
@@ -688,7 +688,7 @@ mod tests {
             app_name: Some("X".into()),
             title: Some("t".into()),
             pid: 1,
-            cg_window_id: 7,
+            platform_ref: PlatformSurfaceRef::macos(7),
         };
         adapter.set_next_search_result(Ok(vec![candidate])).await;
         let state = AppState::new(adapter);
@@ -727,26 +727,26 @@ mod tests {
         let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
         let router = build_router(state);
 
-        let r = encode_ref(1, 7);
+        let r = encode_ref(1, PlatformSurfaceRef::macos(7));
         let body = serde_json::json!({ "ref": r });
 
-        // First call: script window_alive to return an alive surface.
+        // First call: script surface_alive to return an alive surface.
         let mut info = SurfaceInfo::window(SurfaceId::new(), 1);
-        info.cg_window_id = Some(7);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(7));
         info.app_name = Some("X".into());
-        adapter.set_next_window_alive_result(Ok(Some(info))).await;
+        adapter.set_next_surface_alive_result(Ok(Some(info))).await;
         let res = post_with_token(router.clone(), "/surfaces/track", &token, body.clone()).await;
         assert_eq!(res.status(), StatusCode::OK);
         let first_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let first: porthole_protocol::search::TrackResponse = serde_json::from_slice(&first_body).unwrap();
         assert!(!first.reused_existing_handle);
 
-        // Second call: script another alive surface with same cg_window_id.
+        // Second call: script another alive surface with the same platform ref.
         // track_or_get should find the existing handle and return reused=true.
         let mut info2 = SurfaceInfo::window(SurfaceId::new(), 1);
-        info2.cg_window_id = Some(7);
+        info2.platform_ref = Some(PlatformSurfaceRef::macos(7));
         info2.app_name = Some("X".into());
-        adapter.set_next_window_alive_result(Ok(Some(info2))).await;
+        adapter.set_next_surface_alive_result(Ok(Some(info2))).await;
         let res = post_with_token(router, "/surfaces/track", &token, body).await;
         assert_eq!(res.status(), StatusCode::OK);
         let second_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
@@ -774,9 +774,9 @@ mod tests {
         };
 
         let adapter = Arc::new(InMemoryAdapter::new());
-        // Seed an alive handle with cg_window_id.
+        // Seed an alive handle with a platform ref.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -816,7 +816,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(51);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(51));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -845,7 +845,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(51);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(51));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -914,7 +914,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         // Seed an alive handle.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -951,7 +951,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -994,7 +994,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         // Alive handle to replace.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -1035,7 +1035,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
         outcome.surface_was_preexisting = true;
-        outcome.surface.cg_window_id = Some(321);
+        outcome.surface.platform_ref = Some(PlatformSurfaceRef::macos(321));
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
         let state = AppState::new(adapter);
@@ -1057,7 +1057,8 @@ mod tests {
         assert_eq!(err.code, porthole_core::ErrorCode::LaunchReturnedExisting);
         let details = err.details.expect("details populated");
         assert!(details.get("ref").is_some());
-        assert_eq!(details.get("cg_window_id").and_then(|v| v.as_u64()), Some(321));
+        assert_eq!(details["platform_ref"]["platform"].as_str(), Some("macos"));
+        assert_eq!(details["platform_ref"]["cg_window_id"].as_u64(), Some(321));
     }
 
     #[tokio::test]

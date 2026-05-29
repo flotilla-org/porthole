@@ -103,7 +103,7 @@ fn existing_to_wire(info: ExistingSurfaceInfo) -> WireError {
         app_name: info.app_name,
         title: info.title,
         pid: info.pid,
-        cg_window_id: info.cg_window_id,
+        platform_ref: info.platform_ref,
     };
     WireError {
         code: ErrorCode::LaunchReturnedExisting,

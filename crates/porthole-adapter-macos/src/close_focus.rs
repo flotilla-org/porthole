@@ -31,7 +31,7 @@ pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
         unsafe { crate::ax::perform_action_borrowed(win, "AXRaise") };
         Ok(())
     };
-    if let Some(cg_id) = surface.cg_window_id {
+    if let Some(cg_id) = surface.macos_cg_window_id() {
         with_ax_window_by_cg_id(pid, cg_id, raise)?;
     } else {
         // Best-effort: failing to raise AXWindows[0] is non-fatal.
@@ -65,7 +65,7 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
         }
     };
 
-    let via_close_button = if let Some(cg_id) = surface.cg_window_id {
+    let via_close_button = if let Some(cg_id) = surface.macos_cg_window_id() {
         // Fail closed: if the window is already gone this returns SurfaceDead.
         with_ax_window_by_cg_id(pid, cg_id, press_close_button)?
     } else {
@@ -95,7 +95,7 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
     for _ in 0..6 {
         sleep(std::time::Duration::from_millis(100)).await;
         let windows = list_windows()?;
-        let still_present = if let Some(cg_id) = surface.cg_window_id {
+        let still_present = if let Some(cg_id) = surface.macos_cg_window_id() {
             windows.iter().any(|w| w.cg_window_id == cg_id)
         } else {
             windows
@@ -119,7 +119,7 @@ pub async fn window_bounds(surface: &SurfaceInfo) -> Result<Rect, PortholeError>
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "window_bounds: surface has no pid"))? as i32;
     let windows = list_windows()?;
-    let hit = if let Some(cg_id) = surface.cg_window_id {
+    let hit = if let Some(cg_id) = surface.macos_cg_window_id() {
         windows.iter().find(|w| w.cg_window_id == cg_id)
     } else {
         windows
@@ -130,7 +130,7 @@ pub async fn window_bounds(surface: &SurfaceInfo) -> Result<Rect, PortholeError>
         Some(_w) => {
             // CGWindowList doesn't give us bounds in our `WindowRecord`. For v0 we
             // read them from AX below.
-            bounds_from_ax(pid, surface.cg_window_id)
+            bounds_from_ax(pid, surface.macos_cg_window_id())
         }
         None => Err(PortholeError::new(ErrorCode::SurfaceDead, "window_bounds: no matching window")),
     }

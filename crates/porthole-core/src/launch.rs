@@ -53,18 +53,24 @@ impl LaunchPipeline {
 
         // 3. Fresh-surface gate.
         if spec.require_fresh_surface() && outcome.surface_was_preexisting {
-            let ref_ = crate::search::encode_ref(outcome.surface.pid.unwrap_or(0), outcome.surface.cg_window_id.unwrap_or(0));
+            let platform_ref = outcome.surface.platform_ref.clone().ok_or_else(|| {
+                LaunchPipelineError::Porthole(PortholeError::new(
+                    ErrorCode::InternalError,
+                    "preexisting launch surface has no platform_ref",
+                ))
+            })?;
+            let ref_ = crate::search::encode_ref(outcome.surface.pid.unwrap_or(0), platform_ref.clone());
             return Err(LaunchPipelineError::ReturnedExisting(ExistingSurfaceInfo {
                 ref_,
                 app_name: outcome.surface.app_name.clone(),
                 title: outcome.surface.title.clone(),
                 pid: outcome.surface.pid.unwrap_or(0),
-                cg_window_id: outcome.surface.cg_window_id.unwrap_or(0),
+                platform_ref,
             }));
         }
 
         // 4. Insert or reuse the handle — prevents duplicate SurfaceIds for the
-        //    same cg_window_id when an attach or prior launch already tracked it.
+        //    same platform ref when an attach or prior launch already tracked it.
         let (stored, _reused) = self.handles.track_or_get(outcome.surface.clone()).await;
         let outcome = LaunchOutcome {
             surface: stored,
@@ -138,7 +144,7 @@ pub struct ExistingSurfaceInfo {
     pub app_name: Option<String>,
     pub title: Option<String>,
     pub pid: u32,
-    pub cg_window_id: u32,
+    pub platform_ref: crate::surface::PlatformSurfaceRef,
 }
 
 #[derive(Debug)]
@@ -182,7 +188,7 @@ mod tests {
         adapter::{Confidence, Correlation, RequireConfidence},
         in_memory::InMemoryAdapter,
         placement::{Anchor, DisplayTarget},
-        surface::SurfaceState,
+        surface::{PlatformSurfaceRef, SurfaceState},
     };
 
     fn spec(required: RequireConfidence) -> ProcessLaunchSpec {
@@ -270,7 +276,7 @@ mod tests {
         let handles = HandleStore::new();
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(77);
         outcome.surface_was_preexisting = true;
-        outcome.surface.cg_window_id = Some(42);
+        outcome.surface.platform_ref = Some(PlatformSurfaceRef::macos(42));
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
         let pipeline = LaunchPipeline::new(adapter.clone(), handles);
@@ -283,7 +289,7 @@ mod tests {
         });
         match pipeline.launch(&spec, None).await {
             Err(LaunchPipelineError::ReturnedExisting(info)) => {
-                assert_eq!(info.cg_window_id, 42);
+                assert_eq!(info.platform_ref, PlatformSurfaceRef::macos(42));
                 assert!(info.ref_.starts_with("ref_"));
             }
             other => panic!("expected ReturnedExisting, got {other:?}"),
@@ -485,20 +491,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn launch_reuses_existing_handle_for_same_cg_window_id() {
+    async fn launch_reuses_existing_handle_for_same_platform_ref() {
         use crate::surface::{SurfaceId, SurfaceInfo};
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let handles = HandleStore::new();
         // Seed an existing tracked surface.
         let mut existing = SurfaceInfo::window(SurfaceId::new(), 42);
-        existing.cg_window_id = Some(777);
+        existing.platform_ref = Some(PlatformSurfaceRef::macos(777));
         let existing_id = existing.id.clone();
         handles.insert(existing).await;
 
-        // Script a launch outcome whose surface has the same cg_window_id.
+        // Script a launch outcome whose surface has the same platform ref.
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(42);
-        outcome.surface.cg_window_id = Some(777);
+        outcome.surface.platform_ref = Some(PlatformSurfaceRef::macos(777));
         outcome.surface_was_preexisting = true;
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 

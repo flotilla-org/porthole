@@ -55,6 +55,32 @@ pub enum SurfaceState {
     Dead,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "platform", rename_all = "snake_case")]
+pub enum PlatformSurfaceRef {
+    Macos { cg_window_id: u32 },
+    Kwin { window_id: String },
+}
+
+impl PlatformSurfaceRef {
+    pub fn macos(cg_window_id: u32) -> Self {
+        Self::Macos { cg_window_id }
+    }
+
+    pub fn kwin(window_id: impl Into<String>) -> Self {
+        Self::Kwin {
+            window_id: window_id.into(),
+        }
+    }
+
+    pub fn as_macos_cg_window_id(&self) -> Option<u32> {
+        match self {
+            Self::Macos { cg_window_id } => Some(*cg_window_id),
+            Self::Kwin { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SurfaceInfo {
     pub id: SurfaceId,
@@ -64,13 +90,11 @@ pub struct SurfaceInfo {
     pub app_name: Option<String>,
     pub pid: Option<u32>,
     pub parent_surface_id: Option<SurfaceId>,
-    /// The CGWindowID of the tracked window, captured at launch time.
-    /// Used by the macOS adapter to identify the exact window across all
-    /// downstream AX + CG operations, avoiding non-determinism in multi-window
-    /// apps. Absent for surfaces created before slice-A (serde-defaulted to
-    /// `None` so existing serialized data remains valid).
+    /// Adapter-owned identity for the platform window behind this surface.
+    /// Core treats this as an opaque, typed identity and only compares refs
+    /// from the same platform variant.
     #[serde(default)]
-    pub cg_window_id: Option<u32>,
+    pub platform_ref: Option<PlatformSurfaceRef>,
 }
 
 impl SurfaceInfo {
@@ -83,8 +107,12 @@ impl SurfaceInfo {
             app_name: None,
             pid: Some(pid),
             parent_surface_id: None,
-            cg_window_id: None,
+            platform_ref: None,
         }
+    }
+
+    pub fn macos_cg_window_id(&self) -> Option<u32> {
+        self.platform_ref.as_ref().and_then(PlatformSurfaceRef::as_macos_cg_window_id)
     }
 }
 
@@ -107,7 +135,7 @@ mod tests {
         assert_eq!(info.state, SurfaceState::Alive);
         assert_eq!(info.pid, Some(1234));
         assert!(info.parent_surface_id.is_none());
-        assert!(info.cg_window_id.is_none());
+        assert!(info.platform_ref.is_none());
     }
 
     #[test]
@@ -116,5 +144,13 @@ mod tests {
         assert_eq!(s, "\"window\"");
         let k: SurfaceKind = serde_json::from_str("\"tab\"").unwrap();
         assert_eq!(k, SurfaceKind::Tab);
+    }
+
+    #[test]
+    fn platform_ref_roundtrips_with_variant_tag() {
+        let value = PlatformSurfaceRef::macos(42);
+        let json = serde_json::to_string(&value).unwrap();
+        assert!(json.contains("\"platform\":\"macos\""));
+        assert_eq!(serde_json::from_str::<PlatformSurfaceRef>(&json).unwrap(), value);
     }
 }

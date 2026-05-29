@@ -416,8 +416,8 @@ enum Command {
         title_pattern: Option<String>,
         #[arg(long = "pid")]
         pids: Vec<u32>,
-        #[arg(long = "cg-window-id")]
-        cg_window_ids: Vec<u32>,
+        #[arg(long = "macos-cg-window-id")]
+        macos_cg_window_ids: Vec<u32>,
         #[arg(long)]
         frontmost: bool,
         #[arg(long)]
@@ -444,8 +444,8 @@ enum Command {
         pids: Vec<u32>,
         #[arg(long = "containing-pid")]
         containing_pids: Vec<u32>,
-        #[arg(long = "cg-window-id")]
-        cg_window_ids: Vec<u32>,
+        #[arg(long = "macos-cg-window-id")]
+        macos_cg_window_ids: Vec<u32>,
         #[arg(long)]
         frontmost: bool,
         #[arg(long)]
@@ -1091,7 +1091,7 @@ async fn main() -> std::process::ExitCode {
             app_name,
             title_pattern,
             pids,
-            cg_window_ids,
+            macos_cg_window_ids,
             frontmost,
             session,
             json,
@@ -1103,7 +1103,7 @@ async fn main() -> std::process::ExitCode {
                     app_name,
                     title_pattern,
                     pids,
-                    cg_window_ids,
+                    macos_cg_window_ids,
                     frontmost: if frontmost { Some(true) } else { None },
                     session,
                     json,
@@ -1120,7 +1120,7 @@ async fn main() -> std::process::ExitCode {
             title_pattern,
             pids,
             containing_pids,
-            cg_window_ids,
+            macos_cg_window_ids,
             frontmost,
             session,
             json,
@@ -1133,7 +1133,7 @@ async fn main() -> std::process::ExitCode {
                     title_pattern,
                     pids,
                     containing_pids,
-                    cg_window_ids,
+                    macos_cg_window_ids,
                     frontmost: if frontmost { Some(true) } else { None },
                     session,
                     json,

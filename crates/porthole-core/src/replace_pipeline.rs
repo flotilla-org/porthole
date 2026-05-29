@@ -115,12 +115,12 @@ mod tests {
         display::{DisplayId, Rect},
         in_memory::InMemoryAdapter,
         placement::{GeometrySnapshot, PlacementOutcome},
-        surface::SurfaceInfo,
+        surface::{PlatformSurfaceRef, SurfaceInfo},
     };
 
     async fn tracked_surface(handles: &HandleStore, pid: u32, cg: u32) -> SurfaceId {
         let mut info = SurfaceInfo::window(SurfaceId::new(), pid);
-        info.cg_window_id = Some(cg);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(cg));
         let id = info.id.clone();
         handles.insert(info).await;
         id
@@ -278,7 +278,7 @@ mod tests {
         // Script a fresh_surface violation on the replacement launch.
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(77);
         outcome.surface_was_preexisting = true;
-        outcome.surface.cg_window_id = Some(99);
+        outcome.surface.platform_ref = Some(PlatformSurfaceRef::macos(99));
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
         match replace.replace(&old_id, &artifact_spec("/tmp/new.pdf", true), None).await {

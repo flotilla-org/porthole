@@ -18,7 +18,7 @@ pub async fn snapshot_geometry(adapter: &MacOsAdapter, surface: &SurfaceInfo) ->
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "snapshot_geometry: no pid"))? as i32;
     let cg = surface
-        .cg_window_id
+        .macos_cg_window_id()
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "snapshot_geometry: no cg_window_id"))?;
 
     let (global_x, global_y, w, h) = crate::close_focus::with_ax_window_by_cg_id(pid, cg, |raw| {

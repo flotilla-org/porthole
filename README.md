@@ -212,7 +212,10 @@ On preexisting correlation this returns HTTP 409 `launch_returned_existing` with
     "app_name": "Preview",
     "title": "demo.pdf",
     "pid": 9876,
-    "cg_window_id": 42
+    "platform_ref": {
+      "platform": "macos",
+      "cg_window_id": 42
+    }
   }
 }
 ```
@@ -336,7 +339,7 @@ curl --unix-socket .../porthole.sock \
      -d '{"ref": "<candidate ref from search>"}'
 ```
 
-`track` is idempotent by `cg_window_id` — if another caller (or an earlier call) already tracked the same window, you get back the existing `surface_id` with `reused_existing_handle: true`.
+`track` is idempotent by `platform_ref` — if another caller (or an earlier call) already tracked the same platform window, you get back the existing `surface_id` with `reused_existing_handle: true`.
 
 ### Attention and displays
 

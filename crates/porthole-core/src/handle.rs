@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     ErrorCode, PortholeError,
-    surface::{SurfaceId, SurfaceInfo, SurfaceState},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceState},
 };
 
 #[derive(Default, Clone)]
@@ -46,12 +46,12 @@ impl HandleStore {
         Ok(info)
     }
 
-    /// Find the first alive surface whose `cg_window_id` matches `cg`.
-    pub async fn find_by_cg_window_id(&self, cg: u32) -> Option<SurfaceId> {
+    /// Find the first alive surface whose platform ref matches `platform_ref`.
+    pub async fn find_by_platform_ref(&self, platform_ref: &PlatformSurfaceRef) -> Option<SurfaceId> {
         let guard = self.inner.read().await;
         guard
             .values()
-            .find(|info| info.cg_window_id == Some(cg) && info.state == SurfaceState::Alive)
+            .find(|info| info.platform_ref.as_ref() == Some(platform_ref) && info.state == SurfaceState::Alive)
             .map(|info| info.id.clone())
     }
 
@@ -60,23 +60,23 @@ impl HandleStore {
         guard.values().filter(|info| info.state == SurfaceState::Alive).count()
     }
 
-    /// Atomic get-or-insert keyed by `cg_window_id`. Holds the write lock
+    /// Atomic get-or-insert keyed by platform ref. Holds the write lock
     /// across both the lookup and the insert so concurrent callers cannot
     /// both mint a new handle for the same window.
     ///
     /// Returns `(SurfaceInfo, reused)`:
-    /// - If an alive tracked surface with this `cg_window_id` exists,
+    /// - If an alive tracked surface with this platform ref exists,
     ///   returns that surface with `reused = true`.
     /// - Otherwise inserts `candidate` and returns it with `reused = false`.
     ///
-    /// Dead handles for the same `cg_window_id` are skipped — a fresh
+    /// Dead handles for the same platform ref are skipped — a fresh
     /// insert happens anyway, so re-tracking a window whose previous handle
     /// died returns a new surface id.
     pub async fn track_or_get(&self, candidate: SurfaceInfo) -> (SurfaceInfo, bool) {
         let mut guard = self.inner.write().await;
-        if let Some(cg) = candidate.cg_window_id {
+        if let Some(platform_ref) = candidate.platform_ref.as_ref() {
             for info in guard.values() {
-                if info.cg_window_id == Some(cg) && info.state == SurfaceState::Alive {
+                if info.platform_ref.as_ref() == Some(platform_ref) && info.state == SurfaceState::Alive {
                     return (info.clone(), true);
                 }
             }
@@ -120,32 +120,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_by_cg_window_id_returns_alive_surface() {
+    async fn platform_ref_returns_alive_surface() {
         let store = HandleStore::new();
         let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
-        info.cg_window_id = Some(9999);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(9999));
         let id = info.id.clone();
         store.insert(info).await;
-        let found = store.find_by_cg_window_id(9999).await;
+        let found = store.find_by_platform_ref(&PlatformSurfaceRef::macos(9999)).await;
         assert_eq!(found, Some(id));
     }
 
     #[tokio::test]
-    async fn find_by_cg_window_id_ignores_dead_surface() {
+    async fn platform_ref_ignores_dead_surface() {
         let store = HandleStore::new();
         let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
-        info.cg_window_id = Some(8888);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(8888));
         let id = info.id.clone();
         store.insert(info).await;
         store.mark_dead(&id).await.unwrap();
-        let found = store.find_by_cg_window_id(8888).await;
+        let found = store.find_by_platform_ref(&PlatformSurfaceRef::macos(8888)).await;
         assert!(found.is_none());
     }
 
     #[tokio::test]
-    async fn find_by_cg_window_id_returns_none_for_missing() {
+    async fn platform_ref_returns_none_for_missing() {
         let store = HandleStore::new();
-        let found = store.find_by_cg_window_id(1234).await;
+        let found = store.find_by_platform_ref(&PlatformSurfaceRef::macos(1234)).await;
         assert!(found.is_none());
     }
 
@@ -158,7 +158,7 @@ mod tests {
         let store = HandleStore::new();
         let cg_id: u32 = 4242;
 
-        // N tasks all racing to track_or_get the same cg_window_id with fresh
+        // N tasks all racing to track_or_get the same platform_ref with fresh
         // SurfaceInfo each time. Exactly one should see reused=false; the rest
         // reused=true. All should return the same surface_id.
         let n = 20;
@@ -168,7 +168,7 @@ mod tests {
             let s = Arc::clone(&store);
             tasks.push(tokio::spawn(async move {
                 let mut info = SurfaceInfo::window(SurfaceId::new(), 1);
-                info.cg_window_id = Some(cg_id);
+                info.platform_ref = Some(PlatformSurfaceRef::macos(cg_id));
                 s.track_or_get(info).await
             }));
         }
@@ -193,7 +193,7 @@ mod tests {
 
         let store = HandleStore::new();
         let mut info = SurfaceInfo::window(SurfaceId::new(), 1);
-        info.cg_window_id = Some(99);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(99));
         let (returned, reused) = store.track_or_get(info.clone()).await;
         assert!(!reused);
         assert_eq!(returned.id, info.id);
@@ -205,11 +205,11 @@ mod tests {
 
         let store = HandleStore::new();
         let mut first = SurfaceInfo::window(SurfaceId::new(), 1);
-        first.cg_window_id = Some(7);
+        first.platform_ref = Some(PlatformSurfaceRef::macos(7));
         store.track_or_get(first.clone()).await;
 
         let mut second = SurfaceInfo::window(SurfaceId::new(), 1);
-        second.cg_window_id = Some(7);
+        second.platform_ref = Some(PlatformSurfaceRef::macos(7));
         let (returned, reused) = store.track_or_get(second).await;
         assert!(reused);
         assert_eq!(returned.id, first.id);
@@ -221,13 +221,13 @@ mod tests {
 
         let store = HandleStore::new();
         let mut dead = SurfaceInfo::window(SurfaceId::new(), 1);
-        dead.cg_window_id = Some(5);
+        dead.platform_ref = Some(PlatformSurfaceRef::macos(5));
         let old_id = dead.id.clone();
         store.track_or_get(dead).await;
         store.mark_dead(&old_id).await.unwrap();
 
         let mut fresh = SurfaceInfo::window(SurfaceId::new(), 1);
-        fresh.cg_window_id = Some(5);
+        fresh.platform_ref = Some(PlatformSurfaceRef::macos(5));
         let (returned, reused) = store.track_or_get(fresh.clone()).await;
         assert!(!reused, "dead handle should not be reused");
         assert_eq!(returned.id, fresh.id);

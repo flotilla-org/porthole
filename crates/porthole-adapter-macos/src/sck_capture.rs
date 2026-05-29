@@ -149,7 +149,7 @@ unsafe impl Sync for PublisherCallbackState {}
 
 pub async fn start_video_capture(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
-    let cg_window_id = surface.cg_window_id.ok_or_else(|| {
+    let cg_window_id = surface.macos_cg_window_id().ok_or_else(|| {
         PortholeError::new(
             ErrorCode::CapabilityMissing,
             "surface has no cg_window_id; cannot start ScreenCaptureKit window stream",
@@ -168,7 +168,7 @@ pub async fn start_video_capture_publisher(
     publisher: Arc<dyn VideoCaptureFramePublisher>,
 ) -> Result<Box<dyn VideoCaptureSession>, PortholeError> {
     ensure_screen_recording_granted(adapter)?;
-    let cg_window_id = surface.cg_window_id.ok_or_else(|| {
+    let cg_window_id = surface.macos_cg_window_id().ok_or_else(|| {
         PortholeError::new(
             ErrorCode::CapabilityMissing,
             "surface has no cg_window_id; cannot start ScreenCaptureKit window stream",
