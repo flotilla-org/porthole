@@ -5,6 +5,7 @@
 pub mod agent_store;
 pub mod capture_registry;
 pub mod events;
+pub mod kwin_bridge;
 pub mod routes;
 pub mod runtime;
 pub mod server;

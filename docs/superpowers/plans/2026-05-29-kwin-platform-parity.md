@@ -75,17 +75,17 @@ Expected modified files across the branch chain:
 
 ## Branch 3: `kwin-dbus-bridge`
 
-- [ ] Add a daemon-owned session D-Bus service named
+- [x] Add a daemon-owned session D-Bus service named
   `work.flotilla.Porthole.KWin`.
-- [ ] Implement a narrow bridge API:
+- [x] Implement a narrow bridge API:
   - `PublishSnapshot`
   - `NextCommand`
   - `CompleteCommand`
-- [ ] Start with JSON payloads if typed D-Bus structs slow down the spike.
-- [ ] Add command queue tests independent of KWin.
-- [ ] Connect the KWin control script to the real daemon bridge instead of the
+- [x] Start with JSON payloads if typed D-Bus structs slow down the spike.
+- [x] Add command queue tests independent of KWin.
+- [x] Connect the KWin control script to the real daemon bridge instead of the
   dev harness.
-- [ ] Keep public HTTP-over-UDS unchanged.
+- [x] Keep public HTTP-over-UDS unchanged.
 
 ## Branch 4a: `platform-surface-ref`
 

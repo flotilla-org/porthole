@@ -41,6 +41,7 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

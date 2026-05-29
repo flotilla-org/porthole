@@ -3,12 +3,13 @@
  *
  * This script is intentionally tiny at first: it proves that a KWin-hosted
  * script can observe compositor state and call out to Porthole's session-bus
- * bridge. The real command protocol lands in the kwin-dbus-bridge branch.
+ * bridge.
  */
 
 const SERVICE = "work.flotilla.Porthole.KWin";
 const PATH = "/work/flotilla/Porthole/KWin";
 const IFACE = "work.flotilla.Porthole.KWin";
+const SCRIPT_INSTANCE_ID = "porthole-control";
 const connectedWindows = new Map();
 
 function log(message) {
@@ -79,6 +80,38 @@ function publishSnapshot(reason) {
     });
 }
 
+function completeCommand(commandId, result) {
+    callDBus(SERVICE, PATH, IFACE, "CompleteCommand", String(commandId), JSON.stringify(result), function () {
+        // Command completions are best-effort from the script side. The daemon
+        // will retry or surface a timeout in later adapter branches.
+    });
+}
+
+function handleCommand(commandJson) {
+    if (!commandJson) {
+        return;
+    }
+    let command = null;
+    try {
+        command = JSON.parse(String(commandJson));
+    } catch (error) {
+        log("failed to parse command: " + error);
+        return;
+    }
+    const commandId = command.commandId || "";
+    completeCommand(commandId, {
+        ok: false,
+        error: "unsupported_command",
+        kind: command.kind || null,
+    });
+}
+
+function pollCommands() {
+    callDBus(SERVICE, PATH, IFACE, "NextCommand", SCRIPT_INSTANCE_ID, function (commandJson) {
+        handleCommand(commandJson);
+    });
+}
+
 function connectWindow(window) {
     if (!window || connectedWindows.has(window)) {
         return;
@@ -105,6 +138,11 @@ function main() {
     log("starting");
     connectExistingWindows();
     publishSnapshot("startup");
+    pollCommands();
+
+    if (typeof setInterval === "function") {
+        setInterval(pollCommands, 250);
+    }
 
     workspace.windowAdded.connect(function (window) {
         connectWindow(window);

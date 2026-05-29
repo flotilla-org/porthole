@@ -11,6 +11,7 @@ use tracing::info;
 use crate::{
     agent_store::AgentPolicyStore,
     events::EventBus,
+    kwin_bridge::{KWinBridge, spawn_session_service},
     routes::{
         agent_permissions as agent_permissions_route, attach as attach_route, attention as attention_route,
         capture_sessions as capture_sessions_route, close_focus as close_focus_route, content_rect as content_rect_route,
@@ -110,6 +111,7 @@ pub async fn serve_with_agent_policy(
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
     let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
+    let _kwin_bridge = spawn_session_service(KWinBridge::new());
     let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
     axum::serve(listener, app).await
 }
