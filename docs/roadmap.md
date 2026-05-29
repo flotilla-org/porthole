@@ -2,7 +2,7 @@
 
 Living document. Each phase lists concrete deliverables as a checklist; PRs that land items tick the boxes. Phase order reflects dependencies — phase N+1 generally needs the design surface set by phase N — but phase 4 (product slices) is orthogonal to the platform/UX track and can interleave freely.
 
-Last revised: 2026-05-17.
+Last revised: 2026-05-29.
 
 ---
 
@@ -112,9 +112,10 @@ Candidates, roughly ordered by leverage:
 - [x] **Multi-display placement verbs** — extends the phase-0 `/place` route (which takes explicit geometry) with anchor-based placement (e.g. `anchor: focused_display`, display id targeting).
 - [ ] **Browser tabs via CDP** — Chrome / Edge tab coverage that AX can't reach. Expanded tab verb set (input, wait, replace) and content-area screenshot crop.
 - [x] **`force_place: true` launch option** — placement on preexisting surfaces.
-- [ ] **Hyprland adapter (Linux)** — second platform via `hyprctl` IPC.
+- [ ] **KWin adapter (Linux)** — second platform, targeting Plasma Wayland via
+  KWin's compositor-owned control surface.
 
-Long-horizon, beyond v0.1: KWin, X11, Windows adapters; overlay/annotation subsystem; MCP server surface; remote multi-machine presentation; record/replay integration.
+Long-horizon, beyond v0.1: Hyprland, X11, Windows adapters; overlay/annotation subsystem; MCP server surface; remote multi-machine presentation; record/replay integration.
 
 ---
 

@@ -2,7 +2,8 @@
 
 Porthole exposes a small HTTP API for inspecting and driving desktop windows from
 test harnesses and orchestration tools. It is intended to be cross-platform:
-**macOS first** (today's implementation), with **Linux** (kwin, hyprland) and
+**macOS first** (today's implementation), with **Linux compositor adapters**
+(KWin first, then other compositors such as Hyprland as separate adapters) and
 **Windows** to follow. The primary near-term consumers are terminal-emulator
 test harnesses (kitty-image-tests and similar); the eventual consumer is
 **flotilla**, an agent fleet controller.
@@ -12,6 +13,13 @@ realisations are flagged inline. New adapters should land on the same
 vocabulary, even when the underlying OS surface differs.
 
 ## Language
+
+### Product identity
+
+**Product identity domain**:
+The canonical reverse-DNS root for Porthole product identifiers is
+`work.flotilla`, derived from `flotilla.work`.
+_Avoid_: org.flotilla, flotilla.org.
 
 ### Identity
 
@@ -28,12 +36,53 @@ Opaque string identifier minted by porthole when a surface is attached. Used in
 every command path.
 _Avoid_: handle, ref, token.
 
+**Platform surface ref**:
+The adapter-owned identity for the OS-level window behind a Surface. It is
+platform-specific and kept below the public SurfaceId contract.
+_Avoid_: CGWindowID, window id, native id.
+
 **Platform adapter**:
 The crate that implements porthole's surface operations against a specific OS.
-Today only `porthole-adapter-macos` exists; future siblings will cover kwin,
-hyprland, and Windows. The porthole-core API is what every adapter must
-satisfy.
+Today only `porthole-adapter-macos` exists; future siblings will cover KWin,
+Hyprland, and Windows. The porthole-core API is what every adapter must satisfy.
 _Avoid_: backend, driver.
+
+**Linux compositor adapter**:
+A platform adapter for one Linux compositor family, not for Linux as a whole.
+The first target is KWin on Plasma Wayland; other compositors are separate
+adapter targets with their own capability maps.
+_Avoid_: Linux adapter, generic Linux support.
+
+**KWin control script**:
+The compositor-hosted companion script used by the KWin adapter to discover and
+manage KWin windows through KWin's own scripting environment.
+_Avoid_: helper script, window script, Linux daemon.
+
+**KWin bridge service**:
+The daemon-owned session D-Bus service that the KWin control script calls to
+publish compositor state and receive queued compositor commands.
+_Avoid_: public transport, script service, Linux bus.
+
+**Compositor plane**:
+The part of a Linux compositor adapter that owns compositor-native window
+identity, focus, placement, close, geometry, and attention state.
+_Avoid_: window plane, KWin API.
+
+**Portal capture plane**:
+The part of a Linux compositor adapter that captures screen or window imagery
+through the desktop portal and PipeWire permission model.
+_Avoid_: screenshot plane, PipeWire adapter.
+
+**Input plane**:
+The part of a Linux compositor adapter that injects keyboard, pointer, and text
+input through the desktop portal or EIS permission model.
+_Avoid_: drive plane, uinput layer.
+
+**Portal consent**:
+User approval brokered by a Linux desktop portal for a specific capability or
+session, such as remote desktop input or screen capture. It is not assumed to
+be a durable system permission.
+_Avoid_: Linux TCC, portal permission, permanent grant.
 
 ### Coordinate units
 
