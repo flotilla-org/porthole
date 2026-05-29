@@ -109,6 +109,7 @@ function handleCommand(commandJson) {
 function pollCommands() {
     callDBus(SERVICE, PATH, IFACE, "NextCommand", SCRIPT_INSTANCE_ID, function (commandJson) {
         handleCommand(commandJson);
+        pollCommands();
     });
 }
 
@@ -139,10 +140,6 @@ function main() {
     connectExistingWindows();
     publishSnapshot("startup");
     pollCommands();
-
-    if (typeof setInterval === "function") {
-        setInterval(pollCommands, 250);
-    }
 
     workspace.windowAdded.connect(function (window) {
         connectWindow(window);

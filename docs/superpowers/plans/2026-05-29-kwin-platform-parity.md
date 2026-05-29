@@ -85,6 +85,8 @@ Expected modified files across the branch chain:
 - [x] Add command queue tests independent of KWin.
 - [x] Connect the KWin control script to the real daemon bridge instead of the
   dev harness.
+- [x] Use long-poll command delivery so the script does not depend on browser
+  timer globals being present in KWin's JavaScript runtime.
 - [x] Keep public HTTP-over-UDS unchanged.
 
 ## Branch 4a: `platform-surface-ref`

@@ -2,13 +2,16 @@ use std::{
     collections::{HashMap, VecDeque},
     future,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{Mutex, Notify},
+    time::timeout,
+};
 use tracing::{info, warn};
 use uuid::Uuid;
 use zbus::{connection::Builder as ConnectionBuilder, fdo};
@@ -16,10 +19,12 @@ use zbus::{connection::Builder as ConnectionBuilder, fdo};
 pub const SERVICE_NAME: &str = "work.flotilla.Porthole.KWin";
 pub const OBJECT_PATH: &str = "/work/flotilla/Porthole/KWin";
 pub const INTERFACE_NAME: &str = "work.flotilla.Porthole.KWin";
+const COMMAND_LONG_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct KWinBridge {
     state: Arc<Mutex<KWinBridgeState>>,
+    commands_available: Arc<Notify>,
 }
 
 #[derive(Debug, Default)]
@@ -59,7 +64,10 @@ pub enum KWinBridgeError {
 
 impl KWinBridge {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: Arc::new(Mutex::new(KWinBridgeState::default())),
+            commands_available: Arc::new(Notify::new()),
+        }
     }
 
     pub async fn publish_snapshot_json(&self, payload_json: &str) -> Result<(), KWinBridgeError> {
@@ -83,14 +91,22 @@ impl KWinBridge {
             payload,
         };
         self.state.lock().await.commands.push_back(command.clone());
+        self.commands_available.notify_one();
         command
     }
 
     pub async fn next_command_json(&self, _script_instance_id: &str) -> Result<Option<String>, KWinBridgeError> {
-        let Some(command) = self.state.lock().await.commands.pop_front() else {
-            return Ok(None);
-        };
-        Ok(Some(serde_json::to_string(&command)?))
+        loop {
+            if let Some(command) = self.state.lock().await.commands.pop_front() {
+                return Ok(Some(serde_json::to_string(&command)?));
+            }
+            if timeout(COMMAND_LONG_POLL_TIMEOUT, self.commands_available.notified())
+                .await
+                .is_err()
+            {
+                return Ok(None);
+            }
+        }
     }
 
     pub async fn complete_command_json(&self, command_id: &str, result_json: &str) {
@@ -104,6 +120,12 @@ impl KWinBridge {
 
     pub async fn completion(&self, command_id: &str) -> Option<KWinCommandCompletion> {
         self.state.lock().await.completions.get(command_id).cloned()
+    }
+}
+
+impl Default for KWinBridge {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
