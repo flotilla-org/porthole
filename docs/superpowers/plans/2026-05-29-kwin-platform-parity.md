@@ -141,16 +141,16 @@ Expected modified files across the branch chain:
 
 ## Branch 5a: `kwin-launch-correlation`
 
-- [ ] Implement `launch_process` for the KWin adapter.
-- [ ] Capture launched pid and launch timestamp.
-- [ ] Match new KWin windows from bridge snapshots/events.
-- [ ] Strong match when exactly one new window belongs to the launched pid or a
+- [x] Implement `launch_process` for the KWin adapter.
+- [x] Capture launched pid and launch timestamp.
+- [x] Match new KWin windows from bridge snapshots/events.
+- [x] Strong match when exactly one new window belongs to the launched pid or a
   descendant pid within timeout.
-- [ ] Plausible match when app id/resource class matches and the window becomes
+- [x] Plausible match when app id/resource class matches and the window becomes
   active shortly after launch.
-- [ ] Keep artifact launch/document matching out of scope unless KWin exposes
+- [x] Keep artifact launch/document matching out of scope unless KWin exposes
   enough metadata cheaply.
-- [ ] Add terminal-launch manual smoke cases once permission/session state is
+- [x] Add terminal-launch manual smoke cases once permission/session state is
   available.
 
 ## Branch 6: `kwin-screenshot-capture`

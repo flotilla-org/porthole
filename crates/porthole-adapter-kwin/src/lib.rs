@@ -1,5 +1,6 @@
 pub mod bridge;
 
+mod launch;
 mod remote_desktop;
 mod snapshot;
 
@@ -69,7 +70,7 @@ impl KWinAdapter {
         )
     }
 
-    async fn snapshot(&self) -> Result<KWinSnapshotPayload, PortholeError> {
+    pub(crate) async fn snapshot(&self) -> Result<KWinSnapshotPayload, PortholeError> {
         let snapshot = self.bridge.latest_snapshot().await.ok_or_else(Self::no_snapshot_error)?;
         let snapshot: KWinSnapshotPayload = serde_json::from_value(snapshot.payload)
             .map_err(|error| PortholeError::new(ErrorCode::InternalError, format!("invalid KWin snapshot payload: {error}")))?;
@@ -135,7 +136,7 @@ impl KWinAdapter {
         }
     }
 
-    async fn refresh_snapshot(&self) -> Result<(), PortholeError> {
+    pub(crate) async fn refresh_snapshot(&self) -> Result<(), PortholeError> {
         let command = self
             .bridge
             .queue_command("publish_snapshot", json!({ "windowId": "", "args": {} }))
@@ -231,7 +232,7 @@ impl KWinAdapter {
     }
 }
 
-fn surface_from_window(window: &KWinWindow) -> SurfaceInfo {
+pub(crate) fn surface_from_window(window: &KWinWindow) -> SurfaceInfo {
     let mut surface = SurfaceInfo::window(SurfaceId::new(), window.pid);
     surface.title = window.caption.clone();
     surface.app_name = window.app_name();
@@ -295,8 +296,8 @@ impl Adapter for KWinAdapter {
         "kwin"
     }
 
-    async fn launch_process(&self, _spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
-        Err(unsupported("KWin adapter does not launch processes in this branch"))
+    async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+        launch::launch_process(self, spec).await
     }
 
     async fn screenshot(&self, _surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
@@ -571,6 +572,7 @@ impl Adapter for KWinAdapter {
     fn capabilities(&self) -> Vec<&'static str> {
         vec![
             "search",
+            "launch_process",
             "wait",
             "close",
             "focus",
