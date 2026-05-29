@@ -46,11 +46,32 @@ function outputName(output) {
     return readString(output.name || output.model || output);
 }
 
+function outputToJson(output) {
+    return {
+        name: outputName(output),
+        geometry: rectToJson(output ? output.geometry : null),
+        scale: Number((output && output.devicePixelRatio) || 1),
+        active: workspace.activeScreen === output,
+    };
+}
+
+function cursorToJson() {
+    const pos = workspace.cursorPos || { x: 0, y: 0 };
+    const output = workspace.screenAt ? workspace.screenAt(pos) : null;
+    return {
+        x: Number(pos.x || 0),
+        y: Number(pos.y || 0),
+        output: outputName(output),
+    };
+}
+
 function windowToJson(window) {
     return {
+        windowId: readString(window.internalId || window.windowId) || "",
         caption: readString(window.caption),
         resourceClass: readString(window.resourceClass),
         resourceName: readString(window.resourceName),
+        desktopFileName: readString(window.desktopFileName),
         pid: Number(window.pid || 0),
         normalWindow: readBool(window.normalWindow),
         active: readBool(window.active),
@@ -63,10 +84,13 @@ function windowToJson(window) {
 function buildSnapshot(reason) {
     const windows = workspace.windowList().map(windowToJson);
     const active = workspace.activeWindow ? windowToJson(workspace.activeWindow) : null;
+    const outputs = workspace.screens ? workspace.screens.map(outputToJson) : [];
     return {
         schemaVersion: 1,
         reason,
         activeWindow: active,
+        cursor: cursorToJson(),
+        outputs,
         windowCount: windows.length,
         windows,
     };
@@ -87,6 +111,14 @@ function completeCommand(commandId, result) {
     });
 }
 
+function findWindow(windowId) {
+    const wanted = String(windowId || "");
+    const matches = workspace.windowList().filter(function (window) {
+        return readString(window.internalId || window.windowId) === wanted;
+    });
+    return matches.length > 0 ? matches[0] : null;
+}
+
 function handleCommand(commandJson) {
     if (!commandJson) {
         return;
@@ -99,11 +131,38 @@ function handleCommand(commandJson) {
         return;
     }
     const commandId = command.commandId || "";
-    completeCommand(commandId, {
-        ok: false,
-        error: "unsupported_command",
-        kind: command.kind || null,
-    });
+    const windowId = command.payload ? command.payload.windowId : "";
+    const args = command.payload && command.payload.args ? command.payload.args : {};
+    const window = findWindow(windowId);
+    if (!window) {
+        completeCommand(commandId, { ok: false, error: "window_not_found" });
+        return;
+    }
+    try {
+        if (command.kind === "focus") {
+            workspace.activeWindow = window;
+        } else if (command.kind === "close") {
+            window.closeWindow();
+        } else if (command.kind === "place_surface") {
+            window.frameGeometry = {
+                x: Number(args.x),
+                y: Number(args.y),
+                width: Number(args.width),
+                height: Number(args.height),
+            };
+        } else {
+            completeCommand(commandId, {
+                ok: false,
+                error: "unsupported_command",
+                kind: command.kind || null,
+            });
+            return;
+        }
+        publishSnapshot("command-" + String(command.kind || "unknown"));
+        completeCommand(commandId, { ok: true });
+    } catch (error) {
+        completeCommand(commandId, { ok: false, error: String(error) });
+    }
 }
 
 function pollCommands() {

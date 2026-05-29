@@ -16,6 +16,7 @@ futures-core = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 porthole-core = { path = "../porthole-core" }
+porthole-adapter-kwin = { path = "../porthole-adapter-kwin" }
 porthole-protocol = { path = "../porthole-protocol" }
 rusqlite = { workspace = true }
 serde = { workspace = true }

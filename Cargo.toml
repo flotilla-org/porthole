@@ -7,6 +7,7 @@ members = [
     "crates/portholed",
     "crates/porthole",
     "crates/porthole-adapter-macos",
+    "crates/porthole-adapter-kwin",
     "crates/xtask",
 ]
 

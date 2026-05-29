@@ -101,6 +101,16 @@ pub async fn serve_with_agent_policy(
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
+    serve_with_agent_policy_and_kwin_bridge(adapter, socket_path, agent_store, events, KWinBridge::new()).await
+}
+
+pub async fn serve_with_agent_policy_and_kwin_bridge(
+    adapter: Arc<dyn Adapter>,
+    socket_path: PathBuf,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
+    kwin_bridge: KWinBridge,
+) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -111,7 +121,7 @@ pub async fn serve_with_agent_policy(
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
     let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
-    let _kwin_bridge = spawn_session_service(KWinBridge::new());
+    let _kwin_bridge = spawn_session_service(kwin_bridge);
     let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
     axum::serve(listener, app).await
 }

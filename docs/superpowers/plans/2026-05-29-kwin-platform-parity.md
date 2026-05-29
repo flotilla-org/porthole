@@ -104,11 +104,11 @@ Expected modified files across the branch chain:
 
 ## Branch 4: `kwin-compositor-adapter`
 
-- [ ] Add `crates/porthole-adapter-kwin`.
-- [ ] Gate adapter construction to KDE/Plasma Wayland, initially explicit if
+- [x] Add `crates/porthole-adapter-kwin`.
+- [x] Gate adapter construction to KDE/Plasma Wayland, initially explicit if
   auto-detection is too risky.
-- [ ] Consume KWin bridge snapshots as the source of compositor state.
-- [ ] Implement:
+- [x] Consume KWin bridge snapshots as the source of compositor state.
+- [x] Implement:
   - `name`
   - `capabilities`
   - `search`
@@ -118,9 +118,9 @@ Expected modified files across the branch chain:
   - `place_surface`
   - `snapshot_geometry`
   - `attention`
-- [ ] Return `AdapterUnsupported` for input, screenshot, and recording in this
+- [x] Return `AdapterUnsupported` for input, screenshot, and recording in this
   branch.
-- [ ] Add in-memory or bridge-fake tests for compositor-plane behavior.
+- [x] Add in-memory or bridge-fake tests for compositor-plane behavior.
 
 ## Branch 5: `kwin-input-plane`
 
