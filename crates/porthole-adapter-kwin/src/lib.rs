@@ -357,23 +357,21 @@ impl Adapter for KWinAdapter {
             _ => None,
         };
         loop {
-            let alive = match &surface.platform_ref {
-                Some(platform_ref) => self.find_window(platform_ref).await.map(|window| window.is_some()).unwrap_or(false),
-                None => false,
+            let window = match &surface.platform_ref {
+                Some(platform_ref) => self.find_window(platform_ref).await.unwrap_or(None),
+                None => None,
             };
+            let alive = window.is_some();
             let matched = match condition {
                 WaitCondition::Exists => alive,
                 WaitCondition::Gone => !alive,
                 WaitCondition::TitleMatches { .. } => {
                     let regex = title_regex.as_ref().expect("compiled title regex");
-                    match &surface.platform_ref {
-                        Some(platform_ref) => match self.find_window(platform_ref).await {
-                            Ok(Some(window)) => {
-                                last_observed = window.caption.clone();
-                                window.caption.as_deref().is_some_and(|title| regex.is_match(title))
-                            }
-                            _ => false,
-                        },
+                    match window.as_ref() {
+                        Some(window) => {
+                            last_observed = window.caption.clone();
+                            window.caption.as_deref().is_some_and(|title| regex.is_match(title))
+                        }
                         None => false,
                     }
                 }

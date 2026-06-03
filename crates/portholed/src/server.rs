@@ -102,14 +102,7 @@ pub async fn serve_with_agent_policy(
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        serve_with_agent_policy_and_kwin_bridge(adapter, socket_path, agent_store, events, KWinBridge::new()).await
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
-    }
+    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
 }
 
 #[cfg(target_os = "linux")]

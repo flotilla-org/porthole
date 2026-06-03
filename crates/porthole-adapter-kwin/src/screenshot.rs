@@ -320,6 +320,15 @@ mod tests {
     }
 
     #[test]
+    fn kwin_raw_conversion_skips_stride_padding() {
+        let raw = [10, 20, 30, 40, 0xaa, 0xbb, 0xcc, 0xdd, 50, 60, 70, 80, 0xee, 0xff, 0x11, 0x22];
+
+        let rgba = kwin_raw_to_rgba(&raw, 1, 2, 8, 5).expect("rgba");
+
+        assert_eq!(rgba, vec![30, 20, 10, 40, 70, 60, 50, 80]);
+    }
+
+    #[test]
     fn kwin_rgba8888_raw_preserves_channel_order() {
         let raw = [10, 20, 30, 40, 50, 60, 70, 80];
 

@@ -13,10 +13,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     #[cfg(target_os = "linux")]
-    let (adapter, kwin_bridge) = {
-        let kwin_bridge = KWinBridge::new();
-        (build_adapter(kwin_bridge.clone()), kwin_bridge)
-    };
+    let (adapter, kwin_bridge) = build_adapter();
     #[cfg(not(target_os = "linux"))]
     let adapter = build_adapter();
 
@@ -38,14 +35,18 @@ async fn main() -> std::io::Result<()> {
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     #[cfg(target_os = "linux")]
     {
-        portholed::server::serve_with_agent_policy_and_kwin_bridge(
-            adapter,
-            path,
-            agent_store,
-            portholed::events::EventBus::new(),
-            kwin_bridge,
-        )
-        .await
+        if let Some(kwin_bridge) = kwin_bridge {
+            portholed::server::serve_with_agent_policy_and_kwin_bridge(
+                adapter,
+                path,
+                agent_store,
+                portholed::events::EventBus::new(),
+                kwin_bridge,
+            )
+            .await
+        } else {
+            portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -59,12 +60,13 @@ fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
 }
 
 #[cfg(target_os = "linux")]
-fn build_adapter(kwin_bridge: KWinBridge) -> Arc<dyn porthole_core::adapter::Adapter> {
+fn build_adapter() -> (Arc<dyn porthole_core::adapter::Adapter>, Option<KWinBridge>) {
     if looks_like_kde_wayland() {
-        return Arc::new(KWinAdapter::new(kwin_bridge));
+        let kwin_bridge = KWinBridge::new();
+        return (Arc::new(KWinAdapter::new(kwin_bridge.clone())), Some(kwin_bridge));
     }
     tracing::warn!("no native adapter for this Linux session; falling back to in-memory adapter");
-    Arc::new(porthole_core::in_memory::InMemoryAdapter::new())
+    (Arc::new(porthole_core::in_memory::InMemoryAdapter::new()), None)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

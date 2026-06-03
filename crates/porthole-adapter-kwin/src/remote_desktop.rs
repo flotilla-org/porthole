@@ -6,6 +6,7 @@ use porthole_core::{
     input::{KeyEvent, Modifier},
 };
 use serde_json::json;
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 use zbus::{
     Connection, Proxy,
@@ -19,6 +20,7 @@ const REQUEST_IFACE: &str = "org.freedesktop.portal.Request";
 
 const RESPONSE_SUCCESS: u32 = 0;
 const RESPONSE_CANCELLED: u32 = 1;
+const PORTAL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 const DEVICE_KEYBOARD: u32 = 1;
 const DEVICE_POINTER: u32 = 2;
@@ -228,7 +230,10 @@ async fn wait_response(connection: &Connection, handle: OwnedObjectPath) -> Resu
         .await
         .map_err(portal_call_failed)?;
     let mut responses = proxy.receive_signal("Response").await.map_err(portal_call_failed)?;
-    let Some(message) = responses.next().await else {
+    let Some(message) = timeout(PORTAL_RESPONSE_TIMEOUT, responses.next())
+        .await
+        .map_err(|_| portal_response_timeout(handle.as_str()))?
+    else {
         return Err(portal_unavailable("portal request closed before Response signal"));
     };
     let (response, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(portal_call_failed)?;
@@ -246,6 +251,19 @@ async fn wait_response(connection: &Connection, handle: OwnedObjectPath) -> Resu
             "binary_path": current_exe(),
         }))),
     }
+}
+
+fn portal_response_timeout(handle: &str) -> PortholeError {
+    PortholeError::new(
+        ErrorCode::SystemPermissionRequestFailed,
+        format!("RemoteDesktop portal request {handle} timed out waiting for Response signal"),
+    )
+    .with_details(json!({
+        "permission": "remote_desktop",
+        "reason": "portal response timeout",
+        "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
+        "binary_path": current_exe(),
+    }))
 }
 
 fn options<'a, const N: usize>(entries: [(&'static str, Value<'a>); N]) -> HashMap<&'static str, Value<'a>> {

@@ -142,7 +142,6 @@ fn app_hint(app: &str) -> String {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(app)
-        .trim_end_matches(".desktop")
         .to_lowercase()
 }
 
