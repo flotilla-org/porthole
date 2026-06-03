@@ -234,7 +234,7 @@ fn script_loaded() -> Result<bool, KwinError> {
 }
 
 fn installed_script_dir() -> Result<PathBuf, KwinError> {
-    Ok(home()?.join(format!(".local/share/kwin/scripts/{SCRIPT_ID}")))
+    Ok(xdg_data_home()?.join(format!("kwin/scripts/{SCRIPT_ID}")))
 }
 
 fn installed_script_file() -> Result<PathBuf, KwinError> {
@@ -242,7 +242,7 @@ fn installed_script_file() -> Result<PathBuf, KwinError> {
 }
 
 fn desktop_entry_path() -> Result<PathBuf, KwinError> {
-    Ok(home()?.join(format!(".local/share/applications/{DESKTOP_ENTRY_FILENAME}")))
+    Ok(xdg_data_home()?.join(format!("applications/{DESKTOP_ENTRY_FILENAME}")))
 }
 
 fn write_temp_package() -> Result<PathBuf, KwinError> {
@@ -266,6 +266,13 @@ fn home() -> Result<PathBuf, KwinError> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| KwinError::Message("HOME env var not set".into()))
+}
+
+fn xdg_data_home() -> Result<PathBuf, KwinError> {
+    match env::var_os("XDG_DATA_HOME") {
+        Some(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+        _ => Ok(home()?.join(".local/share")),
+    }
 }
 
 fn command_ok(program: &str, args: &[&str]) -> bool {

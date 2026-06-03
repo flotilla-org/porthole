@@ -146,19 +146,22 @@ fn kwin_raw_to_rgba(raw: &[u8], width: u32, height: u32, stride: u32, format: u3
     }
 
     match format {
-        // QImage::Format_RGB32, ARGB32, ARGB32_Premultiplied. On little-endian
-        // Linux these are stored as B,G,R,A bytes.
-        4..=6 => convert_rows(raw, width, height, stride, 4, |pixel| {
-            let alpha = if format == 4 { 255 } else { pixel[3] };
-            [pixel[2], pixel[1], pixel[0], alpha]
-        }),
+        // QImage::Format_RGB32. On little-endian Linux this is stored as
+        // B,G,R,X bytes.
+        4 => convert_rows(raw, width, height, stride, 4, |pixel| [pixel[2], pixel[1], pixel[0], 255]),
+        // QImage::Format_ARGB32. On little-endian Linux this is stored as
+        // B,G,R,A bytes.
+        5 => convert_rows(raw, width, height, stride, 4, |pixel| [pixel[2], pixel[1], pixel[0], pixel[3]]),
+        // QImage::Format_ARGB32_Premultiplied.
+        6 => convert_rows(raw, width, height, stride, 4, unpremultiply_bgra),
         // QImage::Format_RGB888.
         13 => convert_rows(raw, width, height, stride, 3, |pixel| [pixel[0], pixel[1], pixel[2], 255]),
-        // QImage::Format_RGBX8888, RGBA8888, RGBA8888_Premultiplied.
-        16..=18 => convert_rows(raw, width, height, stride, 4, |pixel| {
-            let alpha = if format == 16 { 255 } else { pixel[3] };
-            [pixel[0], pixel[1], pixel[2], alpha]
-        }),
+        // QImage::Format_RGBX8888.
+        16 => convert_rows(raw, width, height, stride, 4, |pixel| [pixel[0], pixel[1], pixel[2], 255]),
+        // QImage::Format_RGBA8888.
+        17 => convert_rows(raw, width, height, stride, 4, |pixel| [pixel[0], pixel[1], pixel[2], pixel[3]]),
+        // QImage::Format_RGBA8888_Premultiplied.
+        18 => convert_rows(raw, width, height, stride, 4, unpremultiply_rgba),
         // QImage::Format_BGR888.
         29 => convert_rows(raw, width, height, stride, 3, |pixel| [pixel[2], pixel[1], pixel[0], 255]),
         other => Err(PortholeError::new(
@@ -166,6 +169,33 @@ fn kwin_raw_to_rgba(raw: &[u8], width: u32, height: u32, stride: u32, format: u3
             format!("unsupported KWin screenshot QImage format {other}"),
         )),
     }
+}
+
+fn unpremultiply_bgra(pixel: &[u8]) -> [u8; 4] {
+    let alpha = pixel[3];
+    [
+        unpremultiply_channel(pixel[2], alpha),
+        unpremultiply_channel(pixel[1], alpha),
+        unpremultiply_channel(pixel[0], alpha),
+        alpha,
+    ]
+}
+
+fn unpremultiply_rgba(pixel: &[u8]) -> [u8; 4] {
+    let alpha = pixel[3];
+    [
+        unpremultiply_channel(pixel[0], alpha),
+        unpremultiply_channel(pixel[1], alpha),
+        unpremultiply_channel(pixel[2], alpha),
+        alpha,
+    ]
+}
+
+fn unpremultiply_channel(channel: u8, alpha: u8) -> u8 {
+    if alpha == 0 {
+        return 0;
+    }
+    ((u32::from(channel) * 255 + u32::from(alpha) / 2) / u32::from(alpha)).min(255) as u8
 }
 
 fn convert_rows(
@@ -245,7 +275,8 @@ fn screenshot_call_failed(error: zbus::Error) -> PortholeError {
 fn unix_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
         .unwrap_or_default()
 }
 
@@ -271,6 +302,15 @@ mod tests {
     }
 
     #[test]
+    fn kwin_premultiplied_bgra_raw_unpremultiplies_to_straight_rgba() {
+        let raw = [64, 32, 16, 128, 1, 2, 3, 0];
+
+        let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 6).expect("rgba");
+
+        assert_eq!(rgba, vec![32, 64, 128, 128, 0, 0, 0, 0]);
+    }
+
+    #[test]
     fn kwin_xrgb_raw_converts_to_opaque_rgba() {
         let raw = [10, 20, 30, 0, 50, 60, 70, 0];
 
@@ -286,6 +326,15 @@ mod tests {
         let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 17).expect("rgba");
 
         assert_eq!(rgba, vec![10, 20, 30, 40, 50, 60, 70, 80]);
+    }
+
+    #[test]
+    fn kwin_premultiplied_rgba8888_raw_unpremultiplies_to_straight_rgba() {
+        let raw = [16, 32, 64, 128, 1, 2, 3, 0];
+
+        let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 18).expect("rgba");
+
+        assert_eq!(rgba, vec![32, 64, 128, 128, 0, 0, 0, 0]);
     }
 
     #[test]
