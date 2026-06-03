@@ -132,6 +132,7 @@ impl KWinAdapter {
                 ));
             }
             if Instant::now() >= deadline {
+                self.bridge.abandon_command(&command.command_id).await;
                 return Err(PortholeError::new(
                     ErrorCode::InternalError,
                     format!("KWin command {kind} timed out waiting for the control script"),
@@ -412,6 +413,8 @@ impl Adapter for KWinAdapter {
         let snapshot = self.snapshot().await?;
         let active = snapshot.active_window.as_ref();
         Ok(AttentionInfo {
+            // The daemon resolves the active platform ref to a tracked SurfaceId
+            // in routes/attention.rs; the adapter only knows compositor ids.
             focused_surface_id: None,
             focused_app_name: active.and_then(KWinWindow::app_name),
             focused_display_id: active.and_then(|window| window.output.clone()).map(DisplayId::new),

@@ -120,7 +120,13 @@ fn render_desktop_entry(daemon: &Path) -> String {
 }
 
 fn quote_desktop_exec_arg(path: &Path) -> String {
-    let escaped = path.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = path
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
     format!("\"{escaped}\"")
 }
 
@@ -351,5 +357,12 @@ mod tests {
         let entry = render_desktop_entry(Path::new("/tmp/my apps/portholed"));
 
         assert!(entry.contains("Exec=\"/tmp/my apps/portholed\""));
+    }
+
+    #[test]
+    fn desktop_entry_escapes_exec_reserved_chars() {
+        let entry = render_desktop_entry(Path::new("/tmp/$apps/`quoted`/portholed"));
+
+        assert!(entry.contains("Exec=\"/tmp/\\$apps/\\`quoted\\`/portholed\""));
     }
 }

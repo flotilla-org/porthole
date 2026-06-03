@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     future,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -31,6 +31,7 @@ pub struct KWinBridge {
 struct KWinBridgeState {
     latest_snapshot: Option<KWinSnapshot>,
     commands: VecDeque<KWinCommand>,
+    pending_command_ids: HashSet<String>,
     completions: HashMap<String, KWinCommandCompletion>,
 }
 
@@ -90,7 +91,9 @@ impl KWinBridge {
             kind: kind.into(),
             payload,
         };
-        self.state.lock().await.commands.push_back(command.clone());
+        let mut state = self.state.lock().await;
+        state.pending_command_ids.insert(command.command_id.clone());
+        state.commands.push_back(command.clone());
         self.commands_available.notify_one();
         command
     }
@@ -114,16 +117,32 @@ impl KWinBridge {
     }
 
     pub async fn complete_command_json(&self, command_id: &str, result_json: &str) {
+        let mut state = self.state.lock().await;
+        if !state.pending_command_ids.contains(command_id) {
+            return;
+        }
         let completion = KWinCommandCompletion {
             command_id: command_id.to_owned(),
             result_json: result_json.to_owned(),
             completed_unix_ms: unix_ms(),
         };
-        self.state.lock().await.completions.insert(command_id.to_owned(), completion);
+        state.completions.insert(command_id.to_owned(), completion);
     }
 
     pub async fn completion(&self, command_id: &str) -> Option<KWinCommandCompletion> {
-        self.state.lock().await.completions.remove(command_id)
+        let mut state = self.state.lock().await;
+        let completion = state.completions.remove(command_id);
+        if completion.is_some() {
+            state.pending_command_ids.remove(command_id);
+        }
+        completion
+    }
+
+    pub async fn abandon_command(&self, command_id: &str) {
+        let mut state = self.state.lock().await;
+        state.pending_command_ids.remove(command_id);
+        state.commands.retain(|command| command.command_id != command_id);
+        state.completions.remove(command_id);
     }
 }
 
@@ -244,5 +263,17 @@ mod tests {
         assert_eq!(completion.command_id, command.command_id);
         assert_eq!(completion.result_json, r#"{"ok":true}"#);
         assert!(bridge.completion(&command.command_id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn abandoned_command_ignores_late_completion() {
+        let bridge = KWinBridge::new();
+        let command = bridge.queue_command("close", json!({ "windowId": "a" })).await;
+
+        bridge.abandon_command(&command.command_id).await;
+        bridge.complete_command_json(&command.command_id, r#"{"ok":true}"#).await;
+
+        assert!(bridge.completion(&command.command_id).await.is_none());
+        assert_eq!(bridge.next_command_json("script").await.unwrap(), None);
     }
 }

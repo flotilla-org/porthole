@@ -185,18 +185,7 @@ mod tests {
     }
 
     async fn router_with_authorized_tracked_surface() -> (Router, String, String) {
-        let adapter = Arc::new(InMemoryAdapter::new());
-        let state = AppState::new(adapter);
-        let info = SurfaceInfo::window(porthole_core::SurfaceId::new(), 1);
-        let id = info.id.clone();
-        state.handles.insert(info).await;
-        let token = authorize_surface(
-            &state,
-            &id,
-            vec![ActionClass::Drive, ActionClass::Manage, ActionClass::Observe, ActionClass::Record],
-        )
-        .await;
-        (build_router(state), id.to_string(), token)
+        router_with_tracked_surface().await
     }
 
     async fn authorize_surface(state: &AppState, id: &porthole_core::SurfaceId, actions: Vec<ActionClass>) -> String {
