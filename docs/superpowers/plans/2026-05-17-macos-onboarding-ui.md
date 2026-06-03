@@ -1331,7 +1331,7 @@ Run:
 open target/debug/Porthole.app
 sleep 2
 pgrep -fl PortholeHelper
-osascript -e 'tell application id "org.flotilla.porthole.dev" to quit'
+osascript -e 'tell application id "work.flotilla.porthole.dev" to quit'
 ```
 
 Expected: `PortholeHelper` starts and quits cleanly. If this machine cannot open

@@ -2,7 +2,7 @@
 
 use porthole_core::{
     PortholeError,
-    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
 };
 
 use crate::{MacOsAdapter, permissions::ensure_screen_recording_granted};
@@ -90,7 +90,7 @@ pub async fn window_alive(adapter: &MacOsAdapter, pid: u32, cg_window_id: u32) -
             app_name,
             pid: Some(pid),
             parent_surface_id: None,
-            cg_window_id: Some(cg_window_id),
+            platform_ref: Some(PlatformSurfaceRef::macos(cg_window_id)),
         };
         return Ok(Some(info));
     }

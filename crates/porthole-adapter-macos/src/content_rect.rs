@@ -29,7 +29,7 @@ pub async fn content_rect(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Resu
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "content_rect: surface has no pid"))? as i32;
     let cg = surface
-        .cg_window_id
+        .macos_cg_window_id()
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "content_rect: surface has no cg_window_id"))?;
 
     close_focus::with_ax_window_by_cg_id(pid, cg, read_content_rect)

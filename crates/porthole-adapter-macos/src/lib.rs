@@ -10,33 +10,57 @@ use porthole_core::{
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::SystemPermissionStatus,
-    surface::SurfaceInfo,
+    surface::{PlatformSurfaceRef, SurfaceInfo},
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
 };
+#[cfg(not(target_os = "macos"))]
+use porthole_core::{permission::SystemPermissionPromptOutcome, wait::LastObserved};
 
+#[cfg(target_os = "macos")]
 pub mod artifact;
+#[cfg(target_os = "macos")]
 pub mod attention;
+#[cfg(target_os = "macos")]
 pub mod ax;
+#[cfg(target_os = "macos")]
 pub mod capture;
+#[cfg(target_os = "macos")]
 pub mod close_focus;
+#[cfg(target_os = "macos")]
 pub mod content_rect;
+#[cfg(target_os = "macos")]
 pub mod correlation;
+#[cfg(target_os = "macos")]
 pub mod cursor;
+#[cfg(target_os = "macos")]
 pub mod display;
+#[cfg(target_os = "macos")]
 pub mod enumerate;
+#[cfg(target_os = "macos")]
 pub mod ffi;
+#[cfg(target_os = "macos")]
 pub mod frame_diff;
+#[cfg(target_os = "macos")]
 pub mod input;
+#[cfg(target_os = "macos")]
 pub mod key_codes;
+#[cfg(target_os = "macos")]
 pub mod launch;
+#[cfg(target_os = "macos")]
 pub mod nsscreen;
+#[cfg(target_os = "macos")]
 pub mod permissions;
+#[cfg(target_os = "macos")]
 pub mod placement;
 #[cfg(target_os = "macos")]
 pub mod sck_capture;
+#[cfg(target_os = "macos")]
 pub mod search;
+#[cfg(target_os = "macos")]
 pub mod snapshot;
+#[cfg(target_os = "macos")]
 pub mod wait;
+#[cfg(target_os = "macos")]
 pub mod window_alive;
 
 /// Stateless adapter — TCC trust state is loaded per-process by the macOS
@@ -55,6 +79,7 @@ impl MacOsAdapter {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[async_trait]
 impl Adapter for MacOsAdapter {
     fn name(&self) -> &'static str {
@@ -142,8 +167,8 @@ impl Adapter for MacOsAdapter {
         attention::attention().await
     }
 
-    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
-        Ok(attention::frontmost_cg_window_id())
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError> {
+        Ok(attention::frontmost_cg_window_id().map(PlatformSurfaceRef::macos))
     }
 
     async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {
@@ -203,7 +228,14 @@ impl Adapter for MacOsAdapter {
         search::search(self, query).await
     }
 
-    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+    async fn surface_alive(
+        &self,
+        pid: u32,
+        platform_ref: &PlatformSurfaceRef,
+    ) -> Result<Option<porthole_core::SurfaceInfo>, porthole_core::PortholeError> {
+        let Some(cg_window_id) = platform_ref.as_macos_cg_window_id() else {
+            return Ok(None);
+        };
         window_alive::window_alive(self, pid, cg_window_id).await
     }
 
@@ -264,4 +296,152 @@ impl Adapter for MacOsAdapter {
             "content_rect",
         ]
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[async_trait]
+impl Adapter for MacOsAdapter {
+    fn name(&self) -> &'static str {
+        "macos"
+    }
+
+    async fn launch_process(&self, _spec: &ProcessLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
+        unsupported()
+    }
+
+    async fn screenshot(&self, _surface: &SurfaceInfo) -> Result<Screenshot, PortholeError> {
+        unsupported()
+    }
+
+    async fn start_video_capture(
+        &self,
+        _surface: &SurfaceInfo,
+    ) -> Result<Box<dyn porthole_core::adapter::VideoCaptureSession>, PortholeError> {
+        unsupported()
+    }
+
+    async fn start_video_capture_publisher(
+        &self,
+        _surface: &SurfaceInfo,
+        _publisher: Arc<dyn VideoCaptureFramePublisher>,
+    ) -> Result<Box<dyn porthole_core::adapter::VideoCaptureSession>, PortholeError> {
+        unsupported()
+    }
+
+    async fn key(&self, _surface: &SurfaceInfo, _events: &[KeyEvent]) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn text(&self, _surface: &SurfaceInfo, _text: &str) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn click(&self, _surface: &SurfaceInfo, _spec: &ClickSpec) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn scroll(&self, _surface: &SurfaceInfo, _spec: &ScrollSpec) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn pointer_move(&self, _surface: &SurfaceInfo, _spec: &PointerMoveSpec) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn close(&self, _surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn focus(&self, _surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn wait(
+        &self,
+        _surface: &SurfaceInfo,
+        _condition: &WaitCondition,
+        _deadline: std::time::Instant,
+    ) -> Result<WaitOutcome, WaitTimeout> {
+        Err(WaitTimeout {
+            last_observed: LastObserved::Presence { alive: false },
+            elapsed_ms: 0,
+        })
+    }
+
+    async fn attention(&self) -> Result<AttentionInfo, PortholeError> {
+        unsupported()
+    }
+
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError> {
+        unsupported()
+    }
+
+    async fn displays(&self) -> Result<Vec<DisplayInfo>, PortholeError> {
+        unsupported()
+    }
+
+    async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>, PortholeError> {
+        Ok(Vec::new())
+    }
+
+    async fn ensure_system_permission(&self, _name: &str) -> Result<(), PortholeError> {
+        unsupported()
+    }
+
+    async fn request_system_permission_prompt(&self, _name: &str) -> Result<SystemPermissionPromptOutcome, PortholeError> {
+        unsupported()
+    }
+
+    async fn search(&self, _query: &porthole_core::SearchQuery) -> Result<Vec<porthole_core::Candidate>, PortholeError> {
+        unsupported()
+    }
+
+    async fn surface_alive(
+        &self,
+        _pid: u32,
+        _platform_ref: &PlatformSurfaceRef,
+    ) -> Result<Option<porthole_core::SurfaceInfo>, PortholeError> {
+        unsupported()
+    }
+
+    async fn launch_artifact(
+        &self,
+        _spec: &porthole_core::adapter::ArtifactLaunchSpec,
+    ) -> Result<porthole_core::adapter::LaunchOutcome, PortholeError> {
+        unsupported()
+    }
+
+    async fn place_surface(
+        &self,
+        _surface: &porthole_core::surface::SurfaceInfo,
+        _rect: porthole_core::display::Rect,
+    ) -> Result<(), porthole_core::PortholeError> {
+        unsupported()
+    }
+
+    async fn snapshot_geometry(
+        &self,
+        _surface: &porthole_core::surface::SurfaceInfo,
+    ) -> Result<porthole_core::placement::GeometrySnapshot, porthole_core::PortholeError> {
+        unsupported()
+    }
+
+    async fn content_rect(
+        &self,
+        _surface: &porthole_core::surface::SurfaceInfo,
+    ) -> Result<porthole_core::content_rect::ContentRectInfo, porthole_core::PortholeError> {
+        unsupported()
+    }
+
+    fn capabilities(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn unsupported<T>() -> Result<T, PortholeError> {
+    Err(PortholeError::new(
+        ErrorCode::AdapterUnsupported,
+        "macOS adapter is unavailable on this platform",
+    ))
 }

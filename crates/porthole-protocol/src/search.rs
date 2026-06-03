@@ -25,7 +25,7 @@ pub struct TrackRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrackResponse {
     pub surface_id: String,
-    pub cg_window_id: u32,
+    pub platform_ref: porthole_core::PlatformSurfaceRef,
     pub pid: u32,
     pub app_name: Option<String>,
     pub title: Option<String>,
@@ -56,7 +56,7 @@ mod tests {
     fn track_response_roundtrip() {
         let r = TrackResponse {
             surface_id: "surf_1".into(),
-            cg_window_id: 42,
+            platform_ref: porthole_core::PlatformSurfaceRef::macos(42),
             pid: 9876,
             app_name: Some("Ghostty".into()),
             title: Some("t".into()),

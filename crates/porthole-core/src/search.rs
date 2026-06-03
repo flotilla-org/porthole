@@ -1,7 +1,7 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 
-use crate::{ErrorCode, PortholeError};
+use crate::{ErrorCode, PortholeError, surface::PlatformSurfaceRef};
 
 /// Query passed to `Adapter::search`. Every field is optional; matching is
 /// AND across fields, OR within a list.
@@ -14,7 +14,7 @@ pub struct SearchQuery {
     #[serde(default)]
     pub pids: Vec<u32>,
     #[serde(default)]
-    pub cg_window_ids: Vec<u32>,
+    pub platform_refs: Vec<PlatformSurfaceRef>,
     #[serde(default)]
     pub frontmost: Option<bool>,
 }
@@ -28,34 +28,35 @@ pub struct Candidate {
     pub app_name: Option<String>,
     pub title: Option<String>,
     pub pid: u32,
-    pub cg_window_id: u32,
+    pub platform_ref: PlatformSurfaceRef,
 }
 
 const REF_PREFIX: &str = "ref_";
 const REF_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct RefPayload {
     pid: u32,
-    cg_window_id: u32,
+    platform_ref: PlatformSurfaceRef,
     v: u32,
 }
 
-/// Encode (pid, cg_window_id) into a self-describing opaque ref.
-pub fn encode_ref(pid: u32, cg_window_id: u32) -> String {
+/// Encode a platform surface identity into a self-describing opaque ref.
+pub fn encode_ref(pid: u32, platform_ref: PlatformSurfaceRef) -> String {
     let payload = RefPayload {
         pid,
-        cg_window_id,
+        platform_ref,
         v: REF_SCHEMA_VERSION,
     };
     let json = serde_json::to_vec(&payload).expect("RefPayload is JSON-serialisable");
     format!("{REF_PREFIX}{}", URL_SAFE_NO_PAD.encode(json))
 }
 
-/// Decode a ref back to (pid, cg_window_id). Returns `candidate_ref_unknown`
+/// Decode a ref back to its platform surface identity. Returns
+/// `candidate_ref_unknown`
 /// on any structural failure (wrong prefix, bad base64, bad JSON, unknown
 /// schema version).
-pub fn decode_ref(r: &str) -> Result<(u32, u32), PortholeError> {
+pub fn decode_ref(r: &str) -> Result<(u32, PlatformSurfaceRef), PortholeError> {
     let body = r
         .strip_prefix(REF_PREFIX)
         .ok_or_else(|| PortholeError::new(ErrorCode::CandidateRefUnknown, format!("ref missing '{REF_PREFIX}' prefix")))?;
@@ -70,7 +71,7 @@ pub fn decode_ref(r: &str) -> Result<(u32, u32), PortholeError> {
             format!("ref schema version {} is not supported (expected {REF_SCHEMA_VERSION})", payload.v),
         ));
     }
-    Ok((payload.pid, payload.cg_window_id))
+    Ok((payload.pid, payload.platform_ref))
 }
 
 #[cfg(test)]
@@ -79,15 +80,16 @@ mod tests {
 
     #[test]
     fn encode_decode_roundtrip() {
-        let r = encode_ref(9876, 42);
-        let (pid, cg) = decode_ref(&r).unwrap();
+        let platform_ref = PlatformSurfaceRef::macos(42);
+        let r = encode_ref(9876, platform_ref.clone());
+        let (pid, decoded_ref) = decode_ref(&r).unwrap();
         assert_eq!(pid, 9876);
-        assert_eq!(cg, 42);
+        assert_eq!(decoded_ref, platform_ref);
     }
 
     #[test]
     fn encoded_ref_has_prefix() {
-        assert!(encode_ref(1, 1).starts_with("ref_"));
+        assert!(encode_ref(1, PlatformSurfaceRef::macos(1)).starts_with("ref_"));
     }
 
     #[test]
@@ -111,7 +113,9 @@ mod tests {
 
     #[test]
     fn decode_wrong_schema_version_errors() {
-        let payload = serde_json::to_vec(&serde_json::json!({ "pid": 1, "cg_window_id": 1, "v": 99 })).unwrap();
+        let payload =
+            serde_json::to_vec(&serde_json::json!({ "pid": 1, "platform_ref": { "platform": "macos", "cg_window_id": 1 }, "v": 99 }))
+                .unwrap();
         let encoded = URL_SAFE_NO_PAD.encode(payload);
         let err = decode_ref(&format!("ref_{encoded}")).unwrap_err();
         assert_eq!(err.code, ErrorCode::CandidateRefUnknown);

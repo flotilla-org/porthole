@@ -237,8 +237,8 @@ fn do_uninstall(opts: UninstallOptions) -> Result<(), InstallError> {
 
     println!();
     println!("done. TCC grants for Porthole.app remain in System Settings;");
-    println!("clear with: tccutil reset Accessibility org.flotilla.porthole.dev");
-    println!("            tccutil reset ScreenCapture org.flotilla.porthole.dev");
+    println!("clear with: tccutil reset Accessibility work.flotilla.porthole.dev");
+    println!("            tccutil reset ScreenCapture work.flotilla.porthole.dev");
     Ok(())
 }
 
@@ -463,7 +463,7 @@ mod tests {
             Path::new("/Applications/Porthole.app/Contents/MacOS/portholed"),
             Path::new("/Users/x/Library/Logs/porthole/portholed.log"),
         );
-        assert!(plist.contains("<string>org.flotilla.porthole</string>"));
+        assert!(plist.contains("<string>work.flotilla.porthole</string>"));
         assert!(plist.contains("<string>/Applications/Porthole.app/Contents/MacOS/portholed</string>"));
         assert!(plist.contains("<key>RunAtLoad</key>\n    <true/>"));
         assert!(plist.contains("<key>LimitLoadToSessionType</key>\n    <string>Aqua</string>"));
@@ -620,9 +620,9 @@ mod tests {
     #[test]
     fn plist_requires_system_relocation_error_has_copyable_commands() {
         let err = InstallError::PlistRequiresSystemRelocation {
-            plist_in_home: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"),
-            plist_canonical: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist"),
-            plist_filename: "org.flotilla.porthole.plist".to_string(),
+            plist_in_home: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/work.flotilla.porthole.plist"),
+            plist_canonical: PathBuf::from("/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/work.flotilla.porthole.plist"),
+            plist_filename: "work.flotilla.porthole.plist".to_string(),
         };
         let msg = err.to_string();
         // The three commands the user needs to run, in order. Paths are
@@ -632,15 +632,15 @@ mod tests {
             "missing sudo install line, got: {msg}"
         );
         assert!(
-            msg.contains("\"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            msg.contains("\"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/work.flotilla.porthole.plist\""),
             "missing quoted plist path, got: {msg}"
         );
         assert!(
-            msg.contains("rm \"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            msg.contains("rm \"/Volumes/MiniHomeX/Users/robert/Library/LaunchAgents/work.flotilla.porthole.plist\""),
             "missing quoted rm line, got: {msg}"
         );
         assert!(
-            msg.contains("launchctl bootstrap gui/$(id -u) \"/Library/LaunchAgents/org.flotilla.porthole.plist\""),
+            msg.contains("launchctl bootstrap gui/$(id -u) \"/Library/LaunchAgents/work.flotilla.porthole.plist\""),
             "missing quoted bootstrap line, got: {msg}"
         );
         // The why, so the user understands what they're doing.

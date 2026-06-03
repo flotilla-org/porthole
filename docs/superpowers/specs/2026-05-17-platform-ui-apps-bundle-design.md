@@ -160,7 +160,7 @@ Porthole.app/
 Final plist posture:
 
 ```text
-CFBundleIdentifier = org.flotilla.porthole.dev   # dev builds
+CFBundleIdentifier = work.flotilla.porthole.dev   # dev builds
 CFBundleName = Porthole
 CFBundleExecutable = PortholeHelper
 LSUIElement = true
@@ -233,9 +233,9 @@ Porthole.app/Contents/MacOS/portholed
 Phase 3 needs an explicit migration:
 
 1. Install new `Porthole.app`.
-2. Boot out any existing `org.flotilla.porthole` LaunchAgent. This is the
+2. Boot out any existing `work.flotilla.porthole` LaunchAgent. This is the
    current LaunchAgent label from `crates/porthole/src/launchd.rs`; it is not
-   derived from the development bundle id `org.flotilla.porthole.dev`.
+   derived from the development bundle id `work.flotilla.porthole.dev`.
 3. Remove the old per-user plist when the helper will own startup.
 4. Register the helper's login item or helper LaunchAgent, depending on the
    current slice.

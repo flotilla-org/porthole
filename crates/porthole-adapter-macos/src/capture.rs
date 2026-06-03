@@ -50,7 +50,7 @@ pub async fn screenshot(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result
 
         // Prefer the stored CGWindowID for precise targeting; fall back to
         // PID+title heuristic for surfaces created before slice-A.
-        let cg_window_id = if let Some(id) = surface.cg_window_id {
+        let cg_window_id = if let Some(id) = surface.macos_cg_window_id() {
             id
         } else {
             locate_cg_window_id(pid, surface.title.as_deref())?

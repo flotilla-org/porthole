@@ -17,7 +17,7 @@ fn workspace_root() -> PathBuf {
 fn helper_info_plist_uses_helper_executable() {
     let plist = fs::read_to_string(workspace_root().join("apps/macos/bundle/Info.plist")).unwrap();
     assert!(plist.contains("<key>CFBundleIdentifier</key>"));
-    assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
+    assert!(plist.contains("<string>work.flotilla.porthole.dev</string>"));
     assert!(plist.contains("<key>CFBundleExecutable</key>"));
     assert!(plist.contains("<string>PortholeHelper</string>"));
     assert!(plist.contains("<key>LSUIElement</key>"));

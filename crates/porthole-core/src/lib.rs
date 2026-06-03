@@ -29,5 +29,5 @@ pub use input::{ClickButton, ClickSpec, CoordUnits, KeyEvent, Modifier, PointerM
 pub use permission::SystemPermissionStatus;
 pub use placement::{Anchor, DisplayTarget, GeometrySnapshot, PlacementOutcome, PlacementSpec};
 pub use search::{Candidate, SearchQuery};
-pub use surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
+pub use surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState};
 pub use wait::{DEFAULT_WAIT_TIMEOUT, LastObserved, WAIT_SAMPLE_INTERVAL, WaitCondition, WaitOutcome, WaitTimeout};

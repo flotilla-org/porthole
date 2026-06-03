@@ -37,11 +37,11 @@ impl AttachPipeline {
     }
 
     pub async fn track(&self, r: &str) -> Result<TrackedOutcome, PortholeError> {
-        let (pid, cg) = decode_ref(r)?;
-        let info = self.adapter.window_alive(pid, cg).await?.ok_or_else(|| {
+        let (pid, platform_ref) = decode_ref(r)?;
+        let info = self.adapter.surface_alive(pid, &platform_ref).await?.ok_or_else(|| {
             PortholeError::new(
                 ErrorCode::SurfaceDead,
-                format!("window with cg_window_id {cg} (pid {pid}) is no longer alive"),
+                format!("surface with platform ref {platform_ref:?} (pid {pid}) is no longer alive"),
             )
         })?;
         let (surface, reused) = self.handles.track_or_get(info).await;
@@ -55,33 +55,40 @@ impl AttachPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{in_memory::InMemoryAdapter, search::encode_ref, surface::SurfaceId};
+    use crate::{
+        in_memory::InMemoryAdapter,
+        search::encode_ref,
+        surface::{PlatformSurfaceRef, SurfaceId},
+    };
 
-    fn surface_with_cg(pid: u32, cg: u32) -> SurfaceInfo {
+    fn surface_with_ref(pid: u32, platform_ref: PlatformSurfaceRef) -> SurfaceInfo {
         let mut info = SurfaceInfo::window(SurfaceId::new(), pid);
-        info.cg_window_id = Some(cg);
+        info.platform_ref = Some(platform_ref);
         info
     }
 
     #[tokio::test]
     async fn track_decodes_ref_and_dispatches_to_adapter() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        adapter.set_next_window_alive_result(Ok(Some(surface_with_cg(9876, 42)))).await;
+        let platform_ref = PlatformSurfaceRef::macos(42);
+        adapter
+            .set_next_surface_alive_result(Ok(Some(surface_with_ref(9876, platform_ref.clone()))))
+            .await;
         let pipeline = AttachPipeline::new(adapter.clone(), HandleStore::new());
-        let r = encode_ref(9876, 42);
+        let r = encode_ref(9876, platform_ref.clone());
         let out = pipeline.track(&r).await.unwrap();
         assert!(!out.reused_existing_handle);
-        assert_eq!(out.surface.cg_window_id, Some(42));
-        let calls = adapter.window_alive_calls().await;
-        assert_eq!(calls, vec![(9876, 42)]);
+        assert_eq!(out.surface.platform_ref, Some(platform_ref.clone()));
+        let calls = adapter.surface_alive_calls().await;
+        assert_eq!(calls, vec![(9876, platform_ref)]);
     }
 
     #[tokio::test]
     async fn track_returns_surface_dead_when_window_gone() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        adapter.set_next_window_alive_result(Ok(None)).await;
+        adapter.set_next_surface_alive_result(Ok(None)).await;
         let pipeline = AttachPipeline::new(adapter, HandleStore::new());
-        let r = encode_ref(1, 1);
+        let r = encode_ref(1, PlatformSurfaceRef::macos(1));
         let err = pipeline.track(&r).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::SurfaceDead);
     }
@@ -96,15 +103,19 @@ mod tests {
     #[tokio::test]
     async fn track_reuses_existing_alive_handle() {
         let adapter = Arc::new(InMemoryAdapter::new());
-        adapter.set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7)))).await;
+        adapter
+            .set_next_surface_alive_result(Ok(Some(surface_with_ref(1, PlatformSurfaceRef::macos(7)))))
+            .await;
         let handles = HandleStore::new();
         let pipeline = AttachPipeline::new(adapter.clone(), handles.clone());
-        let r = encode_ref(1, 7);
+        let r = encode_ref(1, PlatformSurfaceRef::macos(7));
         let first = pipeline.track(&r).await.unwrap();
 
         // Second call — adapter returns a different SurfaceInfo (fresh id),
         // but track_or_get should return the first one.
-        adapter.set_next_window_alive_result(Ok(Some(surface_with_cg(1, 7)))).await;
+        adapter
+            .set_next_surface_alive_result(Ok(Some(surface_with_ref(1, PlatformSurfaceRef::macos(7)))))
+            .await;
         let second = pipeline.track(&r).await.unwrap();
         assert!(second.reused_existing_handle);
         assert_eq!(second.surface.id, first.surface.id);

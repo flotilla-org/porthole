@@ -185,7 +185,7 @@ fn transitional_info_plist_keeps_daemon_executable() {
     // convention this repository uses for checked-in product inputs.
     let plist = fs::read_to_string("apps/macos/bundle/Info.plist").unwrap();
     assert!(plist.contains("<key>CFBundleIdentifier</key>"));
-    assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
+    assert!(plist.contains("<string>work.flotilla.porthole.dev</string>"));
     assert!(plist.contains("<key>CFBundleExecutable</key>"));
     assert!(plist.contains("<string>portholed</string>"));
     assert!(plist.contains("<key>LSBackgroundOnly</key>"));
@@ -216,7 +216,7 @@ Create `apps/macos/bundle/Info.plist` with the same transitional values currentl
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>org.flotilla.porthole.dev</string>
+    <string>work.flotilla.porthole.dev</string>
     <key>CFBundleName</key>
     <string>Porthole</string>
     <key>CFBundleExecutable</key>
@@ -599,7 +599,7 @@ codesign -dv target/debug/Porthole.app 2>&1 | sed -n 's/^Identifier=//p; s/^Auth
 
 Expected:
 
-- identifier/plist bundle id is `org.flotilla.porthole.dev`
+- identifier/plist bundle id is `work.flotilla.porthole.dev`
 - executable is still `portholed`
 - signing authority is Apple Development, not ad-hoc
 

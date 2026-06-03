@@ -55,8 +55,8 @@ If you previously granted permissions to an ad-hoc build, reset TCC once after
 switching to certificate signing:
 
 ```sh
-tccutil reset Accessibility org.flotilla.porthole.dev
-tccutil reset ScreenCapture org.flotilla.porthole.dev
+tccutil reset Accessibility work.flotilla.porthole.dev
+tccutil reset ScreenCapture work.flotilla.porthole.dev
 ./scripts/dev-bundle.sh --refresh
 ./target/debug/Porthole.app/Contents/MacOS/porthole install --user --force
 porthole onboard
@@ -84,11 +84,25 @@ terminal. Prefer the installed bundle.
 macOS's TCC database can report stale state after crashes, force-quits, or bundle-identity changes. Reset:
 
 ```sh
-tccutil reset Accessibility org.flotilla.porthole.dev
-tccutil reset ScreenCapture org.flotilla.porthole.dev
+tccutil reset Accessibility work.flotilla.porthole.dev
+tccutil reset ScreenCapture work.flotilla.porthole.dev
 ./scripts/dev-bundle.sh --refresh
 ./target/debug/Porthole.app/Contents/MacOS/porthole install --user --force
 porthole onboard
+```
+
+## Pre-release identity cleanup
+
+Porthole dev builds now use the `flotilla.work` identity root:
+`work.flotilla.porthole.dev` for the bundle id and `work.flotilla.porthole` for
+the LaunchAgent label. Older pre-release builds used `org.flotilla.*`. If that
+old identity exists on a development machine, clean it up once:
+
+```sh
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/org.flotilla.porthole.plist" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/org.flotilla.porthole.plist"
+tccutil reset Accessibility org.flotilla.porthole.dev
+tccutil reset ScreenCapture org.flotilla.porthole.dev
 ```
 
 ## Debug vs release bundle

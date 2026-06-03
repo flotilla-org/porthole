@@ -8,7 +8,7 @@ use std::{
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{ArtifactLaunchSpec, Confidence, Correlation, LaunchOutcome},
-    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
 };
 use tokio::{process::Command, time::sleep};
 
@@ -187,6 +187,6 @@ fn make_surface(w: &WindowRecord) -> SurfaceInfo {
         app_name: w.app_name.clone(),
         pid: Some(w.owner_pid as u32),
         parent_surface_id: None,
-        cg_window_id: Some(w.cg_window_id),
+        platform_ref: Some(PlatformSurfaceRef::macos(w.cg_window_id)),
     }
 }

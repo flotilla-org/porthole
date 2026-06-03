@@ -6,7 +6,7 @@ use porthole_core::{
     agent_policy::{ActionClass, DurationSpec, TargetSelector},
     in_memory::InMemoryAdapter,
     search::Candidate,
-    surface::{SurfaceId, SurfaceInfo},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo},
 };
 use portholed::{agent_store::AgentPolicyStore, events::EventBus, server::serve_with_agent_policy};
 
@@ -29,18 +29,18 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
     // search doesn't actually filter inside the in-memory adapter
     // (it just returns whatever is scripted).
     let candidate = Candidate {
-        ref_: porthole_core::search::encode_ref(test_pid, 42),
+        ref_: porthole_core::search::encode_ref(test_pid, PlatformSurfaceRef::macos(42)),
         app_name: Some("TestHarness".into()),
         title: Some("self-find".into()),
         pid: test_pid,
-        cg_window_id: 42,
+        platform_ref: PlatformSurfaceRef::macos(42),
     };
     adapter.set_next_search_result(Ok(vec![candidate])).await;
 
     let mut info = SurfaceInfo::window(SurfaceId::new(), test_pid);
-    info.cg_window_id = Some(42);
+    info.platform_ref = Some(PlatformSurfaceRef::macos(42));
     info.app_name = Some("TestHarness".into());
-    adapter.set_next_window_alive_result(Ok(Some(info))).await;
+    adapter.set_next_surface_alive_result(Ok(Some(info))).await;
 
     let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
     let identity = agent_store.create_identity("self-find-test", None, 1_000).await.unwrap();
@@ -113,7 +113,8 @@ async fn attach_containing_pid_self_finds_scripted_candidate() {
     );
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("CLI stdout is not JSON");
     assert!(parsed.get("surface_id").is_some(), "response missing surface_id");
-    assert_eq!(parsed.get("cg_window_id").and_then(|v| v.as_u64()), Some(42));
+    assert_eq!(parsed["platform_ref"]["platform"].as_str(), Some("macos"));
+    assert_eq!(parsed["platform_ref"]["cg_window_id"].as_u64(), Some(42));
 
     server_task.abort();
 

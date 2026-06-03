@@ -9,7 +9,7 @@
 
 use std::{io, path::Path, process::Command};
 
-pub const LAUNCH_AGENT_LABEL: &str = "org.flotilla.porthole";
+pub const LAUNCH_AGENT_LABEL: &str = "work.flotilla.porthole";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchctlError {

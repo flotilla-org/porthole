@@ -14,10 +14,10 @@ pub async fn get_attention(State(state): State<AppState>, headers: HeaderMap) ->
     let execution = authorize_all_surfaces_actions(&state, &headers, &[ActionClass::Manage], Some("read attention")).await?;
     let mut info = state.adapter.attention().await?;
 
-    // Resolve focused_surface_id: ask the adapter for the frontmost CGWindowID,
-    // then look it up in the handle store.
-    if let Ok(Some(cg_id)) = state.adapter.frontmost_window_id().await {
-        info.focused_surface_id = state.handles.find_by_cg_window_id(cg_id).await;
+    // Resolve focused_surface_id in the daemon, where tracked handles can be
+    // matched to the adapter's platform window identity.
+    if let Ok(Some(platform_ref)) = state.adapter.focused_platform_surface_ref().await {
+        info.focused_surface_id = state.handles.find_by_platform_ref(&platform_ref).await;
     }
 
     complete_route_execution(&state, execution, "/attention").await?;

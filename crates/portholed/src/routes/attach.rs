@@ -34,8 +34,8 @@ pub async fn post_track(
     let info = &outcome.surface;
     Ok(Json(TrackResponse {
         surface_id: info.id.to_string(),
-        cg_window_id: info.cg_window_id.expect("tracked surfaces carry pid and cg_window_id"),
-        pid: info.pid.expect("tracked surfaces carry pid and cg_window_id"),
+        platform_ref: info.platform_ref.clone().expect("tracked surfaces carry pid and platform_ref"),
+        pid: info.pid.expect("tracked surfaces carry pid and platform_ref"),
         app_name: info.app_name.clone(),
         title: info.title.clone(),
         reused_existing_handle: outcome.reused_existing_handle,

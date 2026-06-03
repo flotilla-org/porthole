@@ -77,7 +77,7 @@ fn helper_info_plist_uses_helper_executable() {
     assert!(plist.contains("<key>LSUIElement</key>"));
     assert!(plist.contains("<true/>"));
     assert!(!plist.contains("<key>LSBackgroundOnly</key>"));
-    assert!(plist.contains("<string>org.flotilla.porthole.dev</string>"));
+    assert!(plist.contains("<string>work.flotilla.porthole.dev</string>"));
 }
 ```
 
@@ -109,7 +109,7 @@ Remove the `LSBackgroundOnly` key/value pair. Keep:
 
 ```xml
 <key>CFBundleIdentifier</key>
-<string>org.flotilla.porthole.dev</string>
+<string>work.flotilla.porthole.dev</string>
 ```
 
 - [ ] **Step 4: Verify the plist test passes**
@@ -721,7 +721,7 @@ let startup_program = startup_program_for_bundle(&dst_bundle);
 let plist_xml = render_launch_agent_plist(&startup_program, &log_dir.join("portholed.log"));
 ```
 
-Keep the LaunchAgent label `org.flotilla.porthole`. This slice changes the program path, not the launchd identity.
+Keep the LaunchAgent label `work.flotilla.porthole`. This slice changes the program path, not the launchd identity.
 
 - [ ] **Step 3: Verify install tests**
 
@@ -781,7 +781,7 @@ open target/debug/Porthole.app
 sleep 3
 pgrep -fl PortholeHelper
 pgrep -fl portholed
-osascript -e 'tell application id "org.flotilla.porthole.dev" to quit'
+osascript -e 'tell application id "work.flotilla.porthole.dev" to quit'
 ```
 
 Expected:
@@ -829,9 +829,9 @@ codesign -dvv target/debug/Porthole.app 2>&1 | sed -n 's/^Identifier=//p; s/^Aut
 Expected:
 
 ```text
-org.flotilla.porthole.dev
+work.flotilla.porthole.dev
 Apple Development: ...
-org.flotilla.porthole.dev
+work.flotilla.porthole.dev
 PortholeHelper
 true
 ```

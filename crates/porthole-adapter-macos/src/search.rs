@@ -3,6 +3,7 @@
 use porthole_core::{
     ErrorCode, PortholeError,
     search::{Candidate, SearchQuery, encode_ref},
+    surface::PlatformSurfaceRef,
 };
 use regex::Regex;
 
@@ -38,11 +39,11 @@ pub async fn search(adapter: &MacOsAdapter, query: &SearchQuery) -> Result<Vec<C
     Ok(matches
         .into_iter()
         .map(|w| Candidate {
-            ref_: encode_ref(w.owner_pid as u32, w.cg_window_id),
+            ref_: encode_ref(w.owner_pid as u32, PlatformSurfaceRef::macos(w.cg_window_id)),
             app_name: w.app_name,
             title: w.title,
             pid: w.owner_pid as u32,
-            cg_window_id: w.cg_window_id,
+            platform_ref: PlatformSurfaceRef::macos(w.cg_window_id),
         })
         .collect())
 }
@@ -65,7 +66,7 @@ fn matches_query(w: &WindowRecord, q: &SearchQuery, title_re: Option<&Regex>) ->
             return false;
         }
     }
-    if !q.cg_window_ids.is_empty() && !q.cg_window_ids.contains(&w.cg_window_id) {
+    if !q.platform_refs.is_empty() && !q.platform_refs.contains(&PlatformSurfaceRef::macos(w.cg_window_id)) {
         return false;
     }
     true

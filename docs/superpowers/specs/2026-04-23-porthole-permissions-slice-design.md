@@ -321,7 +321,7 @@ Ship a `scripts/dev-bundle.sh` that:
 3. Ad-hoc code-signs it: `codesign -s - --force --deep target/<profile>/Portholed.app`.
 4. Prints the path so the user can drag it into Settings or run `porthole onboard`.
 
-The Info.plist uses a fixed bundle identifier like `org.flotilla.porthole.dev` so TCC tracks it stably. Real production releases would use a real identifier and real signing; this is just for dev.
+The Info.plist uses a fixed bundle identifier like `work.flotilla.porthole.dev` so TCC tracks it stably. Real production releases would use a real identifier and real signing; this is just for dev.
 
 Rebuild workflow: `cargo build` replaces `target/debug/portholed`; a separate `scripts/dev-bundle.sh --refresh` (or an equivalent cargo-xtask task) re-copies it into the bundle and re-signs. The bundle identity stays the same so TCC grant persists.
 
@@ -331,7 +331,7 @@ Create `docs/development.md` with:
 
 - First-time setup (build, bundle, start daemon, run `porthole onboard`, grant both permissions in Settings, restart daemon when prompted, re-run `onboard` to confirm).
 - Running the daemon from the bundle (`open target/debug/Portholed.app` or direct `./target/debug/Portholed.app/Contents/MacOS/portholed`).
-- What to do if grants get stuck: `tccutil reset Accessibility org.flotilla.porthole.dev`; same for `ScreenCapture`; rebundle and regrant.
+- What to do if grants get stuck: `tccutil reset Accessibility work.flotilla.porthole.dev`; same for `ScreenCapture`; rebundle and regrant.
 - Debug vs. release bundle — they're separate TCC identities; grant both if switching frequently.
 - How `cargo test -p porthole-adapter-macos -- --ignored` interacts with grants (tests use the same bundled daemon if you start it first, or spawn their own from `CARGO_BIN_EXE_portholed` which is a different path → needs its own grant, typically you test against the bundled one).
 

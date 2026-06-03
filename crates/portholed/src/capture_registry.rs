@@ -1602,7 +1602,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -1678,7 +1678,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         assert_eq!(reader.read_line(&mut line).unwrap(), 0);
         assert!(server_thread.join().unwrap().is_err());
@@ -1727,7 +1727,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         assert_eq!(reader.read_line(&mut line).unwrap(), 0);
         assert!(server_thread.join().unwrap().is_err());
@@ -1786,7 +1786,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -1901,7 +1901,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         assert_eq!(reader.read_line(&mut line).unwrap(), 0);
         assert!(server_thread.join().unwrap().is_err());
@@ -1953,7 +1953,7 @@ mod tests {
             )
             .unwrap();
         }
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         assert_eq!(reader.read_line(&mut line).unwrap(), 0);
         let error = server_thread.join().unwrap().unwrap_err();
@@ -2000,7 +2000,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -2080,7 +2080,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -2166,7 +2166,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -2254,7 +2254,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let response: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
@@ -2314,7 +2314,7 @@ mod tests {
             })
         )
         .unwrap();
-        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         let response: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();

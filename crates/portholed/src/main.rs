@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use portholed::{runtime::socket_path, server::serve};
+#[cfg(target_os = "linux")]
+use porthole_adapter_kwin::{KWinAdapter, bridge::KWinBridge};
+use portholed::runtime::socket_path;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
@@ -10,6 +12,9 @@ async fn main() -> std::io::Result<()> {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
+    #[cfg(target_os = "linux")]
+    let (adapter, kwin_bridge) = build_adapter();
+    #[cfg(not(target_os = "linux"))]
     let adapter = build_adapter();
 
     // Check for missing system permissions and warn on startup
@@ -25,7 +30,28 @@ async fn main() -> std::io::Result<()> {
     }
 
     let path = socket_path();
-    serve(adapter, path).await
+    let agent_store = portholed::agent_store::AgentPolicyStore::open_default()
+        .await
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(kwin_bridge) = kwin_bridge {
+            portholed::server::serve_with_agent_policy_and_kwin_bridge(
+                adapter,
+                path,
+                agent_store,
+                portholed::events::EventBus::new(),
+                kwin_bridge,
+            )
+            .await
+        } else {
+            portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -33,8 +59,27 @@ fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
     Arc::new(porthole_adapter_macos::MacOsAdapter::new())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn build_adapter() -> (Arc<dyn porthole_core::adapter::Adapter>, Option<KWinBridge>) {
+    if looks_like_kde_wayland() {
+        let kwin_bridge = KWinBridge::new();
+        return (Arc::new(KWinAdapter::new(kwin_bridge.clone())), Some(kwin_bridge));
+    }
+    tracing::warn!("no native adapter for this Linux session; falling back to in-memory adapter");
+    (Arc::new(porthole_core::in_memory::InMemoryAdapter::new()), None)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
     tracing::warn!("no native adapter for this platform; falling back to in-memory adapter");
     Arc::new(porthole_core::in_memory::InMemoryAdapter::new())
+}
+
+#[cfg(target_os = "linux")]
+fn looks_like_kde_wayland() -> bool {
+    let is_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let session = std::env::var("DESKTOP_SESSION").unwrap_or_default().to_lowercase();
+    let kde_session = std::env::var_os("KDE_FULL_SESSION").is_some();
+    is_wayland && (kde_session || desktop.contains("kde") || desktop.contains("plasma") || session.contains("plasma"))
 }

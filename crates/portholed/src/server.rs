@@ -8,6 +8,8 @@ use porthole_core::adapter::Adapter;
 use tokio::net::UnixListener;
 use tracing::info;
 
+#[cfg(target_os = "linux")]
+use crate::kwin_bridge::{KWinBridge, spawn_session_service};
 use crate::{
     agent_store::AgentPolicyStore,
     events::EventBus,
@@ -100,6 +102,27 @@ pub async fn serve_with_agent_policy(
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
+    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+}
+
+#[cfg(target_os = "linux")]
+pub async fn serve_with_agent_policy_and_kwin_bridge(
+    adapter: Arc<dyn Adapter>,
+    socket_path: PathBuf,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
+    kwin_bridge: KWinBridge,
+) -> std::io::Result<()> {
+    let _kwin_bridge = spawn_session_service(kwin_bridge);
+    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+}
+
+async fn serve_with_agent_policy_inner(
+    adapter: Arc<dyn Adapter>,
+    socket_path: PathBuf,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
+) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -132,7 +155,7 @@ mod tests {
     use porthole_core::{
         agent_policy::{ActionClass, DurationSpec, TargetSelector},
         in_memory::InMemoryAdapter,
-        surface::SurfaceInfo,
+        surface::{PlatformSurfaceRef, SurfaceInfo},
     };
     use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
     use tower::ServiceExt;
@@ -155,18 +178,7 @@ mod tests {
     }
 
     async fn router_with_authorized_tracked_surface() -> (Router, String, String) {
-        let adapter = Arc::new(InMemoryAdapter::new());
-        let state = AppState::new(adapter);
-        let info = SurfaceInfo::window(porthole_core::SurfaceId::new(), 1);
-        let id = info.id.clone();
-        state.handles.insert(info).await;
-        let token = authorize_surface(
-            &state,
-            &id,
-            vec![ActionClass::Drive, ActionClass::Manage, ActionClass::Observe, ActionClass::Record],
-        )
-        .await;
-        (build_router(state), id.to_string(), token)
+        router_with_tracked_surface().await
     }
 
     async fn authorize_surface(state: &AppState, id: &porthole_core::SurfaceId, actions: Vec<ActionClass>) -> String {
@@ -271,7 +283,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
         let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
         assert_eq!(frame.session_id, created.session_id);
@@ -306,7 +318,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
 
         let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
@@ -329,7 +341,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
 
         request_latest_frame(&mut stream, &created);
         let control = read_json_line(&mut reader);
@@ -515,7 +527,7 @@ mod tests {
 
         let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
         let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::new(reader_stream);
+        let mut reader = BufReader::with_capacity(1, reader_stream);
         let mut pools = BTreeMap::new();
         authorize_capture_transfer_stream(&mut stream, &created, &token);
         let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
@@ -686,7 +698,7 @@ mod tests {
             app_name: Some("X".into()),
             title: Some("t".into()),
             pid: 1,
-            cg_window_id: 7,
+            platform_ref: PlatformSurfaceRef::macos(7),
         };
         adapter.set_next_search_result(Ok(vec![candidate])).await;
         let state = AppState::new(adapter);
@@ -725,26 +737,26 @@ mod tests {
         let token = authorize_target(&state, TargetSelector::AllSurfaces, vec![ActionClass::Manage]).await;
         let router = build_router(state);
 
-        let r = encode_ref(1, 7);
+        let r = encode_ref(1, PlatformSurfaceRef::macos(7));
         let body = serde_json::json!({ "ref": r });
 
-        // First call: script window_alive to return an alive surface.
+        // First call: script surface_alive to return an alive surface.
         let mut info = SurfaceInfo::window(SurfaceId::new(), 1);
-        info.cg_window_id = Some(7);
+        info.platform_ref = Some(PlatformSurfaceRef::macos(7));
         info.app_name = Some("X".into());
-        adapter.set_next_window_alive_result(Ok(Some(info))).await;
+        adapter.set_next_surface_alive_result(Ok(Some(info))).await;
         let res = post_with_token(router.clone(), "/surfaces/track", &token, body.clone()).await;
         assert_eq!(res.status(), StatusCode::OK);
         let first_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let first: porthole_protocol::search::TrackResponse = serde_json::from_slice(&first_body).unwrap();
         assert!(!first.reused_existing_handle);
 
-        // Second call: script another alive surface with same cg_window_id.
+        // Second call: script another alive surface with the same platform ref.
         // track_or_get should find the existing handle and return reused=true.
         let mut info2 = SurfaceInfo::window(SurfaceId::new(), 1);
-        info2.cg_window_id = Some(7);
+        info2.platform_ref = Some(PlatformSurfaceRef::macos(7));
         info2.app_name = Some("X".into());
-        adapter.set_next_window_alive_result(Ok(Some(info2))).await;
+        adapter.set_next_surface_alive_result(Ok(Some(info2))).await;
         let res = post_with_token(router, "/surfaces/track", &token, body).await;
         assert_eq!(res.status(), StatusCode::OK);
         let second_body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
@@ -772,9 +784,9 @@ mod tests {
         };
 
         let adapter = Arc::new(InMemoryAdapter::new());
-        // Seed an alive handle with cg_window_id.
+        // Seed an alive handle with a platform ref.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -814,7 +826,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(51);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(51));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -843,7 +855,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(51);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(51));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -912,7 +924,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         // Seed an alive handle.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -949,7 +961,7 @@ mod tests {
 
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -992,7 +1004,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         // Alive handle to replace.
         let mut old = SurfaceInfo::window(SurfaceId::new(), 1);
-        old.cg_window_id = Some(50);
+        old.platform_ref = Some(PlatformSurfaceRef::macos(50));
         let old_id = old.id.clone();
         let state = AppState::new(adapter.clone());
         state.handles.insert(old).await;
@@ -1033,7 +1045,7 @@ mod tests {
         let adapter = Arc::new(InMemoryAdapter::new());
         let mut outcome = InMemoryAdapter::make_default_launch_outcome(100);
         outcome.surface_was_preexisting = true;
-        outcome.surface.cg_window_id = Some(321);
+        outcome.surface.platform_ref = Some(PlatformSurfaceRef::macos(321));
         adapter.set_next_launch_artifact_outcome(Ok(outcome)).await;
 
         let state = AppState::new(adapter);
@@ -1055,7 +1067,8 @@ mod tests {
         assert_eq!(err.code, porthole_core::ErrorCode::LaunchReturnedExisting);
         let details = err.details.expect("details populated");
         assert!(details.get("ref").is_some());
-        assert_eq!(details.get("cg_window_id").and_then(|v| v.as_u64()), Some(321));
+        assert_eq!(details["platform_ref"]["platform"].as_str(), Some("macos"));
+        assert_eq!(details["platform_ref"]["cg_window_id"].as_u64(), Some(321));
     }
 
     #[tokio::test]

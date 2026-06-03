@@ -1,0 +1,16 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Porthole contributors"
+            }
+        ],
+        "Description": "Publishes KWin window state to the Porthole daemon",
+        "Icon": "preferences-system-windows-script-test",
+        "Id": "porthole-control",
+        "License": "MIT",
+        "Name": "Porthole Control"
+    },
+    "X-Plasma-API": "javascript"
+}

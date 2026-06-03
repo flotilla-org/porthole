@@ -20,7 +20,7 @@ use crate::{
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
-    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
 };
 
@@ -48,7 +48,7 @@ struct Script {
     next_displays: Option<Result<Vec<DisplayInfo>, PortholeError>>,
     next_system_permissions: Option<Result<Vec<SystemPermissionStatus>, PortholeError>>,
     next_search_result: Option<Result<Vec<Candidate>, PortholeError>>,
-    next_window_alive_result: Option<Result<Option<SurfaceInfo>, PortholeError>>,
+    next_surface_alive_result: Option<Result<Option<SurfaceInfo>, PortholeError>>,
     next_launch_artifact_outcome: Option<Result<LaunchOutcome, PortholeError>>,
     next_place_surface_result: Option<Result<(), PortholeError>>,
     next_snapshot_geometry: Option<Result<GeometrySnapshot, PortholeError>>,
@@ -60,7 +60,7 @@ struct Script {
     snapshot_geometry_calls: Vec<SurfaceId>,
     content_rect_calls: Vec<SurfaceId>,
     search_calls: Vec<SearchQuery>,
-    window_alive_calls: Vec<(u32, u32)>,
+    surface_alive_calls: Vec<(u32, PlatformSurfaceRef)>,
 
     launch_calls: Vec<ProcessLaunchSpec>,
     screenshot_calls: Vec<SurfaceId>,
@@ -158,8 +158,8 @@ impl InMemoryAdapter {
     pub async fn set_next_search_result(&self, v: Result<Vec<Candidate>, PortholeError>) {
         self.script.lock().await.next_search_result = Some(v);
     }
-    pub async fn set_next_window_alive_result(&self, v: Result<Option<SurfaceInfo>, PortholeError>) {
-        self.script.lock().await.next_window_alive_result = Some(v);
+    pub async fn set_next_surface_alive_result(&self, v: Result<Option<SurfaceInfo>, PortholeError>) {
+        self.script.lock().await.next_surface_alive_result = Some(v);
     }
     pub async fn set_next_launch_artifact_outcome(&self, v: Result<LaunchOutcome, PortholeError>) {
         self.script.lock().await.next_launch_artifact_outcome = Some(v);
@@ -230,8 +230,8 @@ impl InMemoryAdapter {
     pub async fn search_calls(&self) -> Vec<SearchQuery> {
         self.script.lock().await.search_calls.clone()
     }
-    pub async fn window_alive_calls(&self) -> Vec<(u32, u32)> {
-        self.script.lock().await.window_alive_calls.clone()
+    pub async fn surface_alive_calls(&self) -> Vec<(u32, PlatformSurfaceRef)> {
+        self.script.lock().await.surface_alive_calls.clone()
     }
     pub async fn launch_artifact_calls(&self) -> Vec<ArtifactLaunchSpec> {
         self.script.lock().await.launch_artifact_calls.clone()
@@ -255,7 +255,7 @@ impl InMemoryAdapter {
             app_name: Some("test-app".to_string()),
             pid: Some(pid),
             parent_surface_id: None,
-            cg_window_id: None,
+            platform_ref: None,
         };
         LaunchOutcome {
             surface,
@@ -409,7 +409,7 @@ impl Adapter for InMemoryAdapter {
         s.next_attention.take().unwrap_or_else(|| Ok(Self::default_attention()))
     }
 
-    async fn frontmost_window_id(&self) -> Result<Option<u32>, PortholeError> {
+    async fn focused_platform_surface_ref(&self) -> Result<Option<PlatformSurfaceRef>, PortholeError> {
         Ok(None)
     }
 
@@ -446,10 +446,10 @@ impl Adapter for InMemoryAdapter {
         s.next_search_result.take().unwrap_or_else(|| Ok(vec![]))
     }
 
-    async fn window_alive(&self, pid: u32, cg_window_id: u32) -> Result<Option<SurfaceInfo>, PortholeError> {
+    async fn surface_alive(&self, pid: u32, platform_ref: &PlatformSurfaceRef) -> Result<Option<SurfaceInfo>, PortholeError> {
         let mut s = self.script.lock().await;
-        s.window_alive_calls.push((pid, cg_window_id));
-        s.next_window_alive_result.take().unwrap_or(Ok(None))
+        s.surface_alive_calls.push((pid, platform_ref.clone()));
+        s.next_surface_alive_result.take().unwrap_or(Ok(None))
     }
 
     async fn launch_artifact(&self, spec: &ArtifactLaunchSpec) -> Result<LaunchOutcome, PortholeError> {
@@ -642,7 +642,7 @@ mod tests {
         assert!(
             !caps.contains(&"attention_focused_surface"),
             "in-memory adapter must not advertise attention_focused_surface \
-             because frontmost_window_id() always returns None"
+             because focused_platform_surface_ref() always returns None"
         );
     }
 
@@ -654,7 +654,7 @@ mod tests {
             app_name: Some("TestApp".into()),
             title: Some("t".into()),
             pid: 42,
-            cg_window_id: 7,
+            platform_ref: PlatformSurfaceRef::macos(7),
         };
         adapter.set_next_search_result(Ok(vec![candidate.clone()])).await;
         let result = adapter
@@ -665,7 +665,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].cg_window_id, 7);
+        assert_eq!(result[0].platform_ref, PlatformSurfaceRef::macos(7));
         let calls = adapter.search_calls().await;
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].app_name, Some("TestApp".into()));
@@ -712,15 +712,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn window_alive_returns_scripted_outcome() {
+    async fn surface_alive_returns_scripted_outcome() {
         let adapter = InMemoryAdapter::new();
         let mut info = SurfaceInfo::window(SurfaceId::new(), 42);
-        info.cg_window_id = Some(7);
-        adapter.set_next_window_alive_result(Ok(Some(info))).await;
-        let got = adapter.window_alive(42, 7).await.unwrap();
+        info.platform_ref = Some(PlatformSurfaceRef::macos(7));
+        adapter.set_next_surface_alive_result(Ok(Some(info))).await;
+        let got = adapter.surface_alive(42, &PlatformSurfaceRef::macos(7)).await.unwrap();
         assert!(got.is_some());
-        let calls = adapter.window_alive_calls().await;
-        assert_eq!(calls, vec![(42, 7)]);
+        let calls = adapter.surface_alive_calls().await;
+        assert_eq!(calls, vec![(42, PlatformSurfaceRef::macos(7))]);
     }
 
     #[tokio::test]

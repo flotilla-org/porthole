@@ -196,7 +196,7 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
     output.ctx = ctx;
 
     SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:output];
-    dispatch_queue_t queue = dispatch_queue_create("org.flotilla.porthole.sck-capture", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_t queue = dispatch_queue_create("work.flotilla.porthole.sck-capture", DISPATCH_QUEUE_SERIAL);
     NSError *addError = nil;
     if (![stream addStreamOutput:output type:SCStreamOutputTypeScreen sampleHandlerQueue:queue error:&addError]) {
       return porthole_sck_copy_error(addError.localizedDescription);

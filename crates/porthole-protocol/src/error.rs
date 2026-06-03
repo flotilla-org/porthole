@@ -1,4 +1,4 @@
-use porthole_core::ErrorCode;
+use porthole_core::{ErrorCode, PlatformSurfaceRef};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -31,7 +31,7 @@ pub struct LaunchReturnedExistingBody {
     pub app_name: Option<String>,
     pub title: Option<String>,
     pub pid: u32,
-    pub cg_window_id: u32,
+    pub platform_ref: PlatformSurfaceRef,
 }
 
 /// Structured body for close-failed errors.

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{Confidence, Correlation, LaunchOutcome, ProcessLaunchSpec},
-    surface::{SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
+    surface::{PlatformSurfaceRef, SurfaceId, SurfaceInfo, SurfaceKind, SurfaceState},
 };
 use tokio::{process::Command, time::sleep};
 
@@ -37,7 +37,7 @@ pub async fn launch_process(adapter: &MacOsAdapter, spec: &ProcessLaunchSpec) ->
                     app_name: window.app_name,
                     pid: Some(window.owner_pid as u32),
                     parent_surface_id: None,
-                    cg_window_id: Some(window.cg_window_id),
+                    platform_ref: Some(PlatformSurfaceRef::macos(window.cg_window_id)),
                 };
                 return Ok(LaunchOutcome {
                     surface,

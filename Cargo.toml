@@ -7,6 +7,7 @@ members = [
     "crates/portholed",
     "crates/porthole",
     "crates/porthole-adapter-macos",
+    "crates/porthole-adapter-kwin",
     "crates/xtask",
 ]
 
@@ -24,6 +25,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures-core = "0.3"
+futures-util = "0.3"
 hyper = { version = "1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hyperlocal = "0.9"
@@ -41,6 +43,7 @@ tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

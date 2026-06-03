@@ -1,4 +1,4 @@
-use porthole_core::search::SearchQuery;
+use porthole_core::{PlatformSurfaceRef, search::SearchQuery};
 use porthole_protocol::search::{SearchRequest, SearchResponse, TrackRequest, TrackResponse};
 
 use crate::{
@@ -11,7 +11,7 @@ pub struct AttachArgs {
     pub title_pattern: Option<String>,
     pub pids: Vec<u32>,
     pub containing_pids: Vec<u32>,
-    pub cg_window_ids: Vec<u32>,
+    pub macos_cg_window_ids: Vec<u32>,
     pub frontmost: Option<bool>,
     pub session: Option<String>,
     pub json: bool,
@@ -30,7 +30,7 @@ pub async fn run(client: &DaemonClient, args: AttachArgs) -> Result<(), ClientEr
         app_name: args.app_name,
         title_pattern: args.title_pattern,
         pids,
-        cg_window_ids: args.cg_window_ids,
+        platform_refs: args.macos_cg_window_ids.into_iter().map(PlatformSurfaceRef::macos).collect(),
         frontmost: args.frontmost,
     };
 
@@ -54,8 +54,8 @@ pub async fn run(client: &DaemonClient, args: AttachArgs) -> Result<(), ClientEr
             .iter()
             .map(|c| {
                 format!(
-                    "  {}  pid={}  cg={}  app={:?}  title={:?}",
-                    c.ref_, c.pid, c.cg_window_id, c.app_name, c.title,
+                    "  {}  pid={}  platform_ref={:?}  app={:?}  title={:?}",
+                    c.ref_, c.pid, c.platform_ref, c.app_name, c.title,
                 )
             })
             .collect::<Vec<_>>()
