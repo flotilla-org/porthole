@@ -95,6 +95,10 @@ impl KWinBridge {
         command
     }
 
+    /// Returns the next queued command for the control script.
+    ///
+    /// The script instance id is accepted for future per-script routing. The
+    /// current bridge has one command queue for the daemon session.
     pub async fn next_command_json(&self, _script_instance_id: &str) -> Result<Option<String>, KWinBridgeError> {
         loop {
             if let Some(command) = self.state.lock().await.commands.pop_front() {
@@ -119,7 +123,7 @@ impl KWinBridge {
     }
 
     pub async fn completion(&self, command_id: &str) -> Option<KWinCommandCompletion> {
-        self.state.lock().await.completions.get(command_id).cloned()
+        self.state.lock().await.completions.remove(command_id)
     }
 }
 
@@ -230,7 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_command_records_result_by_command_id() {
+    async fn complete_command_records_result_by_command_id_once() {
         let bridge = KWinBridge::new();
         let command = bridge.queue_command("close", json!({ "windowId": "a" })).await;
 
@@ -239,5 +243,6 @@ mod tests {
         let completion = bridge.completion(&command.command_id).await.unwrap();
         assert_eq!(completion.command_id, command.command_id);
         assert_eq!(completion.result_json, r#"{"ok":true}"#);
+        assert!(bridge.completion(&command.command_id).await.is_none());
     }
 }

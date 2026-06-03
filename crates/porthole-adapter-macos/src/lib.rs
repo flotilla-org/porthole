@@ -9,10 +9,12 @@ use porthole_core::{
     attention::AttentionInfo,
     display::DisplayInfo,
     input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
-    permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
+    permission::SystemPermissionStatus,
     surface::{PlatformSurfaceRef, SurfaceInfo},
-    wait::{LastObserved, WaitCondition, WaitOutcome, WaitTimeout},
+    wait::{WaitCondition, WaitOutcome, WaitTimeout},
 };
+#[cfg(not(target_os = "macos"))]
+use porthole_core::{permission::SystemPermissionPromptOutcome, wait::LastObserved};
 
 #[cfg(target_os = "macos")]
 pub mod artifact;

@@ -115,8 +115,13 @@ fn render_desktop_entry(daemon: &Path) -> String {
          X-DBUS-StartupType=Unique\n\
          X-DBUS-ServiceName={DESKTOP_ENTRY_ID}\n\
          X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2\n",
-        daemon.display()
+        quote_desktop_exec_arg(daemon)
     )
+}
+
+fn quote_desktop_exec_arg(path: &Path) -> String {
+    let escaped = path.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 fn infer_daemon_path() -> Result<PathBuf, KwinError> {
@@ -336,8 +341,15 @@ mod tests {
     fn desktop_entry_authorizes_kwin_screenshot2() {
         let entry = render_desktop_entry(Path::new("/tmp/portholed"));
 
-        assert!(entry.contains("Exec=/tmp/portholed"));
+        assert!(entry.contains("Exec=\"/tmp/portholed\""));
         assert!(entry.contains("X-DBUS-ServiceName=work.flotilla.Porthole"));
         assert!(entry.contains("X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2"));
+    }
+
+    #[test]
+    fn desktop_entry_quotes_exec_paths_with_spaces() {
+        let entry = render_desktop_entry(Path::new("/tmp/my apps/portholed"));
+
+        assert!(entry.contains("Exec=\"/tmp/my apps/portholed\""));
     }
 }

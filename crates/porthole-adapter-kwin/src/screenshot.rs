@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::Read,
     os::{fd::OwnedFd as StdOwnedFd, unix::net::UnixStream},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use porthole_core::{
@@ -66,6 +66,9 @@ async fn capture_window_png(window_id: &str) -> Result<Vec<u8>, PortholeError> {
 
     let (mut reader, writer) = UnixStream::pair()
         .map_err(|error| PortholeError::new(ErrorCode::InternalError, format!("cannot create screenshot pipe: {error}")))?;
+    reader
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|error| PortholeError::new(ErrorCode::InternalError, format!("cannot set screenshot pipe timeout: {error}")))?;
     let writer_fd = OwnedFd::from(StdOwnedFd::from(writer));
     let options = screenshot_options();
 
@@ -265,6 +268,24 @@ mod tests {
         let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 5).expect("rgba");
 
         assert_eq!(rgba, vec![30, 20, 10, 40, 70, 60, 50, 80]);
+    }
+
+    #[test]
+    fn kwin_xrgb_raw_converts_to_opaque_rgba() {
+        let raw = [10, 20, 30, 0, 50, 60, 70, 0];
+
+        let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 4).expect("rgba");
+
+        assert_eq!(rgba, vec![30, 20, 10, 255, 70, 60, 50, 255]);
+    }
+
+    #[test]
+    fn kwin_rgba8888_raw_preserves_channel_order() {
+        let raw = [10, 20, 30, 40, 50, 60, 70, 80];
+
+        let rgba = kwin_raw_to_rgba(&raw, 2, 1, 8, 17).expect("rgba");
+
+        assert_eq!(rgba, vec![10, 20, 30, 40, 50, 60, 70, 80]);
     }
 
     #[test]

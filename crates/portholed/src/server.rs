@@ -8,10 +8,11 @@ use porthole_core::adapter::Adapter;
 use tokio::net::UnixListener;
 use tracing::info;
 
+#[cfg(target_os = "linux")]
+use crate::kwin_bridge::{KWinBridge, spawn_session_service};
 use crate::{
     agent_store::AgentPolicyStore,
     events::EventBus,
-    kwin_bridge::{KWinBridge, spawn_session_service},
     routes::{
         agent_permissions as agent_permissions_route, attach as attach_route, attention as attention_route,
         capture_sessions as capture_sessions_route, close_focus as close_focus_route, content_rect as content_rect_route,
@@ -101,15 +102,33 @@ pub async fn serve_with_agent_policy(
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
-    serve_with_agent_policy_and_kwin_bridge(adapter, socket_path, agent_store, events, KWinBridge::new()).await
+    #[cfg(target_os = "linux")]
+    {
+        serve_with_agent_policy_and_kwin_bridge(adapter, socket_path, agent_store, events, KWinBridge::new()).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+    }
 }
 
+#[cfg(target_os = "linux")]
 pub async fn serve_with_agent_policy_and_kwin_bridge(
     adapter: Arc<dyn Adapter>,
     socket_path: PathBuf,
     agent_store: AgentPolicyStore,
     events: EventBus,
     kwin_bridge: KWinBridge,
+) -> std::io::Result<()> {
+    let _kwin_bridge = spawn_session_service(kwin_bridge);
+    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+}
+
+async fn serve_with_agent_policy_inner(
+    adapter: Arc<dyn Adapter>,
+    socket_path: PathBuf,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
 ) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -121,7 +140,6 @@ pub async fn serve_with_agent_policy_and_kwin_bridge(
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
     let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
-    let _kwin_bridge = spawn_session_service(kwin_bridge);
     let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
     axum::serve(listener, app).await
 }

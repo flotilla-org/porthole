@@ -130,6 +130,14 @@ commands by polling or long-polling daemon methods, for example:
 The exact D-Bus payload shape can start as JSON if it keeps the spike cheap,
 then tighten to typed D-Bus structs when the bridge stabilizes.
 
+The bridge is not a cross-process authentication boundary. It lives on the
+user session bus, so another process running as the same user could publish
+synthetic snapshots, consume queued commands, or report synthetic command
+completions. This is acceptable for the first local-desktop adapter because
+Porthole already trusts the user's session for desktop orchestration, but the
+bridge must not be treated as a security boundary between mutually hostile
+same-user processes.
+
 ## Launch Correlation
 
 KWin launch correlation should come after the compositor plane can publish

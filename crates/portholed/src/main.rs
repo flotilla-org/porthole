@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
-use porthole_adapter_kwin::KWinAdapter;
-use porthole_adapter_kwin::bridge::KWinBridge;
-use portholed::{runtime::socket_path, server::serve_with_agent_policy_and_kwin_bridge};
+use porthole_adapter_kwin::{KWinAdapter, bridge::KWinBridge};
+use portholed::runtime::socket_path;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
@@ -13,8 +12,13 @@ async fn main() -> std::io::Result<()> {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
-    let kwin_bridge = KWinBridge::new();
-    let adapter = build_adapter(kwin_bridge.clone());
+    #[cfg(target_os = "linux")]
+    let (adapter, kwin_bridge) = {
+        let kwin_bridge = KWinBridge::new();
+        (build_adapter(kwin_bridge.clone()), kwin_bridge)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let adapter = build_adapter();
 
     // Check for missing system permissions and warn on startup
     let perms = adapter.system_permissions().await.unwrap_or_default();
@@ -32,11 +36,25 @@ async fn main() -> std::io::Result<()> {
     let agent_store = portholed::agent_store::AgentPolicyStore::open_default()
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    serve_with_agent_policy_and_kwin_bridge(adapter, path, agent_store, portholed::events::EventBus::new(), kwin_bridge).await
+    #[cfg(target_os = "linux")]
+    {
+        portholed::server::serve_with_agent_policy_and_kwin_bridge(
+            adapter,
+            path,
+            agent_store,
+            portholed::events::EventBus::new(),
+            kwin_bridge,
+        )
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn build_adapter(_kwin_bridge: KWinBridge) -> Arc<dyn porthole_core::adapter::Adapter> {
+fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
     Arc::new(porthole_adapter_macos::MacOsAdapter::new())
 }
 
@@ -50,7 +68,7 @@ fn build_adapter(kwin_bridge: KWinBridge) -> Arc<dyn porthole_core::adapter::Ada
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn build_adapter(_kwin_bridge: KWinBridge) -> Arc<dyn porthole_core::adapter::Adapter> {
+fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
     tracing::warn!("no native adapter for this platform; falling back to in-memory adapter");
     Arc::new(porthole_core::in_memory::InMemoryAdapter::new())
 }

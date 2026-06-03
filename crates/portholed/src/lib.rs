@@ -5,6 +5,7 @@
 pub mod agent_store;
 pub mod capture_registry;
 pub mod events;
+#[cfg(target_os = "linux")]
 pub mod kwin_bridge;
 pub mod routes;
 pub mod runtime;

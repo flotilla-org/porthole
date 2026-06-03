@@ -107,6 +107,10 @@ impl KWinAdapter {
                 }),
             )
             .await;
+        self.poll_command_completion(&command, kind).await
+    }
+
+    async fn poll_command_completion(&self, command: &bridge::KWinCommand, kind: &str) -> Result<(), PortholeError> {
         let deadline = Instant::now() + COMMAND_TIMEOUT;
         loop {
             if let Some(completion) = self.bridge.completion(&command.command_id).await {
@@ -142,34 +146,7 @@ impl KWinAdapter {
             .bridge
             .queue_command("publish_snapshot", json!({ "windowId": "", "args": {} }))
             .await;
-        let deadline = Instant::now() + COMMAND_TIMEOUT;
-        loop {
-            if let Some(completion) = self.bridge.completion(&command.command_id).await {
-                let result: CommandResult = serde_json::from_str(&completion.result_json).map_err(|error| {
-                    PortholeError::new(
-                        ErrorCode::InternalError,
-                        format!("KWin command {} returned invalid completion JSON: {error}", command.command_id),
-                    )
-                })?;
-                if result.ok {
-                    return Ok(());
-                }
-                return Err(PortholeError::new(
-                    ErrorCode::InternalError,
-                    format!(
-                        "KWin command publish_snapshot failed: {}",
-                        result.error.unwrap_or_else(|| "unknown error".to_string())
-                    ),
-                ));
-            }
-            if Instant::now() >= deadline {
-                return Err(PortholeError::new(
-                    ErrorCode::InternalError,
-                    "KWin command publish_snapshot timed out waiting for the control script",
-                ));
-            }
-            sleep(COMMAND_POLL).await;
-        }
+        self.poll_command_completion(&command, "publish_snapshot").await
     }
 
     async fn ensure_remote_desktop_session(&self, required: RemoteDesktopDevice) -> Result<RemoteDesktopSession, PortholeError> {
@@ -179,10 +156,7 @@ impl KWinAdapter {
         {
             return Ok(existing.clone());
         }
-        let requested = match required {
-            RemoteDesktopDevice::Keyboard => RemoteDesktopDevice::KEYBOARD,
-            RemoteDesktopDevice::Pointer => RemoteDesktopDevice::POINTER,
-        };
+        let requested = RemoteDesktopDevice::KEYBOARD | RemoteDesktopDevice::POINTER;
         let started = self.remote_desktop.start_session(requested).await?;
         if !started.has(required) {
             return Err(remote_desktop::permission_needed(format!(
@@ -554,7 +528,7 @@ impl Adapter for KWinAdapter {
         let rect = window
             .frame_geometry
             .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "KWin snapshot did not include frame geometry"))?;
-        let display_id = window.output.map(DisplayId::new).unwrap_or_else(|| DisplayId::new("kwin"));
+        let display_id = window.output.map(DisplayId::new).unwrap_or_else(|| DisplayId::new("unknown"));
         Ok(GeometrySnapshot {
             display_id,
             display_local: Rect {
