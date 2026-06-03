@@ -78,7 +78,7 @@ mod tests {
 
     fn rec(pid: i32, cg: u32, app: Option<&str>, title: Option<&str>) -> WindowRecord {
         WindowRecord {
-            platform_ref: PlatformSurfaceRef::macos(cg),
+            cg_window_id: cg,
             owner_pid: pid,
             title: title.map(str::to_string),
             app_name: app.map(str::to_string),
