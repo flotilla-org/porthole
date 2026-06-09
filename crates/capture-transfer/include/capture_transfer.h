@@ -132,6 +132,25 @@ typedef struct ft_video_frame_desc {
   uint32_t flags;
 } ft_video_frame_desc;
 
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+/*
+ * Pin the ABI of ft_video_frame_desc. The mirror lives in the Rust
+ * FtVideoFrameDesc (#[repr(C)]); these asserts and the matching
+ * const _: () block in src/ffi.rs must agree. Narrowing a field or
+ * appending to the tail without updating both sides is the trap this
+ * guards against.
+ */
+_Static_assert(sizeof(ft_video_frame_desc) == 168, "frame desc size");
+_Static_assert(offsetof(ft_video_frame_desc, pool_id) == 32, "frame desc packing");
+_Static_assert(offsetof(ft_video_frame_desc, slot_id) == 40, "slot_id narrowed to u32");
+_Static_assert(offsetof(ft_video_frame_desc, dropped_before_publish) == 96, "dropped_before_publish narrowed to u32");
+_Static_assert(offsetof(ft_video_frame_desc, payload_kind) == 128, "native-handle tail begins");
+_Static_assert(offsetof(ft_video_frame_desc, modifier) == 136, "native-handle tail packing");
+_Static_assert(offsetof(ft_video_frame_desc, fence_id) == 144, "native-handle tail packing");
+_Static_assert(offsetof(ft_video_frame_desc, fence_value) == 152, "native-handle tail packing");
+_Static_assert(offsetof(ft_video_frame_desc, flags) == 160, "native-handle tail packing");
+#endif
+
 typedef struct ft_event {
   uint32_t kind;
   ft_source_id source_id;

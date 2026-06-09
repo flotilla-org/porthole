@@ -97,6 +97,14 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
     pub fn new(mut backend: B, params: NativeStreamParams, slot_count: u32) -> Result<Self> {
         let pool = backend.allocate_surface_pool(&params, slot_count)?;
         let fence = backend.create_fence()?;
+        // The ring rounds `slot_count` up to the next power of two, so its lap
+        // threshold can exceed the surface-pool size (e.g. slot_count = 3 gives
+        // a 4-entry ring over 3 surfaces). The seqlock identity is independent
+        // of slot indices, so this is correct for staleness detection. But a
+        // backend that lets consumers pin a surface by `slot_id` must assume a
+        // surface can be recycled after `slot_count` frames, not after a full
+        // ring lap. Real backends (#84) should either size the pool to the
+        // rounded-up ring capacity or honor the tighter recycle bound.
         let page = VideoTrackControlPage::new(slot_count as usize);
         Ok(Self {
             backend,
@@ -314,7 +322,11 @@ pub mod fake {
         }
 
         fn signal_fence(&mut self, fence: &mut FakeFence, value: u64) -> Result<()> {
-            let previous = fence.value.swap(value, Ordering::AcqRel);
+            // Release: this publishes the new timeline value to consumers that
+            // load it with Acquire. The swapped-out value is only used for the
+            // monotonicity check below; nothing here depends on acquiring prior
+            // writes, so Release is the honest ordering.
+            let previous = fence.value.swap(value, Ordering::Release);
             if previous >= value {
                 return Err(CaptureTransferError::NativeBackend {
                     operation: "signal-fence",

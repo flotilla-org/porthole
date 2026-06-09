@@ -139,6 +139,21 @@ pub struct FtVideoFrameDesc {
     pub flags: u32,
 }
 
+// ABI contract for FtVideoFrameDesc, mirrored in include/capture_transfer.h.
+// Both sides must agree; narrowing a field or appending to the tail without
+// updating both is the trap these asserts guard against.
+const _: () = {
+    assert!(std::mem::size_of::<FtVideoFrameDesc>() == 168);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, pool_id) == 32);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, slot_id) == 40);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, dropped_before_publish) == 96);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, payload_kind) == 128);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, modifier) == 136);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, fence_id) == 144);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, fence_value) == 152);
+    assert!(std::mem::offset_of!(FtVideoFrameDesc, flags) == 160);
+};
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FtEvent {
