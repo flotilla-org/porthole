@@ -23,7 +23,10 @@ pipelines.
   surface reference and a fence (`MTLSharedEvent` + value on macOS; drm_syncobj /
   timeline on Linux; `ID3D12Fence` on Windows). Publishing a surface id with no
   accompanying fence is the "implicit GPU sync" anti-pattern — it appears to work
-  and tears under load. It is not a later addition.
+  and tears under load. It is not a later addition. To be precise: the *protocol
+  fields* (fence id, fence value, sync kind) are part of the v1 wire format now;
+  the platform implementation that signals and waits on them end to end is the
+  "Done" chain below, landing with the macOS path — not yet wired up.
 - **"Done" for the macOS path is the full chain, end to end:** SCK frame →
   `IOSurface` extracted → handle + `MTLSharedEvent` + value transferred once at
   attach over the setup socket → surface pool with OS-refcount as source of truth

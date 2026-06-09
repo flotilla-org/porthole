@@ -110,6 +110,17 @@ pub enum PayloadKind {
     D3dSharedResource = 3,
 }
 
+// Wire discriminants, pinned against the JACKSTAY_PAYLOAD_* constants in
+// include/jackstay_ring.h. Reordering variants or inserting one above an
+// existing variant would silently break the wire protocol; this block turns
+// that into a compile error.
+const _: () = {
+    assert!(PayloadKind::CpuShm as u32 == 0);
+    assert!(PayloadKind::IoSurface as u32 == 1);
+    assert!(PayloadKind::DmaBuf as u32 == 2);
+    assert!(PayloadKind::D3dSharedResource as u32 == 3);
+};
+
 impl PayloadKind {
     /// Decode a wire `u32` discriminant. Unknown values map to `CpuShm` — the
     /// conservative default, since a reader that does not understand a payload

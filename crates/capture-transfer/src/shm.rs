@@ -294,6 +294,9 @@ fn create_anonymous_backing(len: usize) -> Result<File> {
     Ok(file)
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+compile_error!("anonymous shm backing is only implemented for macOS and Linux");
+
 #[cfg(test)]
 mod tests {
     use crate::{CaptureTransferError, shm::SharedMemorySegment};

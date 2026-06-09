@@ -50,6 +50,7 @@
 #ifndef JACKSTAY_RING_H
 #define JACKSTAY_RING_H
 
+#include <stddef.h> /* offsetof, used by the _Static_asserts below */
 #include <stdint.h>
 
 /* "JSFRING1" read as a little-endian uint64_t. */
@@ -161,7 +162,6 @@ typedef struct jackstay_consumer_slot {
 } jackstay_consumer_slot;            /* 128 */
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#include <stddef.h>
 _Static_assert(sizeof(jackstay_ring_header) == 256, "header is two cachelines");
 _Static_assert(offsetof(jackstay_ring_header, producer_cursor) == 128, "hot words on their own line");
 _Static_assert(sizeof(jackstay_frame_slot) == 128, "frame slot is one cacheline");

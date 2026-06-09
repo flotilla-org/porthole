@@ -21,6 +21,9 @@ pub const CONTROL_PAGE_ALIGNMENT: usize = 128;
 pub const VIDEO_TRACK_CONTROL_MAGIC: u64 = u64::from_le_bytes(*b"JSFRING1");
 pub const VIDEO_TRACK_CONTROL_VERSION: u32 = 3;
 pub const CONFIG_RING_CAPACITY: usize = 4;
+// config_index_mask derives the ring mask as CONFIG_RING_CAPACITY - 1, which is
+// only a valid index mask when the capacity is a power of two.
+const _: () = assert!(CONFIG_RING_CAPACITY.is_power_of_two());
 const HEADER_LEN: usize = 256;
 const SEQLOCK_WORD_LEN: usize = std::mem::size_of::<u64>();
 
@@ -906,6 +909,10 @@ impl VideoTrackControlPage {
 
     pub fn store_consumer_release_cursor(&self, index: usize, consumer_id: u64, release_cursor: u64) -> CaptureResult<()> {
         let entry = self.consumer_cursor_entry(index);
+        // The read-check-store sequence is not one atomic op, but only the
+        // producer reallocates a consumer slot (see register_consumer_cursor),
+        // and a single consumer never races itself, so no other writer can
+        // change ownership between the check and the store. No CAS is needed.
         if entry.consumer_id != consumer_id {
             return Err(invalid_control_page("consumer cursor slot does not match consumer id"));
         }
