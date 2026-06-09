@@ -107,9 +107,9 @@ typedef struct ft_video_frame_desc {
   uint32_t height;
   uint32_t stride;
   uint32_t pixel_format;
+  /* Pool ids are unique forever (never reused); no generation needed. */
   uint64_t pool_id;
-  uint64_t slot_id;
-  uint64_t slot_generation;
+  uint32_t slot_id;
   uint64_t payload_offset;
   uint64_t payload_len;
   uint64_t payload_map_len;
@@ -118,10 +118,18 @@ typedef struct ft_video_frame_desc {
   uint32_t sync_kind;
   uint32_t damage_kind;
   uint64_t damage_base_sequence;
-  uint64_t dropped_before_publish;
+  uint32_t dropped_before_publish;
   uint64_t producer_drop_count;
   uint64_t evicted_count;
   uint64_t consumer_skipped_count;
+  /* Native-handle descriptor: payload_kind selects cpu-shm vs IOSurface/
+   * dmabuf/D3D; native frames carry no in-band payload and are sampled
+   * after waiting for fence_value on the stream's fence_id. */
+  uint32_t payload_kind;
+  uint64_t modifier;
+  uint64_t fence_id;
+  uint64_t fence_value;
+  uint32_t flags;
 } ft_video_frame_desc;
 
 typedef struct ft_event {

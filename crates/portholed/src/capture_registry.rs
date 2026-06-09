@@ -13,7 +13,7 @@ use std::{
 use capture_transfer::{
     fdpass,
     model::{
-        ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
+        ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
         VideoTrackDesc,
     },
     state::SessionState,
@@ -257,7 +257,6 @@ impl CaptureRegistry {
                     pixel_format: PixelFormat::Bgra8Unorm,
                     pool_id: 0,
                     slot_id: 0,
-                    slot_generation: 0,
                     payload_offset: 0,
                     payload_len: 0,
                     payload_map_len: 0,
@@ -270,6 +269,11 @@ impl CaptureRegistry {
                     producer_drop_count: 0,
                     evicted_count: 0,
                     consumer_skipped_count: 0,
+                    payload_kind: PayloadKind::CpuShm,
+                    modifier: 0,
+                    fence_id: 0,
+                    fence_value: 0,
+                    flags: 0,
                 },
                 &[0, 64, 128, 255, 255, 64, 128, 255],
             )
@@ -916,7 +920,6 @@ fn latest_reply_from_frame(
         pixel_format: pixel_format_name(frame.desc.pixel_format).to_string(),
         pool_id: frame.desc.pool_id,
         slot_id: frame.desc.slot_id,
-        slot_generation: frame.desc.slot_generation,
         payload_offset: frame.desc.payload_offset,
         payload_len: frame.desc.payload_len,
         payload_map_len: frame.desc.payload_map_len,
@@ -957,8 +960,8 @@ enum FrameAcquireMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct RegisteredPoolKey {
     track_id: u64,
+    // Pool ids are unique forever, so the key needs no generation.
     pool_id: u64,
-    pool_generation: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1036,7 +1039,6 @@ fn video_frame_desc_from_capture_metadata(metadata: VideoCaptureFrameMetadata) -
         pixel_format: capture_pixel_format(metadata.pixel_format),
         pool_id: 0,
         slot_id: 0,
-        slot_generation: 0,
         payload_offset: 0,
         payload_len: 0,
         payload_map_len: 0,
@@ -1045,10 +1047,19 @@ fn video_frame_desc_from_capture_metadata(metadata: VideoCaptureFrameMetadata) -
         sync_kind: capture_sync_kind(metadata.sync_kind),
         damage_kind: capture_damage_kind(metadata.damage_kind),
         damage_base_sequence: metadata.damage_base_sequence,
-        dropped_before_publish: metadata.dropped_before_publish,
+        // Adapter metadata keeps a u64 counter; the descriptor's u32 gap field
+        // saturates rather than wraps on absurd values.
+        dropped_before_publish: u32::try_from(metadata.dropped_before_publish).unwrap_or(u32::MAX),
         producer_drop_count: metadata.producer_drop_count,
         evicted_count: 0,
         consumer_skipped_count: 0,
+        // SCK delivers CPU-shm frames on this path today; native IOSurface
+        // publication is #84.
+        payload_kind: PayloadKind::CpuShm,
+        modifier: 0,
+        fence_id: 0,
+        fence_value: 0,
+        flags: 0,
     }
 }
 
@@ -1230,7 +1241,6 @@ fn send_frame_reply(
         let pool_key = RegisteredPoolKey {
             track_id: pool.track_id.get(),
             pool_id: pool.pool_id,
-            pool_generation: pool.pool_generation,
         };
         if connection.registered_pools.insert(pool_key) {
             let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
@@ -1240,7 +1250,6 @@ fn send_frame_reply(
                     session_id: session_id.to_string(),
                     track_id: pool.track_id.get(),
                     pool_id: pool.pool_id,
-                    pool_generation: pool.pool_generation,
                     payload_map_len: pool.payload_map_len,
                     slot_stride: pool.slot_stride,
                     slot_count: pool.slot_count,
@@ -1294,7 +1303,6 @@ fn video_frame_message_from_response(response: &LatestVideoFrameResponse) -> Cap
         pixel_format: response.pixel_format.clone(),
         pool_id: response.pool_id,
         slot_id: response.slot_id,
-        slot_generation: response.slot_generation,
         payload_offset: response.payload_offset,
         payload_len: response.payload_len,
         payload_map_len: response.payload_map_len,
@@ -1358,8 +1366,7 @@ fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
 mod tests {
     use std::{
         collections::VecDeque,
-        fs::File,
-        io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+        io::{BufRead, BufReader, Write},
         os::unix::net::UnixStream,
         thread,
     };
@@ -1367,7 +1374,7 @@ mod tests {
     use async_trait::async_trait;
     use capture_transfer::{
         control_page::VideoTrackControlPage,
-        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
+        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
         video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
     };
     use porthole_core::{
@@ -1397,7 +1404,6 @@ mod tests {
             pixel_format: PixelFormat::Bgra8Unorm,
             pool_id: 0,
             slot_id: 0,
-            slot_generation: 0,
             payload_offset: 0,
             payload_len: 0,
             payload_map_len: 0,
@@ -1410,6 +1416,11 @@ mod tests {
             producer_drop_count: 0,
             evicted_count: 0,
             consumer_skipped_count: 0,
+            payload_kind: PayloadKind::CpuShm,
+            modifier: 0,
+            fence_id: 0,
+            fence_value: 0,
+            flags: 0,
         }
     }
 
@@ -1623,10 +1634,9 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
-        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        // Pool fds are anonymous shm objects: mmap-only, no read().
+        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         assert_eq!(pinned_frame_count(&registry, "session"), 1);
@@ -1804,10 +1814,9 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
-        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        // Pool fds are anonymous shm objects: mmap-only, no read().
+        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         writeln!(
@@ -2018,10 +2027,9 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
-        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        // Pool fds are anonymous shm objects: mmap-only, no read().
+        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         writeln!(
@@ -2103,10 +2111,9 @@ mod tests {
         assert_eq!(response.producer_cursor, 1);
         assert_eq!(response.sequence, 1);
         assert_ne!(response.lease_id, 0);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
-        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        // Pool fds are anonymous shm objects: mmap-only, no read().
+        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
         writeln!(
@@ -2189,10 +2196,9 @@ mod tests {
         assert_eq!(response.producer_cursor, 2);
         assert_eq!(response.sequence, 2);
         assert_ne!(response.lease_id, 0);
-        let mut file = File::from(fd);
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(response.payload_offset)).unwrap();
-        file.take(response.payload_len).read_to_end(&mut bytes).unwrap();
+        // Pool fds are anonymous shm objects: mmap-only, no read().
+        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [5, 6, 7, 8]);
 
         writeln!(
