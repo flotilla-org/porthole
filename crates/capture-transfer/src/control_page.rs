@@ -1025,7 +1025,7 @@ impl VideoTrackControlPage {
     }
 
     #[cfg(test)]
-    fn set_slot_publication_sequence_for_test(&self, index: usize, publication_sequence: u64) {
+    pub(crate) fn set_slot_publication_sequence_for_test(&self, index: usize, publication_sequence: u64) {
         self.store_slot_publication_sequence(index, publication_sequence, Ordering::Release);
     }
 
