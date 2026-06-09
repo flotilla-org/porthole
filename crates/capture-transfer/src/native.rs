@@ -121,8 +121,13 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
     /// the publish cursor.
     pub fn publish(&mut self, frame: &B::CapturedFrame, timestamp_ns: u64) -> Result<u64> {
         let slot_id = self.backend.stage_frame(&mut self.pool, frame)?;
-        self.sequence += 1;
-        self.fence_value += 1;
+        // Saturating + debug_assert, matching the producer-cursor overflow guard
+        // in VideoTrackControlPage::push. u64 will not overflow at any real frame
+        // rate; the guard keeps the two hot paths consistent.
+        self.sequence = self.sequence.saturating_add(1);
+        debug_assert!(self.sequence < u64::MAX);
+        self.fence_value = self.fence_value.saturating_add(1);
+        debug_assert!(self.fence_value < u64::MAX);
         // The tracer signals inline before publishing. A real backend signals
         // from GPU/capture completion; the descriptor may then be observed
         // before the fence reaches its value, which is exactly what the

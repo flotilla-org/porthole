@@ -990,6 +990,9 @@ impl VideoTrackControlPage {
         let (Some(oldest), Some(latest)) = (self.oldest_live_cursor(), self.latest_cursor()) else {
             return Vec::new();
         };
+        // Lossy by design: entries with overwritten configs or torn seqlock
+        // reads (ConfigOverwritten / SlotSequenceMismatch / Lapped) are omitted
+        // rather than failing the call. A diagnostic snapshot must not fault.
         (oldest..=latest)
             .filter_map(|cursor| self.read_entry_for_cursor(cursor).ok())
             .collect()
