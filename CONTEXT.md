@@ -84,6 +84,49 @@ session, such as remote desktop input or screen capture. It is not assumed to
 be a durable system permission.
 _Avoid_: Linux TCC, portal permission, permanent grant.
 
+### Capture and transfer
+
+**Jackstay**:
+The single-producer, multi-consumer broadcast transfer ring — shared memory for
+the hot path, a setup socket for one-time handle/fd passing — that streams
+captured surfaces (and, later, structured events) to heterogeneous consumers
+(native panes, browsers, terminals). Today it is the in-repo `capture-transfer`
+crate; it is to be extracted as a standalone, language-neutral library. Porthole
+is a **producer/consumer integration** on top of jackstay, not the owner of its
+protocol semantics.
+_Avoid_: capture-transfer (as the long-term name), the ring, transfer channel.
+
+**Native handle path**:
+The primary jackstay transport: the producer passes an OS-native GPU surface
+handle (macOS `IOSurface`, Linux dmabuf, Windows D3D-shared) plus an explicit
+sync primitive, so a capable local consumer presents the frame zero-copy. This
+is the target model, not an optimisation — "lowest possible overhead" is the
+point of jackstay.
+_Avoid_: zero-copy mode, GPU path, fast path.
+
+**Pixel-streaming fallback**:
+The degraded jackstay transport for consumers that cannot receive a native
+handle (ssh, tmux, terminals without the handle-passing extension, the
+conformance harness). Same producer code; only consumer behaviour differs. It is
+a fallback, not the baseline.
+_Avoid_: CPU path, shm baseline, software path.
+
+**Producer class**:
+A category of jackstay producer defined by where in the pipeline it taps the
+imagery. **At-source** capture (injecting into an app and grabbing its own GPU
+output before composite) is the lowest-overhead path but only reaches injectable
+apps; **post-composite** capture (through the OS compositor — ScreenCaptureKit,
+PipeWire) reaches any window but pays the compositor tax. Both publish into the
+same ring.
+_Avoid_: capture mode, source type.
+
+**Consumer class**:
+A category of jackstay consumer defined by its latency and handle-receiving
+capability. A native pane and a pty-bound terminal are different classes and must
+not be treated alike; a slow terminal consumer must be lappable without affecting
+a fast native one.
+_Avoid_: subscriber type, sink kind.
+
 ### Coordinate units
 
 **Logical point**:

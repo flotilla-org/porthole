@@ -141,8 +141,7 @@ async fn serve_with_agent_policy_inner(
 mod tests {
     use std::{
         collections::BTreeMap,
-        fs::File,
-        io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+        io::{BufRead, BufReader, Write},
         os::unix::net::UnixStream,
         sync::Arc,
     };
@@ -302,7 +301,6 @@ mod tests {
         assert_eq!(frame.consumer_skipped_count, 0);
         assert_ne!(frame.pool_id, 0);
         assert_eq!(frame.slot_id, 0);
-        assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
         release_frame_on_stream(&mut stream, frame.lease_id);
@@ -359,7 +357,6 @@ mod tests {
         assert_eq!(pool["session_id"], created.session_id);
         assert_eq!(pool["track_id"], created.track_id);
         assert_ne!(pool["pool_id"].as_u64().unwrap(), 0);
-        assert_ne!(pool["pool_generation"].as_u64().unwrap(), 0);
         assert_eq!(pool["slot_count"], 3);
         let _pool_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
 
@@ -373,7 +370,6 @@ mod tests {
         let first_lease = first["lease_id"].as_u64().unwrap();
         assert_ne!(first_lease, 0);
         assert_eq!(first["pool_id"], pool["pool_id"]);
-        assert_eq!(first["slot_generation"], pool["pool_generation"]);
         release_frame_on_stream(&mut stream, first_lease);
 
         request_latest_frame(&mut stream, &created);
@@ -383,7 +379,6 @@ mod tests {
         let second_lease = second["lease_id"].as_u64().unwrap();
         assert_ne!(second_lease, 0);
         assert_eq!(second["pool_id"], pool["pool_id"]);
-        assert_eq!(second["slot_generation"], pool["pool_generation"]);
         release_frame_on_stream(&mut stream, second_lease);
     }
 
@@ -435,7 +430,7 @@ mod tests {
         stream: &mut UnixStream,
         reader: &mut BufReader<UnixStream>,
         created: &CreateCaptureSessionResponse,
-        pools: &mut BTreeMap<(u64, u64, u64), File>,
+        pools: &mut BTreeMap<(u64, u64), capture_transfer::shm::SharedMemorySegment>,
     ) -> LatestVideoFrameResponse {
         request_latest_frame(stream, created);
 
@@ -450,12 +445,10 @@ mod tests {
                 }
                 Some("register_cpu_pool") => {
                     let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
-                    let key = (
-                        value["track_id"].as_u64().unwrap(),
-                        value["pool_id"].as_u64().unwrap(),
-                        value["pool_generation"].as_u64().unwrap(),
-                    );
-                    pools.insert(key, File::from(fd));
+                    let key = (value["track_id"].as_u64().unwrap(), value["pool_id"].as_u64().unwrap());
+                    // Pool fds are anonymous shm objects: mmap-only, no read().
+                    let map_len = value["payload_map_len"].as_u64().unwrap() as usize;
+                    pools.insert(key, capture_transfer::shm::SharedMemorySegment::map_read_only(fd, map_len).unwrap());
                 }
                 Some("video_frame") => break serde_json::from_value::<LatestVideoFrameResponse>(value).unwrap(),
                 other => panic!("unexpected capture fd socket response {other:?}"),
@@ -465,12 +458,10 @@ mod tests {
         assert_eq!(frame.track_id, created.track_id);
         assert_eq!(frame.payload_len, frame.len);
 
-        let key = (frame.track_id, frame.pool_id, frame.slot_generation);
-        let file = pools.get_mut(&key).expect("frame references registered pool");
-        let mut bytes = Vec::new();
-        file.seek(SeekFrom::Start(frame.payload_offset)).unwrap();
-        file.take(frame.payload_len).read_to_end(&mut bytes).unwrap();
-        assert_eq!(bytes, vec![0, 64, 128, 255, 255, 64, 128, 255]);
+        let key = (frame.track_id, frame.pool_id);
+        let mapping = pools.get(&key).expect("frame references registered pool");
+        let bytes = mapping.slice_at(frame.payload_offset as usize, frame.payload_len as usize);
+        assert_eq!(bytes, &[0, 64, 128, 255, 255, 64, 128, 255]);
         frame
     }
 
@@ -543,7 +534,6 @@ mod tests {
         assert_eq!(frame.damage_base_sequence, 1);
         assert_ne!(frame.pool_id, 0);
         assert_eq!(frame.slot_id, 0);
-        assert_ne!(frame.slot_generation, 0);
         assert_eq!(frame.payload_len, frame.len);
         assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
         release_frame_on_stream(&mut stream, frame.lease_id);
