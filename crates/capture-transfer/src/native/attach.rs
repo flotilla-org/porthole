@@ -94,6 +94,19 @@ pub struct AttachEndpoint {
     expected_bearer: Option<String>,
 }
 
+/// Token equality that does not leak how many leading bytes matched through
+/// timing. Length still leaks; tokens are fixed-format so that reveals
+/// nothing. The transport is a local IPC channel today, but the comparison
+/// must stay safe if the protocol is ever promoted to a network path.
+fn constant_time_token_eq(expected: &str, presented: &str) -> bool {
+    let (a, b) = (expected.as_bytes(), presented.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(diff) == 0
+}
+
 impl AttachEndpoint {
     #[must_use]
     pub fn new(expected_bearer: Option<String>) -> Self {
@@ -111,7 +124,7 @@ impl AttachEndpoint {
         match request {
             AttachRequest::Authorize { bearer_token } => {
                 match &self.expected_bearer {
-                    Some(expected) if *expected == bearer_token => {
+                    Some(expected) if constant_time_token_eq(expected, &bearer_token) => {
                         session.authorized = true;
                         Ok(AttachResponse::Authorized)
                     }
@@ -230,6 +243,8 @@ mod tests {
         ));
         let grant = attach(&mut transport, &mut producer, 7);
         let handshake_messages = transport.messages;
+        // Authorize + Attach: two request/response pairs, nothing else.
+        assert_eq!(handshake_messages, 4);
 
         // The grant is complete: ring mapping + per-slot surface handles +
         // sync handle, all in one transfer.

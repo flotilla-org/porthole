@@ -150,8 +150,9 @@ pub struct NativeTrackProducer<B: NativeFrameBackend> {
     pool_slot_count: u32,
     fence: B::Fence,
     exhaustion_policy: PoolExhaustionPolicy,
-    /// Cursor each pool slot was last published at (0 = never); a slot is
-    /// reachable while its cursor is inside the ring's live window.
+    /// Cursor each pool slot was last published at (0 = never published;
+    /// real cursors start at 1, so 0 is unambiguous); a slot is reachable
+    /// while its cursor is inside the ring's live window.
     slot_cursors: Vec<u64>,
     next_slot_hint: u32,
     last_cursor: u64,
@@ -273,6 +274,16 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
     /// Pick the next eligible surface: not held by any consumer (OS use
     /// count zero) and not named by any live ring entry. Returns `None` when
     /// the pool is exhausted.
+    ///
+    /// The two checks and the subsequent staging are not one atomic step,
+    /// but the consumer hold protocol (jackstay_ring.h) closes the gap: a
+    /// consumer increments the surface's use count first and only then
+    /// re-checks that the entry's cursor is still inside the live window,
+    /// releasing the hold if it is not. Liveness of a given cursor only
+    /// expires (the cursor is monotonic), so either the consumer's hold was
+    /// in place before the use-count check here (we skip the slot), or the
+    /// consumer's re-check observes the expired entry and it discards the
+    /// hold without sampling. Reuse under a reader is prevented, not raced.
     fn claim_slot(&mut self) -> Result<Option<u32>> {
         let ring_capacity = self.page.layout().slot_capacity as u64;
         let live_len = self.last_cursor.min(ring_capacity);
