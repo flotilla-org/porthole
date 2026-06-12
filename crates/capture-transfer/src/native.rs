@@ -15,6 +15,8 @@
 //! cursors are advisory.
 
 pub mod attach;
+#[cfg(all(target_os = "macos", feature = "backend-macos"))]
+pub mod macos;
 
 use std::os::fd::OwnedFd;
 
