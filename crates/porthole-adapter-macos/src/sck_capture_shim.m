@@ -1,3 +1,4 @@
+#import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
@@ -165,6 +166,11 @@ static char *porthole_sck_copy_nserror(NSError *error, NSString *context) {
 // Shared stream setup for the CPU-copy and native (IOSurface) delivery
 // paths; `output` arrives with the wanted callback already set.
 static char *porthole_sck_start_window_common(uint32_t cgWindowId, PortholeSckOutput *output, void **outHandle) {
+  // SCContentFilter calls into SkyLight (SLSGetDisplaysWithRect) and asserts
+  // (CGS_REQUIRE_INIT) when the process has no window-server connection yet.
+  // The CPU path historically got one as a side effect of the CGWindowList
+  // seed snapshot; initialize explicitly so stream start is order-independent.
+  CGMainDisplayID();
   if (@available(macOS 12.3, *)) {
     __block SCShareableContent *content = nil;
     __block NSError *contentError = nil;
