@@ -172,13 +172,25 @@ impl IoSurface {
         })
     }
 
-    /// Adopt a +1 retained IOSurfaceRef (e.g. from the SCK shim callback or
-    /// an XPC decode). Ownership transfers to the wrapper.
+    /// Adopt a +1 retained IOSurfaceRef (e.g. from an XPC decode).
+    /// Ownership transfers to the wrapper.
     ///
     /// # Safety
     /// `raw` must be a retained IOSurfaceRef the caller owns.
     #[must_use]
     pub unsafe fn from_retained(raw: NonNull<c_void>) -> Self {
+        Self { raw }
+    }
+
+    /// Wrap a borrowed IOSurfaceRef, retaining it — e.g. an SCK callback's
+    /// surface, which the sample buffer keeps alive only for the callback's
+    /// duration.
+    ///
+    /// # Safety
+    /// `raw` must be a valid IOSurfaceRef for the duration of this call.
+    #[must_use]
+    pub unsafe fn from_borrowed(raw: NonNull<c_void>) -> Self {
+        unsafe { ffi::porthole_native_surface_retain(raw.as_ptr()) };
         Self { raw }
     }
 

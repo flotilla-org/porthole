@@ -55,6 +55,8 @@ pub mod placement;
 #[cfg(target_os = "macos")]
 pub mod sck_capture;
 #[cfg(target_os = "macos")]
+pub mod sck_native;
+#[cfg(target_os = "macos")]
 pub mod search;
 #[cfg(target_os = "macos")]
 pub mod snapshot;
