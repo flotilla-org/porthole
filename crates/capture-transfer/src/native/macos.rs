@@ -13,6 +13,8 @@
 //! references. They cross a process boundary only over a live XPC connection
 //! (ADR-0007); the XPC transport encodes them as objects, never as bytes.
 
+pub mod xpc;
+
 use std::{
     ffi::{CStr, c_char, c_void},
     ptr::NonNull,

@@ -383,6 +383,11 @@ fn render_launch_agent_plist(program: &Path, log_path: &Path) -> String {
     </dict>
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
+    <key>MachServices</key>
+    <dict>
+        <key>{mach_service}</key>
+        <true/>
+    </dict>
     <key>StandardOutPath</key>
     <string>{log}</string>
     <key>StandardErrorPath</key>
@@ -392,6 +397,7 @@ fn render_launch_agent_plist(program: &Path, log_path: &Path) -> String {
 "#,
         label = LAUNCH_AGENT_LABEL,
         program = xml_escape(&program.display().to_string()),
+        mach_service = porthole_protocol::capture_sessions::MACOS_NATIVE_ATTACH_MACH_SERVICE,
         log = xml_escape(&log_path.display().to_string()),
     )
 }

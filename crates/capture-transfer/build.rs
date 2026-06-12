@@ -12,8 +12,10 @@ fn main() {
 #[cfg(feature = "backend-macos")]
 fn build_macos_shim() {
     println!("cargo:rerun-if-changed=src/native/macos_shim.m");
+    println!("cargo:rerun-if-changed=src/native/macos_xpc_shim.m");
     cc::Build::new()
         .file("src/native/macos_shim.m")
+        .file("src/native/macos_xpc_shim.m")
         .flag("-fobjc-arc")
         .flag("-mmacosx-version-min=13.0")
         .compile("porthole_native_macos");

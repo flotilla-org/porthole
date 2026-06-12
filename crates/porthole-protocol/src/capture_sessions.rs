@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// The launchd `MachServices` name portholed owns for the jackstay native
+/// setup channel on macOS (ADR-0007). Consumers reach the XPC attach
+/// service by looking this name up; the LaunchAgent plist written by
+/// `porthole install` registers it.
+pub const MACOS_NATIVE_ATTACH_MACH_SERVICE: &str = "work.flotilla.porthole.attach";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateCaptureSessionResponse {
     pub session_id: String,
