@@ -320,8 +320,8 @@ int32_t porthole_xpc_client_authorize(void *clientPtr, const char *token, char *
 
 // Synchronous attach. On status 0 the out-params carry the grant: a dup of
 // the ring fd, a malloc'd array of +1 retained IOSurfaceRefs (caller frees
-// the array with porthole_xpc_surfaces_free and releases each surface), and
-// the +1 retained sync handle.
+// the array with porthole_xpc_surface_array_free and releases each surface),
+// and the +1 retained sync handle.
 int32_t porthole_xpc_client_attach(void *clientPtr,
                                    uint64_t consumerId,
                                    uint64_t *outConsumerSlot,
@@ -378,6 +378,9 @@ int32_t porthole_xpc_client_attach(void *clientPtr,
   return status;
 }
 
-void porthole_xpc_surfaces_free(void **surfaces) {
+// Frees only the malloc'd pointer array; each IOSurface's +1 retain has
+// already been adopted by the caller (IoSurface::from_retained) before this
+// is called, so the surfaces themselves are not released here.
+void porthole_xpc_surface_array_free(void **surfaces) {
   free(surfaces);
 }

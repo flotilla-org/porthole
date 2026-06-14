@@ -86,8 +86,7 @@ mod ffi {
             out_sync_handle: *mut *mut c_void,
             out_error: *mut *mut c_char,
         ) -> i32;
-        pub fn porthole_xpc_surfaces_free(surfaces: *mut *mut c_void);
-        pub fn porthole_native_string_free(message: *mut c_char);
+        pub fn porthole_xpc_surface_array_free(surfaces: *mut *mut c_void);
     }
 }
 
@@ -127,15 +126,6 @@ fn error_from_status(status: i32, operation: &'static str) -> AttachError {
     }
 }
 
-fn check_shim(operation: &'static str, error: *mut c_char) -> Result<()> {
-    if error.is_null() {
-        return Ok(());
-    }
-    let message = unsafe { CStr::from_ptr(error) }.to_string_lossy().into_owned();
-    unsafe { ffi::porthole_native_string_free(error) };
-    Err(CaptureTransferError::NativeBackend { operation, message })
-}
-
 /// Everything a granted-but-not-yet-replied attach keeps alive: the typed
 /// handles whose raw pointers the shim is bridging into the reply, and the
 /// pointer array itself.
@@ -158,6 +148,8 @@ impl ServerState {
         session_id: u64,
         request: AttachRequest,
     ) -> std::result::Result<AttachResponse<IoSurface, SharedEventHandle>, AttachError> {
+        // Lock order is sessions -> producer everywhere that takes both; keep
+        // it so the two locks can never deadlock against a future path.
         let mut sessions = self.sessions.lock().expect("xpc session table poisoned");
         let session = sessions.entry(session_id).or_default();
         let mut producer = self.producer.lock().expect("native producer poisoned");
@@ -294,7 +286,7 @@ impl XpcAttachServer {
                 &mut raw,
             )
         };
-        if let Err(start_error) = check_shim("xpc-listener-start", error) {
+        if let Err(start_error) = super::check("xpc-listener-start", error) {
             // The shim never took ownership of the state on failure.
             drop(unsafe { Box::from_raw(state) });
             return Err(start_error);
@@ -330,7 +322,7 @@ impl XpcAttachClient {
             message: "mach service name contains NUL".to_string(),
         })?;
         let mut raw: *mut c_void = std::ptr::null_mut();
-        check_shim("xpc-connect", unsafe {
+        super::check("xpc-connect", unsafe {
             ffi::porthole_xpc_client_connect_name(name.as_ptr(), &mut raw)
         })?;
         Ok(Self {
@@ -341,7 +333,7 @@ impl XpcAttachClient {
     /// Connect via an in-process anonymous endpoint.
     pub fn connect_endpoint(endpoint: &XpcListenerEndpoint) -> Result<Self> {
         let mut raw: *mut c_void = std::ptr::null_mut();
-        check_shim("xpc-connect", unsafe {
+        super::check("xpc-connect", unsafe {
             ffi::porthole_xpc_client_connect_endpoint(endpoint.raw.as_ptr(), &mut raw)
         })?;
         Ok(Self {
@@ -353,7 +345,7 @@ impl XpcAttachClient {
         let token = CString::new(token).map_err(|_| AttachError::InvalidToken)?;
         let mut error: *mut c_char = std::ptr::null_mut();
         let status = unsafe { ffi::porthole_xpc_client_authorize(self.raw.as_ptr(), token.as_ptr(), &mut error) };
-        if let Err(transport) = check_shim("xpc-authorize", error) {
+        if let Err(transport) = super::check("xpc-authorize", error) {
             return Err(AttachError::Grant(transport));
         }
         if status == STATUS_OK {
@@ -390,7 +382,7 @@ impl XpcAttachClient {
                 &mut error,
             )
         };
-        if let Err(transport) = check_shim("xpc-attach", error) {
+        if let Err(transport) = super::check("xpc-attach", error) {
             return Err(AttachError::Grant(transport));
         }
         if status != STATUS_OK {
@@ -405,7 +397,7 @@ impl XpcAttachClient {
             })
             .collect();
         if !surfaces.is_null() {
-            unsafe { ffi::porthole_xpc_surfaces_free(surfaces) };
+            unsafe { ffi::porthole_xpc_surface_array_free(surfaces) };
         }
         Ok(AttachGrant {
             consumer_id,

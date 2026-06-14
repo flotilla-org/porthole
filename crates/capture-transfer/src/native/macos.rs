@@ -471,7 +471,9 @@ impl NativeFrameBackend for MacosFrameBackend {
                 message: "no staged frame to signal".to_string(),
             });
         };
-        // Commit consumes the stage; forget it so Drop does not double-free.
+        // porthole_native_stage_commit takes ownership via __bridge_transfer;
+        // forget the PendingStage so its Drop does not also call
+        // porthole_native_stage_destroy (which would double-free).
         let raw = stage.raw;
         std::mem::forget(stage);
         check("signal-fence", unsafe {
