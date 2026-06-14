@@ -305,6 +305,7 @@ impl CaptureRegistry {
             status: CaptureSessionLifecycle::Ready.status_name().to_string(),
             status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
+            native: None,
         })
     }
 
@@ -440,6 +441,7 @@ impl CaptureRegistry {
             status: CaptureSessionLifecycle::Ready.status_name().to_string(),
             status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
+            native: None,
         })
     }
 
@@ -516,6 +518,7 @@ impl CaptureRegistry {
             status: CaptureSessionLifecycle::Ready.status_name().to_string(),
             status_message: CaptureSessionLifecycle::Ready.status_message(),
             fd_socket_path,
+            native: None,
         })
     }
 
@@ -642,6 +645,7 @@ impl CaptureRegistry {
             stride: session.stride,
             pixel_format: pixel_format_name(session.pixel_format).to_string(),
             fd_socket_path,
+            native: None,
         })
     }
 
