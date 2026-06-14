@@ -34,6 +34,9 @@ capture-transfer = { path = "../capture-transfer" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 porthole-adapter-macos = { path = "../porthole-adapter-macos" }
+# Native IOSurface/Metal capture + XPC attach server (the feature unions onto
+# the base capture-transfer dep on macOS).
+capture-transfer = { path = "../capture-transfer", features = ["backend-macos"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 porthole-adapter-kwin = { path = "../porthole-adapter-kwin" }

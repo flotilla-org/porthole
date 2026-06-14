@@ -260,10 +260,7 @@ mod tests {
         native::{
             NativeStreamParams, NativeTrackProducer, PoolExhaustionPolicy,
             attach::AttachEndpoint,
-            macos::{
-                IoSurface, MacosCapturedFrame, MacosFrameBackend,
-                xpc::XpcAttachServer,
-            },
+            macos::{IoSurface, MacosCapturedFrame, MacosFrameBackend, xpc::XpcAttachServer},
         },
     };
 
@@ -282,12 +279,20 @@ mod tests {
         };
         // Ring 4 / pool 6 so four rapid publishes each take a fresh slot —
         // the test exercises drop-to-latest, not pool exhaustion.
-        Arc::new(Mutex::new(NativeTrackProducer::new(backend, params, 4, 6, PoolExhaustionPolicy::Fail).unwrap()))
+        Arc::new(Mutex::new(
+            NativeTrackProducer::new(backend, params, 4, 6, PoolExhaustionPolicy::Fail).unwrap(),
+        ))
     }
 
     fn captured(seed: u8) -> MacosCapturedFrame {
         let surface = IoSurface::allocate(WIDTH, HEIGHT, PixelFormat::Bgra8Unorm).unwrap();
-        surface.write_pixels(&(0..WIDTH as usize * HEIGHT as usize * 4).map(|i| (i as u8).wrapping_add(seed)).collect::<Vec<_>>()).unwrap();
+        surface
+            .write_pixels(
+                &(0..WIDTH as usize * HEIGHT as usize * 4)
+                    .map(|i| (i as u8).wrapping_add(seed))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
         MacosCapturedFrame { surface }
     }
 

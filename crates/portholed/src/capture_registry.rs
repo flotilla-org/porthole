@@ -36,6 +36,9 @@ use uuid::Uuid;
 
 use crate::agent_store::AgentPolicyStore;
 
+#[cfg(target_os = "macos")]
+mod native_session;
+
 #[derive(Clone)]
 pub struct CaptureRegistry {
     inner: Arc<Mutex<CaptureRegistryInner>>,
@@ -57,6 +60,10 @@ impl std::fmt::Debug for CaptureRegistry {
 struct CaptureRegistryInner {
     sessions: HashMap<String, CaptureSession>,
     next_consumer_id: u64,
+    /// Runtime objects (XPC server, SCK stream, producer) for active native
+    /// sessions, keyed by session id. Dropping a hold tears down its session.
+    #[cfg(target_os = "macos")]
+    native_holds: HashMap<String, native_session::NativeSessionHold>,
 }
 
 #[derive(Debug)]
@@ -525,17 +532,31 @@ impl CaptureRegistry {
     fn remove_session(&self, session_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.sessions.remove(session_id);
+            #[cfg(target_os = "macos")]
+            inner.native_holds.remove(session_id);
         }
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), CaptureRegistryError> {
-        self.inner
-            .lock()
-            .map_err(|_| CaptureRegistryError::Poisoned)?
+        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        #[cfg(target_os = "macos")]
+        inner.native_holds.remove(session_id);
+        inner
             .sessions
             .remove(session_id)
             .map(|_| ())
             .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))
+    }
+
+    /// Create a macOS native (IOSurface/Metal) capture session. See
+    /// [`native_session`].
+    #[cfg(target_os = "macos")]
+    pub async fn create_native_surface_session(
+        &self,
+        surface: SurfaceInfo,
+        owner_agent_id: AgentId,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        native_session::create(self, surface, owner_agent_id).await
     }
 
     fn mark_session_failed(&self, session_id: &str, message: String) {
@@ -628,12 +649,22 @@ impl CaptureRegistry {
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<CaptureSessionResponse, CaptureRegistryError> {
-        let fd_socket_path = self.fd_socket_path()?;
         let inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
         let session = inner
             .sessions
             .get(session_id)
             .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
+        #[cfg(target_os = "macos")]
+        let native = inner.native_holds.get(session_id).map(|hold| hold.native_info.clone());
+        #[cfg(not(target_os = "macos"))]
+        let native = None;
+        // Native sessions are consumed over XPC, not the fd socket; tolerate
+        // the socket being unconfigured for them.
+        let fd_socket_path = if native.is_some() {
+            self.fd_socket_path().unwrap_or_default()
+        } else {
+            self.fd_socket_path()?
+        };
         Ok(CaptureSessionResponse {
             session_id: session_id.to_string(),
             source_id: session.source_id.get(),
@@ -645,7 +676,7 @@ impl CaptureRegistry {
             stride: session.stride,
             pixel_format: pixel_format_name(session.pixel_format).to_string(),
             fd_socket_path,
-            native: None,
+            native,
         })
     }
 
@@ -999,11 +1030,11 @@ pub enum CaptureRegistryError {
 }
 
 impl CaptureRegistryError {
-    fn from_capture(error: capture_transfer::CaptureTransferError) -> Self {
+    pub(crate) fn from_capture(error: capture_transfer::CaptureTransferError) -> Self {
         Self::Capture(error.to_string())
     }
 
-    fn from_porthole(error: porthole_core::PortholeError) -> Self {
+    pub(crate) fn from_porthole(error: porthole_core::PortholeError) -> Self {
         Self::Porthole(error)
     }
 }
