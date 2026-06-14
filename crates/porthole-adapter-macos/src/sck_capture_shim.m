@@ -1,6 +1,8 @@
+#import <CoreGraphics/CoreGraphics.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
+#import <IOSurface/IOSurface.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <dispatch/dispatch.h>
 #include <stdint.h>
@@ -20,8 +22,22 @@ typedef struct PortholeSckFrame {
 typedef void (*PortholeSckFrameCallback)(void *ctx, const PortholeSckFrame *frame);
 typedef void (*PortholeSckErrorCallback)(void *ctx, const char *message);
 
+// The native (handle) path: the frame is the CVPixelBuffer's backing
+// IOSurface, borrowed for the duration of the callback — the callee retains
+// it if it keeps it. No pixel lock, no CPU copy.
+typedef struct PortholeSckNativeFrame {
+  const void *io_surface; // IOSurfaceRef, borrowed
+  uint32_t width;
+  uint32_t height;
+  uint32_t pixel_format;
+  uint64_t timestamp_ns;
+} PortholeSckNativeFrame;
+
+typedef void (*PortholeSckNativeFrameCallback)(void *ctx, const PortholeSckNativeFrame *frame);
+
 @interface PortholeSckOutput : NSObject <SCStreamOutput, SCStreamDelegate>
 @property(nonatomic, assign) PortholeSckFrameCallback frameCallback;
+@property(nonatomic, assign) PortholeSckNativeFrameCallback nativeFrameCallback;
 @property(nonatomic, assign) PortholeSckErrorCallback errorCallback;
 @property(nonatomic, assign) void *ctx;
 @end
@@ -32,7 +48,7 @@ typedef void (*PortholeSckErrorCallback)(void *ctx, const char *message);
   // Frame callbacks are serialized on the sampleHandlerQueue passed to
   // addStreamOutput. porthole_sck_stop clears callbacks via dispatch_sync on
   // that same queue, so this path does not need an additional lock.
-  if (type != SCStreamOutputTypeScreen || self.frameCallback == NULL) {
+  if (type != SCStreamOutputTypeScreen || (self.frameCallback == NULL && self.nativeFrameCallback == NULL)) {
     return;
   }
   if (!CMSampleBufferIsValid(sampleBuffer)) {
@@ -43,6 +59,32 @@ typedef void (*PortholeSckErrorCallback)(void *ctx, const char *message);
     return;
   }
   CVPixelBufferRef pixelBuffer = (CVPixelBufferRef)imageBuffer;
+
+  if (self.nativeFrameCallback != NULL) {
+    // Native path: hand over the backing IOSurface; the sample buffer keeps
+    // it alive for the duration of the callback.
+    IOSurfaceRef surface = CVPixelBufferGetIOSurface(pixelBuffer);
+    if (surface == NULL) {
+      if (self.errorCallback != NULL) {
+        self.errorCallback(self.ctx, "ScreenCaptureKit frame has no backing IOSurface");
+      }
+      return;
+    }
+    CMTime nativePts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    uint64_t nativeTimestampNs = 0;
+    if (CMTIME_IS_NUMERIC(nativePts) && nativePts.timescale > 0 && nativePts.value >= 0) {
+      nativeTimestampNs = (uint64_t)(((__int128)nativePts.value * 1000000000) / nativePts.timescale);
+    }
+    PortholeSckNativeFrame frame = {
+        .io_surface = surface,
+        .width = (uint32_t)CVPixelBufferGetWidth(pixelBuffer),
+        .height = (uint32_t)CVPixelBufferGetHeight(pixelBuffer),
+        .pixel_format = (uint32_t)CVPixelBufferGetPixelFormatType(pixelBuffer),
+        .timestamp_ns = nativeTimestampNs,
+    };
+    self.nativeFrameCallback(self.ctx, &frame);
+    return;
+  }
   if (CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
     if (self.errorCallback != NULL) {
       self.errorCallback(self.ctx, "CVPixelBufferLockBaseAddress failed");
@@ -121,19 +163,14 @@ static char *porthole_sck_copy_nserror(NSError *error, NSString *context) {
   return porthole_sck_copy_error(full);
 }
 
-char *porthole_sck_start_window(uint32_t cgWindowId,
-                                PortholeSckFrameCallback frameCallback,
-                                PortholeSckErrorCallback errorCallback,
-                                void *ctx,
-                                void **outHandle) {
-  if (outHandle == NULL) {
-    return porthole_sck_copy_error(@"missing outHandle");
-  }
-  *outHandle = NULL;
-  if (frameCallback == NULL) {
-    return porthole_sck_copy_error(@"missing frame callback");
-  }
-
+// Shared stream setup for the CPU-copy and native (IOSurface) delivery
+// paths; `output` arrives with the wanted callback already set.
+static char *porthole_sck_start_window_common(uint32_t cgWindowId, PortholeSckOutput *output, void **outHandle) {
+  // SCContentFilter calls into SkyLight (SLSGetDisplaysWithRect) and asserts
+  // (CGS_REQUIRE_INIT) when the process has no window-server connection yet.
+  // The CPU path historically got one as a side effect of the CGWindowList
+  // seed snapshot; initialize explicitly so stream start is order-independent.
+  CGMainDisplayID();
   if (@available(macOS 12.3, *)) {
     __block SCShareableContent *content = nil;
     __block NSError *contentError = nil;
@@ -190,11 +227,6 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
     config.showsCursor = YES;
     config.capturesAudio = NO;
 
-    PortholeSckOutput *output = [PortholeSckOutput new];
-    output.frameCallback = frameCallback;
-    output.errorCallback = errorCallback;
-    output.ctx = ctx;
-
     SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:output];
     dispatch_queue_t queue = dispatch_queue_create("work.flotilla.porthole.sck-capture", DISPATCH_QUEUE_SERIAL);
     NSError *addError = nil;
@@ -212,6 +244,7 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
       dispatch_sync(queue, ^{
         @synchronized(output) {
           output.frameCallback = NULL;
+          output.nativeFrameCallback = NULL;
           output.errorCallback = NULL;
           output.ctx = NULL;
         }
@@ -233,6 +266,44 @@ char *porthole_sck_start_window(uint32_t cgWindowId,
   }
 }
 
+char *porthole_sck_start_window(uint32_t cgWindowId,
+                                PortholeSckFrameCallback frameCallback,
+                                PortholeSckErrorCallback errorCallback,
+                                void *ctx,
+                                void **outHandle) {
+  if (outHandle == NULL) {
+    return porthole_sck_copy_error(@"missing outHandle");
+  }
+  *outHandle = NULL;
+  if (frameCallback == NULL) {
+    return porthole_sck_copy_error(@"missing frame callback");
+  }
+  PortholeSckOutput *output = [PortholeSckOutput new];
+  output.frameCallback = frameCallback;
+  output.errorCallback = errorCallback;
+  output.ctx = ctx;
+  return porthole_sck_start_window_common(cgWindowId, output, outHandle);
+}
+
+char *porthole_sck_start_window_native(uint32_t cgWindowId,
+                                       PortholeSckNativeFrameCallback frameCallback,
+                                       PortholeSckErrorCallback errorCallback,
+                                       void *ctx,
+                                       void **outHandle) {
+  if (outHandle == NULL) {
+    return porthole_sck_copy_error(@"missing outHandle");
+  }
+  *outHandle = NULL;
+  if (frameCallback == NULL) {
+    return porthole_sck_copy_error(@"missing native frame callback");
+  }
+  PortholeSckOutput *output = [PortholeSckOutput new];
+  output.nativeFrameCallback = frameCallback;
+  output.errorCallback = errorCallback;
+  output.ctx = ctx;
+  return porthole_sck_start_window_common(cgWindowId, output, outHandle);
+}
+
 void porthole_sck_stop(void *rawHandle) {
   if (rawHandle == NULL) {
     return;
@@ -242,6 +313,7 @@ void porthole_sck_stop(void *rawHandle) {
     dispatch_sync(handle.queue, ^{
       @synchronized(handle.output) {
         handle.output.frameCallback = NULL;
+        handle.output.nativeFrameCallback = NULL;
         handle.output.errorCallback = NULL;
         handle.output.ctx = NULL;
       }

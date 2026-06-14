@@ -20,6 +20,7 @@ image = { workspace = true }
 bytes = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+capture-transfer = { path = "../capture-transfer", features = ["backend-macos"] }
 core-graphics = { version = "0.24", features = ["elcapitan", "highsierra"] }
 core-foundation = "0.10"
 libc = "0.2"
