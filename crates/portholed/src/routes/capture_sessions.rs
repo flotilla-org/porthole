@@ -1,10 +1,20 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
 use porthole_core::{ErrorCode, PortholeError, agent_policy::ActionClass};
 use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
+use serde::Deserialize;
+
+/// Query for `POST /capture-sessions/surfaces/{id}`. `native=true` requests
+/// the macOS IOSurface/Metal path (XPC attach); the default is the CPU-shm
+/// fd-socket path.
+#[derive(Debug, Default, Deserialize)]
+pub struct CaptureKindQuery {
+    #[serde(default)]
+    pub native: bool,
+}
 
 use crate::{
     capture_registry::CaptureRegistryError,
@@ -23,6 +33,7 @@ pub async fn post_surface(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(kind): Query<CaptureKindQuery>,
 ) -> Result<Json<CreateCaptureSessionResponse>, ApiError> {
     let surface_id = porthole_core::surface::SurfaceId::from(id);
     let execution = authorize_surface_actions(
@@ -34,9 +45,7 @@ pub async fn post_surface(
     )
     .await?;
     let surface = state.handles.require_alive(&surface_id).await?;
-    let response = state
-        .capture
-        .create_surface_session(state.adapter.clone(), surface, execution.agent_id.clone())
+    let response = create_session(&state, kind.native, surface, execution.agent_id.clone())
         .await
         .map_err(capture_error_to_api)?;
     let audit_state = state.clone();
@@ -64,6 +73,29 @@ pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String
         .close_session(&id)
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(capture_error_to_api)
+}
+
+async fn create_session(
+    state: &AppState,
+    native: bool,
+    surface: porthole_core::surface::SurfaceInfo,
+    agent_id: porthole_core::agent_policy::AgentId,
+) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+    if native {
+        #[cfg(target_os = "macos")]
+        {
+            return state.capture.create_native_surface_session(surface, agent_id).await;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (surface, agent_id);
+            return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+                ErrorCode::AdapterUnsupported,
+                "native capture sessions require a macOS backend-macos build",
+            )));
+        }
+    }
+    state.capture.create_surface_session(state.adapter.clone(), surface, agent_id).await
 }
 
 fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {

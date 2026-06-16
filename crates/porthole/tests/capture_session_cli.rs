@@ -10,6 +10,7 @@ fn formats_synthetic_session_descriptor_for_attach_only_consumers() {
         status: "ready".to_string(),
         status_message: None,
         fd_socket_path: "/tmp/capture-transfer.sock".to_string(),
+        native: None,
     };
 
     let rendered = format_synthetic_session("/tmp/porthole.sock", &response);

@@ -588,6 +588,10 @@ enum CaptureSessionCommand {
     /// Create a live capture session for an existing tracked surface.
     Surface {
         surface_id: String,
+        /// Use the macOS native IOSurface/Metal path (XPC attach) instead of
+        /// the CPU-shm fd-socket path.
+        #[arg(long)]
+        native: bool,
         /// Print response as JSON.
         #[arg(long)]
         json: bool,
@@ -1052,11 +1056,12 @@ async fn main() -> std::process::ExitCode {
                 )
                 .await
             }
-            CaptureSessionCommand::Surface { surface_id, json } => {
+            CaptureSessionCommand::Surface { surface_id, native, json } => {
                 let control_socket_path = socket_path();
                 porthole::commands::capture_session::surface(
                     &client,
                     &surface_id,
+                    native,
                     porthole::commands::capture_session::CaptureSessionArgs {
                         control_socket_path: &control_socket_path,
                         json,

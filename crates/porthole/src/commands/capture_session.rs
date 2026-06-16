@@ -14,10 +14,13 @@ pub async fn synthetic(client: &DaemonClient, args: CaptureSessionArgs<'_>) -> R
     print_session_response("synthetic", client, args, &res)
 }
 
-pub async fn surface(client: &DaemonClient, surface_id: &str, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
-    let res: CreateCaptureSessionResponse = client
-        .post_json(&format!("/capture-sessions/surfaces/{surface_id}"), &serde_json::json!({}))
-        .await?;
+pub async fn surface(client: &DaemonClient, surface_id: &str, native: bool, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
+    let path = if native {
+        format!("/capture-sessions/surfaces/{surface_id}?native=true")
+    } else {
+        format!("/capture-sessions/surfaces/{surface_id}")
+    };
+    let res: CreateCaptureSessionResponse = client.post_json(&path, &serde_json::json!({})).await?;
     print_session_response("surface", client, args, &res)
 }
 
@@ -43,6 +46,7 @@ fn print_session_response(
             "status": res.status,
             "status_message": res.status_message,
             "fd_socket_path": res.fd_socket_path,
+            "native": res.native,
         }))
         .map_err(|error| ClientError::Local(format!("json encode: {error}")))?;
         println!("{text}");
@@ -53,6 +57,28 @@ fn print_session_response(
 }
 
 pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, response: &CreateCaptureSessionResponse) -> String {
+    // Native sessions are consumed over XPC; the viewer connects to the mach
+    // service with the per-session attach secret, not the fd socket.
+    if let Some(native) = &response.native {
+        return format!(
+            "porthole_socket: {control_socket_path}\n\
+             session_id: {}\n\
+             source_id: {}\n\
+             track_id: {}\n\
+             status: {}\n\
+             mach_service: {}\n\
+             attach_token: {}\n\
+             viewer: capture-viewer-sdl --native --mach-service {} --token {}\n",
+            response.session_id,
+            response.source_id,
+            response.track_id,
+            response.status,
+            native.mach_service_name,
+            native.attach_token,
+            native.mach_service_name,
+            native.attach_token,
+        );
+    }
     format!(
         "porthole_socket: {control_socket_path}\n\
          session_id: {}\n\
