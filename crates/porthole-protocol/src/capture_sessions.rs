@@ -100,8 +100,10 @@ mod tests {
         let json = serde_json::to_string(&cpu).unwrap();
         assert!(!json.contains("native"), "absent native field must not serialize: {json}");
         // And a payload without the field deserializes (back-compat / CPU path).
-        let decoded: CreateCaptureSessionResponse =
-            serde_json::from_str(r#"{"session_id":"s","source_id":1,"track_id":2,"status":"running","status_message":null,"fd_socket_path":"/tmp/x.sock"}"#).unwrap();
+        let decoded: CreateCaptureSessionResponse = serde_json::from_str(
+            r#"{"session_id":"s","source_id":1,"track_id":2,"status":"running","status_message":null,"fd_socket_path":"/tmp/x.sock"}"#,
+        )
+        .unwrap();
         assert!(decoded.native.is_none());
     }
 
