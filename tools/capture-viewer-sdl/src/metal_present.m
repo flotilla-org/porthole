@@ -11,6 +11,8 @@
 #import <IOSurface/IOSurface.h>
 #import <IOSurface/IOSurfaceObjC.h>
 
+#include <stdio.h>
+
 #include "metal_present.h"
 
 struct mp_presenter {
@@ -48,15 +50,18 @@ mp_presenter *mp_create(void *ca_metal_layer, void *sync_handle) {
   CAMetalLayer *layer = (__bridge CAMetalLayer *)ca_metal_layer;
   id<MTLDevice> device = layer.device ?: MTLCreateSystemDefaultDevice();
   if (device == nil) {
+    fprintf(stderr, "mp_create: no Metal device\n");
     return NULL;
   }
   id<MTLCommandQueue> queue = [device newCommandQueue];
   if (queue == nil) {
+    fprintf(stderr, "mp_create: failed to create Metal command queue\n");
     return NULL;
   }
   MTLSharedEventHandle *handle = (__bridge MTLSharedEventHandle *)sync_handle;
   id<MTLSharedEvent> event = [device newSharedEventWithHandle:handle];
   if (event == nil) {
+    fprintf(stderr, "mp_create: failed to resolve MTLSharedEvent from grant handle\n");
     return NULL;
   }
 

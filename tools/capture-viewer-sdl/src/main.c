@@ -87,8 +87,12 @@ static int run_native(const viewer_options *options) {
     return 1;
   }
 
+  // One viewer, one session (the daemon vends a single native session today);
+  // a fixed consumer id is sufficient.
+  enum { VIEWER_CONSUMER_ID = 1 };
   ft_native_attach *attach = NULL;
-  if (require_ok(ft_native_attach_connect(options->mach_service, options->token, 1, &attach), "ft_native_attach_connect")) {
+  if (require_ok(ft_native_attach_connect(options->mach_service, options->token, VIEWER_CONSUMER_ID, &attach),
+                 "ft_native_attach_connect")) {
     return 1;
   }
   ft_native_grant grant = {0};

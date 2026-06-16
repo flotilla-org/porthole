@@ -82,11 +82,11 @@ if [[ -z "$SURFACE_ID" ]]; then
 fi
 
 echo "surface_id=$SURFACE_ID"
-descriptor="$(porthole capture-session surface "$SURFACE_ID" --native)"
+descriptor="$(porthole capture-session surface "$SURFACE_ID" --native --json)"
 printf '%s\n' "$descriptor"
 
-mach_service="$(printf '%s\n' "$descriptor" | awk '/^mach_service:/ { print $2 }')"
-attach_token="$(printf '%s\n' "$descriptor" | awk '/^attach_token:/ { print $2 }')"
+mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.mach_service_name // empty')"
+attach_token="$(printf '%s\n' "$descriptor" | jq -r '.native.attach_token // empty')"
 
 if [[ -z "$mach_service" || -z "$attach_token" ]]; then
     echo "failed to parse native capture-session descriptor (is this a native session?)" >&2

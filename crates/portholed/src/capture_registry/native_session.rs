@@ -142,6 +142,24 @@ fn native_error(error: capture_transfer::CaptureTransferError) -> PortholeError 
     PortholeError::new(ErrorCode::InternalError, error.to_string())
 }
 
+/// Holds the `native_session_starting` reservation across the async startup.
+/// Resets it on drop (any error return) unless the session committed, so a
+/// failed start never wedges the one-session limit.
+struct StartReservation<'a> {
+    registry: &'a CaptureRegistry,
+    active: bool,
+}
+
+impl Drop for StartReservation<'_> {
+    fn drop(&mut self) {
+        if self.active
+            && let Ok(mut inner) = self.registry.inner.lock()
+        {
+            inner.native_session_starting = false;
+        }
+    }
+}
+
 /// Create a native capture session: start SCK native capture, build the
 /// producer from the first frame, mint a per-session attach secret, and host
 /// the named XPC attach server bound to that producer.
@@ -150,15 +168,21 @@ pub(super) async fn create(
     surface: SurfaceInfo,
     owner_agent_id: AgentId,
 ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
-    // One native session at a time (see module note).
+    // One native session at a time (see module note). Check-and-reserve in a
+    // single locked step so two concurrent creates can't both pass — the
+    // reservation is what protects portholed's single launchd mach name.
     {
-        let inner = registry.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        if !inner.native_holds.is_empty() {
+        let mut inner = registry.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        if !inner.native_holds.is_empty() || inner.native_session_starting {
             return Err(CaptureRegistryError::Capture(
                 "a native capture session is already active (one at a time on this build)".to_string(),
             ));
         }
+        inner.native_session_starting = true;
     }
+    // From here, every early return must release the reservation; the guard
+    // does it on drop unless we commit on success.
+    let mut reservation = StartReservation { registry, active: true };
 
     let session_id = Uuid::new_v4().to_string();
     let mut state = SessionState::new();
@@ -254,7 +278,11 @@ pub(super) async fn create(
                 _producer: ready.producer,
             },
         );
+        inner.native_session_starting = false;
     }
+    // Committed: the hold now represents the session; don't let the guard
+    // clear the (already-cleared) flag.
+    reservation.active = false;
 
     Ok(CreateCaptureSessionResponse {
         session_id,

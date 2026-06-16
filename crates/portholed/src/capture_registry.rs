@@ -64,6 +64,11 @@ struct CaptureRegistryInner {
     /// sessions, keyed by session id. Dropping a hold tears down its session.
     #[cfg(target_os = "macos")]
     native_holds: HashMap<String, native_session::NativeSessionHold>,
+    /// Reserved while a native session is starting, before its hold exists.
+    /// Collapses the one-session check-and-reserve into a single locked step
+    /// so two concurrent native creates can't both pass the limit.
+    #[cfg(target_os = "macos")]
+    native_session_starting: bool,
 }
 
 #[derive(Debug)]
