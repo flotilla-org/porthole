@@ -6,7 +6,6 @@ import XCTest
 final class OnboardingWindowControllerTests: XCTestCase {
     func testCreatesOnboardingWindow() {
         let supervisor = DaemonSupervisor(
-            daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
             cliURL: URL(fileURLWithPath: "/tmp/porthole")
         ) { _ in }
         let controller = OnboardingWindowController(client: FakePortholeClient(), supervisor: supervisor)
@@ -17,7 +16,6 @@ final class OnboardingWindowControllerTests: XCTestCase {
 
     func testBlockedStateHasNoExtraRefreshButton() async throws {
         let supervisor = DaemonSupervisor(
-            daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
             cliURL: URL(fileURLWithPath: "/tmp/porthole")
         ) { _ in }
         let controller = OnboardingWindowController(client: FailingPortholeClient(), supervisor: supervisor)
@@ -31,7 +29,6 @@ final class OnboardingWindowControllerTests: XCTestCase {
 
     func testRendersPermissionRowsAfterInfoLoad() async throws {
         let supervisor = DaemonSupervisor(
-            daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
             cliURL: URL(fileURLWithPath: "/tmp/porthole")
         ) { _ in }
         let controller = OnboardingWindowController(

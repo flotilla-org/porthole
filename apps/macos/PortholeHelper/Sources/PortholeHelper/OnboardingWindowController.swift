@@ -165,31 +165,30 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     private func restartDaemonForOnboarding(permission: String) async {
-        guard supervisor.restartCapability == .helperOwned else {
-            flow.apply(.verificationFailed("An external daemon is running. Restart it manually, then refresh onboarding."))
+        guard supervisor.restartCapability == .available else {
+            flow.apply(.verificationFailed("The daemon needs approval in System Settings before it can restart. Approve it, then refresh onboarding."))
             render()
             return
         }
 
         // Callers transition the reducer into .restarting before invoking this.
-        let previousPID = helperOwnedDaemonPID()
+        // portholed is launchd-managed, so we can't watch a child PID; instead
+        // we watch uptime_seconds reset, which uniquely marks the new process.
+        let previousUptime = latestInfo?.uptimeSeconds
         supervisor.restart()
-        await waitForRestartedInfo(timeoutSeconds: 10, restartPermission: permission, previousPID: previousPID)
+        await waitForRestartedInfo(timeoutSeconds: 10, restartPermission: permission, previousUptime: previousUptime)
     }
 
-    private func helperOwnedDaemonPID() -> Int32? {
-        if case .running(let pid) = supervisor.currentState {
-            return pid
-        }
-        return nil
-    }
-
-    private func waitForRestartedInfo(timeoutSeconds: TimeInterval, restartPermission: String, previousPID: Int32?) async {
+    private func waitForRestartedInfo(timeoutSeconds: TimeInterval, restartPermission: String, previousUptime: UInt64?) async {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
-            if let currentPID = helperOwnedDaemonPID(), currentPID != previousPID {
-                await waitForInfo(timeoutSeconds: max(2.0, deadline.timeIntervalSinceNow), restartPermission: restartPermission)
-                return
+            if let info = try? await client.info() {
+                guard !Task.isCancelled else { return }
+                if didRestart(from: previousUptime, to: info.uptimeSeconds) {
+                    latestInfo = info
+                    await waitForInfo(timeoutSeconds: max(2.0, deadline.timeIntervalSinceNow), restartPermission: restartPermission)
+                    return
+                }
             }
             do {
                 try await Task.sleep(nanoseconds: 250_000_000)
@@ -201,6 +200,14 @@ final class OnboardingWindowController: NSWindowController {
 
         flow.apply(.restartTimedOut(restartPermission))
         render()
+    }
+
+    /// A launchd `kickstart -k` restart resets uptime, so a current uptime lower
+    /// than the pre-restart baseline means the new process has answered. Treat a
+    /// missing baseline as "any successful response is the restarted daemon".
+    private func didRestart(from previousUptime: UInt64?, to currentUptime: UInt64) -> Bool {
+        guard let previousUptime else { return true }
+        return currentUptime < previousUptime
     }
 
     private func waitForInfo(timeoutSeconds: TimeInterval, restartPermission: String? = nil) async {
@@ -238,7 +245,7 @@ final class OnboardingWindowController: NSWindowController {
         primaryButton.isHidden = false
         settingsButton.isEnabled = activePermission.flatMap { SettingsLinks.link(for: $0) } != nil
         refreshButton.isEnabled = true
-        restartButton.isEnabled = supervisor.restartCapability == .helperOwned
+        restartButton.isEnabled = supervisor.restartCapability == .available
 
         switch flow.state {
         case .idle, .loadingInfo:
@@ -369,7 +376,7 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     @objc private func restartAction() {
-        guard supervisor.restartCapability == .helperOwned else { return }
+        guard supervisor.restartCapability == .available else { return }
         if let permission = flow.state.activePermissionName {
             flow.apply(.userConfirmedGrant(permission, requiresRestart: true))
             render()

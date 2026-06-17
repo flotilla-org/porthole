@@ -3,66 +3,121 @@ import XCTest
 
 @MainActor
 final class DaemonSupervisorTests: XCTestCase {
-    private final class ProbeScript: @unchecked Sendable {
+    private final class LabelRecorder: @unchecked Sendable {
         private let lock = NSLock()
-        private var results: [Bool]
+        private var labels: [String] = []
 
-        init(_ results: [Bool]) {
-            self.results = results
-        }
-
-        func next(_ url: URL) -> Bool {
+        func record(_ label: String) {
             lock.lock()
             defer { lock.unlock() }
-            guard !results.isEmpty else { return true }
-            return results.removeFirst()
+            labels.append(label)
+        }
+
+        func snapshot() -> [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return labels
         }
     }
 
-    private final class LaunchRecorder: @unchecked Sendable {
-        private(set) var count = 0
-
-        func launch(_ _: URL, onTermination: @escaping @Sendable (Int32) -> Void) -> DaemonSupervisor.ManagedDaemon {
-            count += 1
-            return DaemonSupervisor.ManagedDaemon(pid: 42, terminate: {})
-        }
-    }
-
-    func testInitialRestartCapabilityIsHelperOwned() {
-        let supervisor = DaemonSupervisor(
-            daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
-            cliURL: URL(fileURLWithPath: "/tmp/porthole")
-        ) { _ in }
-
-        XCTAssertEqual(supervisor.currentState, .stopped)
-        XCTAssertEqual(supervisor.restartCapability, .helperOwned)
-    }
-
-    func testRunningExternalReprobeLaunchesBundledDaemonWhenExternalExits() async throws {
-        let probeResults = ProbeScript([true, false])
-        let launcher = LaunchRecorder()
-        var states: [DaemonSupervisor.State] = []
-        let recovered = expectation(description: "helper launched bundled daemon after external daemon exited")
-
-        let supervisor = DaemonSupervisor(
-            daemonURL: URL(fileURLWithPath: "/tmp/portholed"),
+    // A large poll interval keeps each test to the single immediate poll that
+    // start()/restart() trigger, so state transitions are deterministic.
+    private func makeSupervisor(
+        registration: DaemonAgentRegistrar.RegistrationResult,
+        alive: Bool,
+        restartService: @escaping @Sendable (String) -> Bool = { _ in true },
+        onStateChange: @escaping (DaemonSupervisor.State) -> Void
+    ) -> DaemonSupervisor {
+        DaemonSupervisor(
             cliURL: URL(fileURLWithPath: "/tmp/porthole"),
-            externalReprobeInterval: 0.01,
-            probeExistingDaemon: probeResults.next,
-            launchDaemonProcess: launcher.launch
-        ) { state in
-            states.append(state)
-            if state == .running(pid: 42) {
-                recovered.fulfill()
-            }
+            pollInterval: 100,
+            probeLiveness: { _ in alive },
+            registerAgent: { registration },
+            restartService: restartService,
+            onStateChange: onStateChange
+        )
+    }
+
+    func testInitialStateIsRegisteringAndRestartable() {
+        let supervisor = DaemonSupervisor(cliURL: URL(fileURLWithPath: "/tmp/porthole")) { _ in }
+
+        XCTAssertEqual(supervisor.currentState, .registering)
+        XCTAssertEqual(supervisor.restartCapability, .available)
+    }
+
+    func testRegisteredAndAliveBecomesRunning() async {
+        let running = expectation(description: "running")
+        let supervisor = makeSupervisor(registration: .alreadyEnabled, alive: true) { state in
+            if state == .running { running.fulfill() }
         }
 
         supervisor.start()
-        await fulfillment(of: [recovered], timeout: 1.0)
+        await fulfillment(of: [running], timeout: 1.0)
 
-        XCTAssertEqual(launcher.count, 1)
-        XCTAssertEqual(supervisor.currentState, .running(pid: 42))
-        XCTAssertEqual(states, [.runningExternal, .running(pid: 42)])
-        XCTAssertEqual(supervisor.restartCapability, .helperOwned)
+        XCTAssertEqual(supervisor.currentState, .running)
+        XCTAssertEqual(supervisor.restartCapability, .available)
+    }
+
+    func testRegisteredButNotAliveBecomesUnresponsive() async {
+        let unresponsive = expectation(description: "unresponsive")
+        let supervisor = makeSupervisor(registration: .registered, alive: false) { state in
+            if state == .unresponsive { unresponsive.fulfill() }
+        }
+
+        supervisor.start()
+        await fulfillment(of: [unresponsive], timeout: 1.0)
+
+        XCTAssertEqual(supervisor.currentState, .unresponsive)
+        XCTAssertEqual(supervisor.restartCapability, .available)
+    }
+
+    func testRequiresApprovalBecomesNeedsApprovalAndIsNotRestartable() async {
+        let needsApproval = expectation(description: "needsApproval")
+        let supervisor = makeSupervisor(registration: .requiresApproval, alive: false) { state in
+            if state == .needsApproval { needsApproval.fulfill() }
+        }
+
+        supervisor.start()
+        await fulfillment(of: [needsApproval], timeout: 1.0)
+
+        XCTAssertEqual(supervisor.currentState, .needsApproval)
+        XCTAssertEqual(supervisor.restartCapability, .unavailable)
+    }
+
+    func testFailedRegistrationBecomesFailedAndIsNotRestartable() async {
+        let failed = expectation(description: "failed")
+        let supervisor = makeSupervisor(registration: .failed("invalid signature"), alive: false) { state in
+            if state == .failed("invalid signature") { failed.fulfill() }
+        }
+
+        supervisor.start()
+        await fulfillment(of: [failed], timeout: 1.0)
+
+        XCTAssertEqual(supervisor.currentState, .failed("invalid signature"))
+        XCTAssertEqual(supervisor.restartCapability, .unavailable)
+    }
+
+    func testRestartKickstartsConfiguredLabel() async throws {
+        let recorder = LabelRecorder()
+        let supervisor = DaemonSupervisor(
+            cliURL: URL(fileURLWithPath: "/tmp/porthole"),
+            pollInterval: 100,
+            probeLiveness: { _ in true },
+            registerAgent: { .alreadyEnabled },
+            restartService: { label in
+                recorder.record(label)
+                return true
+            }
+        ) { _ in }
+
+        supervisor.start()
+        supervisor.restart()
+
+        let deadline = Date().addingTimeInterval(1)
+        while recorder.snapshot().isEmpty, Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(recorder.snapshot(), [DaemonAgentRegistrar.label])
     }
 }
