@@ -11,6 +11,10 @@ use crate::macos_helper;
 
 pub const INFO_PLIST: &str = "apps/macos/bundle/Info.plist";
 pub const ICON: &str = "apps/macos/bundle/Resources/icon.png";
+/// Bundled LaunchAgent plist registered via SMAppService.agent so portholed
+/// runs as its own launchd job and can vend the attach MachService.
+pub const LAUNCH_AGENT_PLIST: &str = "apps/macos/bundle/LaunchAgents/work.flotilla.porthole.daemon.plist";
+pub const LAUNCH_AGENT_PLIST_NAME: &str = "work.flotilla.porthole.daemon.plist";
 
 #[derive(Debug)]
 pub struct BundleOptions {
@@ -107,11 +111,16 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     let contents = app.join("Contents");
     let macos_dir = contents.join("MacOS");
     let resources_dir = contents.join("Resources");
+    let launch_agents_dir = contents.join("Library").join("LaunchAgents");
     create_dir_all(&macos_dir)?;
     create_dir_all(&resources_dir)?;
+    create_dir_all(&launch_agents_dir)?;
 
     copy_file(Path::new(INFO_PLIST), &contents.join("Info.plist"))?;
     copy_file(Path::new(ICON), &resources_dir.join("icon.png"))?;
+    // Copy before codesign so the LaunchAgent plist is sealed into the app's
+    // signature (SMAppService validates the bundled plist against it).
+    copy_file(Path::new(LAUNCH_AGENT_PLIST), &launch_agents_dir.join(LAUNCH_AGENT_PLIST_NAME))?;
     copy_executable(&helper_bin, &macos_dir.join("PortholeHelper"))?;
     copy_executable(&daemon_bin, &macos_dir.join("portholed"))?;
     copy_executable(&cli_bin, &macos_dir.join("porthole"))?;
