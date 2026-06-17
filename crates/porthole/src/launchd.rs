@@ -1,15 +1,19 @@
-//! Thin wrappers over `launchctl` for the install / onboard flows.
+//! Thin wrappers over `launchctl` for the onboard flow.
 //!
-//! Used from `commands::install` (load + unload the LaunchAgent) and
-//! `commands::onboard` (kickstart between permission grants so the daemon's
-//! cached AX/SR trust state refreshes). All three operations target the
-//! per-user GUI session domain (`gui/$UID`), which is the right scope for a
-//! TCC-bound daemon — a system LaunchDaemon would have no per-user identity
-//! for grants to attach to.
+//! Used from `commands::onboard` to kickstart the daemon between permission
+//! grants so its cached AX/SR trust state refreshes. The daemon itself is
+//! registered as a launchd LaunchAgent by the macOS helper via
+//! `SMAppService.agent` (see `apps/macos`), not from here. These operations
+//! target the per-user GUI session domain (`gui/$UID`), which is the right
+//! scope for a TCC-bound daemon — a system LaunchDaemon would have no per-user
+//! identity for grants to attach to.
 
-use std::{io, path::Path, process::Command};
+use std::{io, process::Command};
 
-pub const LAUNCH_AGENT_LABEL: &str = "work.flotilla.porthole";
+/// launchd job label of the portholed daemon agent. Must match the `Label` in
+/// the bundled plist (`apps/macos/bundle/LaunchAgents/...daemon.plist`)
+/// registered via SMAppService, so onboard's kickstart targets the right job.
+pub const LAUNCH_AGENT_LABEL: &str = "work.flotilla.porthole.daemon";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchctlError {
@@ -33,51 +37,8 @@ unsafe extern "C" {
     fn libc_getuid() -> u32;
 }
 
-fn target() -> String {
-    format!("gui/{}", current_uid())
-}
-
 fn service_target() -> String {
     format!("gui/{}/{LAUNCH_AGENT_LABEL}", current_uid())
-}
-
-/// `launchctl bootstrap gui/$UID <plist>`. Loads and starts the agent.
-pub fn bootstrap(plist_path: &Path) -> Result<(), LaunchctlError> {
-    let output = Command::new("launchctl").args(["bootstrap", &target()]).arg(plist_path).output()?;
-    if !output.status.success() {
-        return Err(LaunchctlError::NonZero {
-            action: "bootstrap",
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        });
-    }
-    Ok(())
-}
-
-/// `launchctl bootout gui/$UID <plist>`. Idempotent: non-zero exit (typically
-/// 113/EALREADY when the service isn't loaded) is the expected case on
-/// fresh installs and is treated as success. Exec failure (launchctl missing
-/// entirely) still surfaces as `Exec`. Other non-zero exits (permission
-/// errors, malformed plist, etc.) are non-fatal — bootout is best-effort
-/// before we re-write the plist anyway — but they're logged at warn so
-/// operators have a signal something unexpected happened.
-pub fn bootout(plist_path: &Path) -> Result<(), LaunchctlError> {
-    let output = Command::new("launchctl").args(["bootout", &target()]).arg(plist_path).output()?;
-    if !output.status.success() {
-        // launchctl bootout exits 113 (EALREADY in some macOS versions, or a
-        // generic "service not loaded" code in others) when there's nothing
-        // to unload. That's the common path. Log everything else.
-        let code = output.status.code().unwrap_or(-1);
-        if code != 113 {
-            tracing::warn!(
-                exit_code = code,
-                stderr = %String::from_utf8_lossy(&output.stderr).trim_end(),
-                plist = %plist_path.display(),
-                "launchctl bootout returned non-zero exit; continuing",
-            );
-        }
-    }
-    Ok(())
 }
 
 /// Restart the daemon: `launchctl kickstart -k gui/$UID/<label>` to kill,
@@ -88,14 +49,13 @@ pub fn bootout(plist_path: &Path) -> Result<(), LaunchctlError> {
 /// loaded once per process and not refreshed, so a restart is the only way
 /// to make the daemon see a freshly granted permission.
 ///
-/// Why two steps: on macOS Tahoe (26 / Darwin 25), `kickstart -k` sends
-/// SIGTERM and then defers to the plist's KeepAlive policy. Our plist sets
-/// `KeepAlive={Crashed:true}`, which per `launchd.plist(5)` excludes
-/// SIGTERM from the crash set — so the daemon stays down after `-k` alone.
-/// Plain `kickstart` is documented to "run the specified service
-/// immediately, regardless of its configured launch conditions", which
-/// brings it back up. No-op if `-k` did restart on its own (older launchd
-/// versions, or a fast race where the daemon's already up again).
+/// Why two steps: `kickstart -k` sends SIGTERM and then defers to the plist's
+/// KeepAlive policy. The bundled daemon plist sets `KeepAlive=true`, so launchd
+/// relaunches the daemon on its own after the SIGTERM. The trailing plain
+/// `kickstart` is a belt-and-suspenders no-op — documented to "run the
+/// specified service immediately, regardless of its configured launch
+/// conditions" — that also covers a KeepAlive policy change or a fast race
+/// where the daemon is already back up.
 pub fn kickstart_kill() -> Result<(), LaunchctlError> {
     let target = service_target();
     run_launchctl_kickstart("kickstart -k", &["kickstart", "-k", &target])?;
