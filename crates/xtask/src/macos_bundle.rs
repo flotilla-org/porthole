@@ -241,3 +241,22 @@ fn format_command_owned(command: &str, args: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    /// Drift guard: the bundled daemon plist declares the attach MachService by
+    /// literal string (a static plist can't reference a Rust constant), but
+    /// portholed only answers on `MACOS_NATIVE_ATTACH_MACH_SERVICE`. If the two
+    /// ever diverge the attach server silently won't be found, so pin them here.
+    #[test]
+    fn bundled_plist_declares_the_attach_mach_service() {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let plist = std::fs::read_to_string(workspace_root.join(super::LAUNCH_AGENT_PLIST))
+            .expect("bundled daemon plist should be readable from the workspace root");
+        let service = porthole_protocol::capture_sessions::MACOS_NATIVE_ATTACH_MACH_SERVICE;
+        assert!(
+            plist.contains(&format!("<key>{service}</key>")),
+            "bundled daemon plist must declare the MachServices key {service:?} (got:\n{plist})"
+        );
+    }
+}
