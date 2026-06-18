@@ -62,8 +62,9 @@ enum Command {
         #[command(subcommand)]
         command: kwin_cmd::KwinCommand,
     },
-    /// Install Porthole.app to /Applications, symlink the CLI into ~/.local/bin,
-    /// and register a LaunchAgent so the daemon starts at login.
+    /// Install Porthole.app to /Applications and symlink the CLI into
+    /// ~/.local/bin. Open the app once afterwards: the helper registers the
+    /// background daemon with launchd (SMAppService) so it starts at login.
     /// Run from inside the bundle (`./target/<profile>/Porthole.app/Contents/MacOS/porthole install`).
     Install {
         /// Install per-user (~/Applications) instead of system-wide (/Applications).
@@ -75,18 +76,15 @@ enum Command {
         /// Skip the ~/.local/bin/porthole symlink.
         #[arg(long)]
         no_symlink: bool,
-        /// Skip the LaunchAgent (daemon won't auto-start at login).
-        #[arg(long)]
-        no_launch_agent: bool,
     },
-    /// Reverse of `install`. Removes the LaunchAgent, the ~/.local/bin/porthole
-    /// symlink, and (by default) the bundle. TCC grants persist; clear with
-    /// `tccutil reset` if needed.
+    /// Reverse of `install`. Removes the ~/.local/bin/porthole symlink and (by
+    /// default) the bundle; removing the bundle also removes the launchd
+    /// registration. TCC grants persist; clear with `tccutil reset` if needed.
     Uninstall {
         /// The installation to remove was per-user.
         #[arg(long)]
         user: bool,
-        /// Don't remove the bundle itself; only undo the LaunchAgent + symlink.
+        /// Don't remove the bundle itself; only undo the symlink.
         #[arg(long)]
         keep_bundle: bool,
     },
@@ -657,12 +655,7 @@ async fn main() -> std::process::ExitCode {
             status_cmd::StatusOutcome::Up => Ok(()),
             status_cmd::StatusOutcome::Down => return std::process::ExitCode::from(1),
         },
-        Command::Install {
-            user,
-            force,
-            no_symlink,
-            no_launch_agent,
-        } => {
+        Command::Install { user, force, no_symlink } => {
             install_cmd::install(install_cmd::InstallOptions {
                 prefix: if user {
                     install_cmd::InstallPrefix::User
@@ -671,7 +664,6 @@ async fn main() -> std::process::ExitCode {
                 },
                 force,
                 skip_symlink: no_symlink,
-                skip_launch_agent: no_launch_agent,
             })
             .await
         }

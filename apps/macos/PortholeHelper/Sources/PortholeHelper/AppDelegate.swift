@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             registerLoginItem: { LoginItemRegistrar().registerIfNeeded() },
             startSupervisor: { [weak self] in
                 guard let self else { return }
-                let nextSupervisor = DaemonSupervisor(daemonURL: paths.daemonURL, cliURL: paths.cliURL) { [weak self] state in
+                let nextSupervisor = DaemonSupervisor(cliURL: paths.cliURL) { [weak self] state in
                     self?.render(state)
                 }
                 supervisor = nextSupervisor
@@ -59,14 +59,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func render(_ state: DaemonSupervisor.State) {
         switch state {
-        case .stopped:
-            statusMenuItem?.title = "Daemon: stopped"
-        case .running(let pid):
-            statusMenuItem?.title = "Daemon: running (\(pid))"
-        case .runningExternal:
-            statusMenuItem?.title = "Daemon: already running"
-        case .crashed(let status):
-            statusMenuItem?.title = "Daemon: restarting after exit \(status)"
+        case .registering:
+            statusMenuItem?.title = "Daemon: starting"
+        case .running:
+            statusMenuItem?.title = "Daemon: running"
+        case .unresponsive:
+            statusMenuItem?.title = "Daemon: not responding"
+        case .needsApproval:
+            statusMenuItem?.title = "Daemon: approve in System Settings"
+        case .failed(let reason):
+            statusMenuItem?.title = "Daemon: failed (\(reason))"
         }
     }
 

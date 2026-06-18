@@ -10,6 +10,11 @@ repository.workspace = true
 clap = { workspace = true }
 thiserror = { workspace = true }
 
+[dev-dependencies]
+# Drift guard only: the bundled daemon plist must declare the same MachService
+# name that portholed advertises via MACOS_NATIVE_ATTACH_MACH_SERVICE.
+porthole-protocol = { path = "../porthole-protocol" }
+
 [lib]
 name = "xtask"
 path = "src/lib.rs"

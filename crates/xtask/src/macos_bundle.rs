@@ -11,6 +11,10 @@ use crate::macos_helper;
 
 pub const INFO_PLIST: &str = "apps/macos/bundle/Info.plist";
 pub const ICON: &str = "apps/macos/bundle/Resources/icon.png";
+/// Bundled LaunchAgent plist registered via SMAppService.agent so portholed
+/// runs as its own launchd job and can vend the attach MachService.
+pub const LAUNCH_AGENT_PLIST: &str = "apps/macos/bundle/LaunchAgents/work.flotilla.porthole.daemon.plist";
+pub const LAUNCH_AGENT_PLIST_NAME: &str = "work.flotilla.porthole.daemon.plist";
 
 #[derive(Debug)]
 pub struct BundleOptions {
@@ -107,11 +111,16 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     let contents = app.join("Contents");
     let macos_dir = contents.join("MacOS");
     let resources_dir = contents.join("Resources");
+    let launch_agents_dir = contents.join("Library").join("LaunchAgents");
     create_dir_all(&macos_dir)?;
     create_dir_all(&resources_dir)?;
+    create_dir_all(&launch_agents_dir)?;
 
     copy_file(Path::new(INFO_PLIST), &contents.join("Info.plist"))?;
     copy_file(Path::new(ICON), &resources_dir.join("icon.png"))?;
+    // Copy before codesign so the LaunchAgent plist is sealed into the app's
+    // signature (SMAppService validates the bundled plist against it).
+    copy_file(Path::new(LAUNCH_AGENT_PLIST), &launch_agents_dir.join(LAUNCH_AGENT_PLIST_NAME))?;
     copy_executable(&helper_bin, &macos_dir.join("PortholeHelper"))?;
     copy_executable(&daemon_bin, &macos_dir.join("portholed"))?;
     copy_executable(&cli_bin, &macos_dir.join("porthole"))?;
@@ -231,4 +240,34 @@ fn format_command_owned(command: &str, args: &[String]) -> String {
         .chain(args.iter().cloned())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    /// Drift guard: the bundled daemon plist declares the attach MachService by
+    /// literal string (a static plist can't reference a Rust constant), but
+    /// portholed only answers on `MACOS_NATIVE_ATTACH_MACH_SERVICE`. If the two
+    /// ever diverge the attach server silently won't be found, so pin them here.
+    #[test]
+    fn bundled_plist_declares_the_attach_mach_service() {
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let plist = std::fs::read_to_string(workspace_root.join(super::LAUNCH_AGENT_PLIST))
+            .expect("bundled daemon plist should be readable from the workspace root");
+        let service = porthole_protocol::capture_sessions::MACOS_NATIVE_ATTACH_MACH_SERVICE;
+        assert!(
+            plist.contains(&format!("<key>{service}</key>")),
+            "bundled daemon plist must declare the MachServices key {service:?} (got:\n{plist})"
+        );
+
+        // The Label must match the plist file name (sans .plist), which is the
+        // launchd job id onboard's `kickstart`/`is_loaded` target. A mismatch
+        // would silently misdirect restarts to a non-existent job.
+        let label = super::LAUNCH_AGENT_PLIST_NAME
+            .strip_suffix(".plist")
+            .expect("plist name ends in .plist");
+        assert!(
+            plist.contains(&format!("<string>{label}</string>")),
+            "bundled daemon plist Label must be {label:?} (got:\n{plist})"
+        );
+    }
 }

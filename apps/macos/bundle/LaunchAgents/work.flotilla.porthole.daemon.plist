@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>work.flotilla.porthole.daemon</string>
+    <!-- BundleProgram is resolved relative to the .app bundle root and is only
+         honored for plists registered via SMAppService. This keeps portholed
+         its own launchd job (Docker dockerd model) rather than a child of the
+         helper, so it can vend the attach MachService and own its TCC grants. -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/portholed</string>
+    <!-- The launchd job that declares a MachServices name is the only process
+         that can vend it (bootstrap_check_in). portholed answers attach here. -->
+    <key>MachServices</key>
+    <dict>
+        <key>work.flotilla.porthole.attach</key>
+        <true/>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- Aqua: load only in the GUI login session so portholed runs with the
+         window-server/TCC context it needs for capture. -->
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>
