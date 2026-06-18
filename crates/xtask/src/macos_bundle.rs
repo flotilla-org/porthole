@@ -258,5 +258,16 @@ mod tests {
             plist.contains(&format!("<key>{service}</key>")),
             "bundled daemon plist must declare the MachServices key {service:?} (got:\n{plist})"
         );
+
+        // The Label must match the plist file name (sans .plist), which is the
+        // launchd job id onboard's `kickstart`/`is_loaded` target. A mismatch
+        // would silently misdirect restarts to a non-existent job.
+        let label = super::LAUNCH_AGENT_PLIST_NAME
+            .strip_suffix(".plist")
+            .expect("plist name ends in .plist");
+        assert!(
+            plist.contains(&format!("<string>{label}</string>")),
+            "bundled daemon plist Label must be {label:?} (got:\n{plist})"
+        );
     }
 }
