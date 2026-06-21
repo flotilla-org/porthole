@@ -45,9 +45,13 @@ remains addable without an ABI break.
 - **Broker-less floor: trust is environmental.** In the component case — a
   consumer forks a producer and they share inherited fds — naming, auth, and
   trust are entirely OS-provided (permissions, namespaces). Jackstay's *core* adds
-  nothing mandatory here; names/tokens are a coordinator-supplied layer on top.
+  nothing mandatory here; names/tokens are a coordinator-supplied layer on top
+  (consistent with ADR-0006: authority lives outside, porthole only verifies).
   This is already the right shape: `AttachEndpoint::new` takes
   `expected_bearer: Option<String>` — auth is optional today. Keep it optional.
+  Note this is a *design-possible* topology under these invariants, not a v1
+  scope change: per ADR-0007 the supported introduction path in v1 remains the
+  broker; direct no-coordinator rings stay out of scope until a need lands.
 
 ## Setup is capability + expectation declaration (deferred, not precluded)
 
@@ -77,7 +81,9 @@ Once katzensteg (Zig), the libghostty-vt fork (Zig), cleat, and `capture-viewer-
    producer, so translators need no special API and reverse/bidirectional streams
    are not a separate mechanism.
 3. **No mandatory auth/naming in the core** — a coordinator-supplied layer only
-   (`expected_bearer: Option`).
+   (`expected_bearer: Option`); consistent with ADR-0006 (jackstay core stays
+   enforcement-free; authority/verification is a coordinator/platform-helper
+   concern).
 4. **Setup is a capability/expectation *descriptor*, not "connect to this concrete
    surface"** — so a coordinator can interpose translators later without either
    endpoint changing.
@@ -151,5 +157,8 @@ freeze.** Linux is the one thing standing between here and a freezable ABI.
 
 Extends ADR-0004 (handle-first + fence in v1), ADR-0005 (one library / stable C
 ABI / extract-after-proven / descriptor general from day one), and ADR-0007
-(coordinator/broker split; hot path bypasses the broker). Consistent with
-ADR-0002 / ADR-0003 (name wire types after concepts, not one OS's vocabulary).
+(coordinator/broker split; hot path bypasses the broker; direct no-coordinator
+rings out of scope for v1). Invariant #3 is consistent with ADR-0006 (authority
+is a coordinator/platform-helper concern; jackstay core stays enforcement-free).
+Consistent with ADR-0002 / ADR-0003 (name wire types after concepts, not one
+OS's vocabulary).
