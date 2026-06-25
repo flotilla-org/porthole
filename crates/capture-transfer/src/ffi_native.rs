@@ -3,8 +3,10 @@
 //! borrowed surface/sync descriptors, acquire explicit frame leases, and
 //! release each lease when the native surface is reusable.
 
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     ffi::{CStr, c_char, c_void},
     mem::size_of,
     time::{Duration, Instant},
@@ -206,6 +208,7 @@ pub struct FtNativeAttach {
     producer_stopped: bool,
     producer_stopped_event_emitted: bool,
     lease_book: NativeLeaseBook,
+    #[cfg(target_os = "linux")]
     release_syncs: HashMap<u64, FtNativeSync>,
 }
 
@@ -280,6 +283,7 @@ impl FtNativeAttach {
             producer_stopped: false,
             producer_stopped_event_emitted: false,
             lease_book: NativeLeaseBook::new(),
+            #[cfg(target_os = "linux")]
             release_syncs: HashMap::new(),
         }))
     }
@@ -385,6 +389,7 @@ impl FtNativeAttach {
             producer_stopped: false,
             producer_stopped_event_emitted: false,
             lease_book: NativeLeaseBook::new(),
+            #[cfg(target_os = "linux")]
             release_syncs: HashMap::new(),
         }))
     }
@@ -793,7 +798,8 @@ pub unsafe extern "C" fn ft_native_register_release_sync(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        return FT_STATUS_UNSUPPORTED;
+        let _ = attach;
+        FT_STATUS_UNSUPPORTED
     }
     #[cfg(target_os = "linux")]
     {
