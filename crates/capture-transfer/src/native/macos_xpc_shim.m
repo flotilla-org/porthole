@@ -39,10 +39,11 @@ static char *porthole_xpc_copy_error(NSString *message) {
 @protocol PortholeAttachXpc
 - (void)authorizeWithToken:(NSString *)token reply:(void (^)(int32_t status))reply;
 - (void)attachWithConsumerId:(uint64_t)consumerId
-                       reply:(void (^)(int32_t status,
-                                       uint64_t consumerSlot,
-                                       NSFileHandle *ringFd,
-                                       uint64_t ringMapLen,
+	                       reply:(void (^)(int32_t status,
+	                                       uint64_t consumerId,
+	                                       uint64_t consumerSlot,
+	                                       NSFileHandle *ringFd,
+	                                       uint64_t ringMapLen,
                                        uint64_t poolId,
                                        NSArray *surfaces,
                                        uint64_t fenceId,
@@ -52,12 +53,12 @@ static char *porthole_xpc_copy_error(NSString *message) {
 static NSXPCInterface *porthole_attach_interface(void) {
   NSXPCInterface *interface = [NSXPCInterface interfaceWithProtocol:@protocol(PortholeAttachXpc)];
   SEL attach = @selector(attachWithConsumerId:reply:);
-  [interface setClasses:[NSSet setWithObject:[NSFileHandle class]] forSelector:attach argumentIndex:2 ofReply:YES];
+  [interface setClasses:[NSSet setWithObject:[NSFileHandle class]] forSelector:attach argumentIndex:3 ofReply:YES];
   [interface setClasses:[NSSet setWithObjects:[NSArray class], [IOSurface class], nil]
             forSelector:attach
-          argumentIndex:5
+          argumentIndex:6
                 ofReply:YES];
-  [interface setClasses:[NSSet setWithObject:[MTLSharedEventHandle class]] forSelector:attach argumentIndex:7 ofReply:YES];
+  [interface setClasses:[NSSet setWithObject:[MTLSharedEventHandle class]] forSelector:attach argumentIndex:8 ofReply:YES];
   return interface;
 }
 
