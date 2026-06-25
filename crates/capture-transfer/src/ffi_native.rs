@@ -1017,9 +1017,9 @@ mod tests {
     };
 
     use super::{
-        FT_NATIVE_ATTACH_TRANSPORT_MACOS_XPC, FT_NATIVE_HANDLE_IOSURFACE, FT_NATIVE_RELEASE_NOW, FT_NATIVE_SYNC_MTL_SHARED_EVENT,
-        FtNativeAttach, FtNativeAttachDescriptor, FtNativeFrame, FtNativeGrant, FtNativeRelease, ft_native_acquire_latest,
-        ft_native_attach_grant, ft_native_poll_event, ft_native_release_frame, ft_native_wait_frame,
+        FT_NATIVE_ATTACH_TRANSPORT_MACOS_XPC, FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED, FT_NATIVE_HANDLE_IOSURFACE, FT_NATIVE_RELEASE_NOW,
+        FT_NATIVE_SYNC_MTL_SHARED_EVENT, FtNativeAttach, FtNativeAttachDescriptor, FtNativeFrame, FtNativeGrant, FtNativeRelease,
+        ft_native_acquire_latest, ft_native_attach_grant, ft_native_poll_event, ft_native_release_frame, ft_native_wait_frame,
     };
     use crate::{
         ffi::{FT_STATUS_EMPTY, FT_STATUS_OK, FT_STATUS_TIMEOUT},
@@ -1129,6 +1129,9 @@ mod tests {
             pool_id: 0,
             config_generation: 0,
         };
+        assert_eq!(unsafe { ft_native_poll_event(attach_ptr, &mut event) }, FT_STATUS_OK);
+        assert_eq!(event.kind, FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED);
+        assert_eq!(event.pool_id, frame.pool_id);
         assert_eq!(unsafe { ft_native_poll_event(attach_ptr, &mut event) }, FT_STATUS_EMPTY);
 
         unsafe { super::ft_native_attach_destroy(attach_ptr) };
