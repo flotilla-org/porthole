@@ -14,6 +14,9 @@ crate-type = ["rlib", "cdylib"]
 # than bare cfg(target_os) so mac builds that only need the CPU path skip
 # the Metal/IOSurface linkage; the crate split is deferred (#84).
 backend-macos = ["dep:cc"]
+# Linux native transport/backend work (dmabuf + drm_syncobj). The first
+# slices add the UDS + SCM_RIGHTS attach transport before the real backend.
+backend-linux = ["dep:cc"]
 
 [build-dependencies]
 cc = { version = "1", optional = true }

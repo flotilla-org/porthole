@@ -13,7 +13,10 @@
 //! service (ADR-0007, #84) because `MTLSharedEventHandle` refuses plain
 //! serialization. Tests drive the protocol with an in-memory fake transport.
 
-use std::os::fd::OwnedFd;
+use std::{
+    os::fd::OwnedFd,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use thiserror::Error;
 
@@ -28,7 +31,8 @@ pub enum AttachRequest {
     /// Present a bearer token. Must precede `Attach` when the endpoint
     /// requires authorization.
     Authorize { bearer_token: String },
-    /// Request the one-time handle transfer for `consumer_id`.
+    /// Request the one-time handle transfer for `consumer_id`; 0 means the
+    /// endpoint assigns one.
     Attach { consumer_id: u64 },
 }
 
@@ -68,6 +72,14 @@ pub struct AttachGrant<S, Y> {
     pub sync_handle: Y,
 }
 
+#[derive(Debug)]
+pub struct AttachPool<S> {
+    pub pool_id: u64,
+    pub pool_slot_count: u32,
+    /// One surface handle per pool slot, indexed by `slot_id`.
+    pub surface_handles: Vec<S>,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum AttachError {
     #[error("attach requires authorization first")]
@@ -76,8 +88,6 @@ pub enum AttachError {
     InvalidToken,
     #[error("consumer is already attached on this session")]
     AlreadyAttached,
-    #[error("consumer id must be non-zero")]
-    InvalidConsumerId,
     #[error("assembling the attach grant failed: {0}")]
     Grant(#[from] CaptureTransferError),
 }
@@ -99,6 +109,8 @@ pub struct AttachEndpoint {
     /// `Some` requires a matching `Authorize` before `Attach`.
     expected_bearer: Option<String>,
 }
+
+static NEXT_ASSIGNED_CONSUMER_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Token equality that does not leak how many leading bytes matched through
 /// timing. Length still leaks; tokens are fixed-format so that reveals
@@ -150,9 +162,14 @@ impl AttachEndpoint {
                 if session.attached {
                     return Err(AttachError::AlreadyAttached);
                 }
-                if consumer_id == 0 {
-                    return Err(AttachError::InvalidConsumerId);
-                }
+                let consumer_id = if consumer_id == 0 {
+                    // Keep assigned ids out of the ordinary user-provided
+                    // range so broker-less callers can still use small,
+                    // meaningful ids without colliding with generated ones.
+                    (1_u64 << 63) | NEXT_ASSIGNED_CONSUMER_ID.fetch_add(1, Ordering::Relaxed)
+                } else {
+                    consumer_id
+                };
                 let grant = producer.grant_attach(consumer_id)?;
                 session.attached = true;
                 Ok(AttachResponse::Granted(Box::new(grant)))
@@ -352,15 +369,17 @@ mod tests {
     }
 
     #[test]
-    fn zero_consumer_id_is_rejected() {
+    fn zero_consumer_id_requests_assigned_consumer_id() {
         let registry = FakeSurfaceRegistry::default();
         let mut producer = producer(&registry);
-        let mut transport = FakeTransport::new(None);
 
-        let error = transport
-            .request(&mut producer, AttachRequest::Attach { consumer_id: 0 })
-            .unwrap_err();
-        assert_eq!(error, AttachError::InvalidConsumerId);
+        let first = attach(&mut FakeTransport::new(None), &mut producer, 0);
+        let second = attach(&mut FakeTransport::new(None), &mut producer, 0);
+
+        assert_ne!(first.consumer_id, 0);
+        assert_ne!(second.consumer_id, 0);
+        assert_ne!(first.consumer_id, second.consumer_id);
+        assert_ne!(first.consumer_slot, second.consumer_slot);
     }
 
     #[test]

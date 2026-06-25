@@ -192,11 +192,16 @@ Notes from dogfood smoke:
 
 ## Branch 7: `kwin-pipewire-recording`
 
-- [ ] Implement PipeWire ScreenCast session setup through xdg-desktop-portal.
-- [ ] Map stream frames into Porthole's existing capture-transfer model.
-- [ ] Decide CPU baseline first before dmabuf/native handle transfer.
+- [x] Implement PipeWire ScreenCast session setup through xdg-desktop-portal.
+- [x] Map stream frames into Porthole's capture-transfer native dmabuf model.
+- [x] Decide against a CPU-first baseline for this branch. ADR-0009 makes Linux
+  the native ABI freeze gate, so the implementation proves PipeWire dmabuf,
+  DRM syncobj timeline sync, UDS attach, explicit leases, and release before
+  adding any CPU convenience path.
 - [ ] Preserve ordered recording cursor semantics.
 - [ ] Extend Portal consent handling for long-lived capture sessions.
+- [ ] Run the ignored live native smoke from a real KDE/Wayland session:
+  `PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 cargo test -p portholed --locked live_kde_pipewire_native_session_attaches_and_acquires_one_dmabuf_frame -- --ignored --nocapture`.
 - [ ] Add recording CLI smoke analogous to macOS recording where possible.
 
 ## Deferred Work

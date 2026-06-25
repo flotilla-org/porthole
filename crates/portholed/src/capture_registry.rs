@@ -38,6 +38,8 @@ use crate::agent_store::AgentPolicyStore;
 
 #[cfg(target_os = "macos")]
 mod native_session;
+#[cfg(target_os = "linux")]
+mod native_session_linux;
 
 #[derive(Clone)]
 pub struct CaptureRegistry {
@@ -64,10 +66,12 @@ struct CaptureRegistryInner {
     /// sessions, keyed by session id. Dropping a hold tears down its session.
     #[cfg(target_os = "macos")]
     native_holds: HashMap<String, native_session::NativeSessionHold>,
+    #[cfg(target_os = "linux")]
+    native_holds: HashMap<String, native_session_linux::LinuxNativeSessionHold>,
     /// Reserved while a native session is starting, before its hold exists.
     /// Collapses the one-session check-and-reserve into a single locked step
     /// so two concurrent native creates can't both pass the limit.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     native_session_starting: bool,
 }
 
@@ -537,14 +541,14 @@ impl CaptureRegistry {
     fn remove_session(&self, session_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.sessions.remove(session_id);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             inner.native_holds.remove(session_id);
         }
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         inner.native_holds.remove(session_id);
         inner
             .sessions
@@ -562,6 +566,16 @@ impl CaptureRegistry {
         owner_agent_id: AgentId,
     ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
         native_session::create(self, surface, owner_agent_id).await
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn create_native_surface_session(
+        &self,
+        kwin_adapter: Arc<porthole_adapter_kwin::KWinAdapter>,
+        surface: SurfaceInfo,
+        owner_agent_id: AgentId,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        native_session_linux::create(self, kwin_adapter, surface, owner_agent_id).await
     }
 
     fn mark_session_failed(&self, session_id: &str, message: String) {

@@ -6,6 +6,9 @@ use portholed::runtime::socket_path;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(target_os = "linux")]
+type LinuxAdapterBuild = (Arc<dyn porthole_core::adapter::Adapter>, Option<(Arc<KWinAdapter>, KWinBridge)>);
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()
@@ -13,7 +16,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     #[cfg(target_os = "linux")]
-    let (adapter, kwin_bridge) = build_adapter();
+    let (adapter, kwin) = build_adapter();
     #[cfg(not(target_os = "linux"))]
     let adapter = build_adapter();
 
@@ -35,9 +38,9 @@ async fn main() -> std::io::Result<()> {
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     #[cfg(target_os = "linux")]
     {
-        if let Some(kwin_bridge) = kwin_bridge {
+        if let Some((kwin_adapter, kwin_bridge)) = kwin {
             portholed::server::serve_with_agent_policy_and_kwin_bridge(
-                adapter,
+                kwin_adapter,
                 path,
                 agent_store,
                 portholed::events::EventBus::new(),
@@ -60,10 +63,11 @@ fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
 }
 
 #[cfg(target_os = "linux")]
-fn build_adapter() -> (Arc<dyn porthole_core::adapter::Adapter>, Option<KWinBridge>) {
+fn build_adapter() -> LinuxAdapterBuild {
     if looks_like_kde_wayland() {
         let kwin_bridge = KWinBridge::new();
-        return (Arc::new(KWinAdapter::new(kwin_bridge.clone())), Some(kwin_bridge));
+        let kwin_adapter = Arc::new(KWinAdapter::new(kwin_bridge.clone()));
+        return (kwin_adapter.clone(), Some((kwin_adapter, kwin_bridge)));
     }
     tracing::warn!("no native adapter for this Linux session; falling back to in-memory adapter");
     (Arc::new(porthole_core::in_memory::InMemoryAdapter::new()), None)

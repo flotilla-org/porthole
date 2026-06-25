@@ -8,8 +8,7 @@ use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureS
 use serde::Deserialize;
 
 /// Query for `POST /capture-sessions/surfaces/{id}`. `native=true` requests
-/// the macOS IOSurface/Metal path (XPC attach); the default is the CPU-shm
-/// fd-socket path.
+/// the platform native handle path; the default is the CPU-shm fd-socket path.
 #[derive(Debug, Default, Deserialize)]
 pub struct CaptureKindQuery {
     #[serde(default)]
@@ -86,12 +85,22 @@ async fn create_session(
         {
             return state.capture.create_native_surface_session(surface, agent_id).await;
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        {
+            let Some(kwin_adapter) = state.kwin_adapter.clone() else {
+                return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+                    ErrorCode::AdapterUnsupported,
+                    "native Linux capture sessions require a KDE Wayland KWin adapter",
+                )));
+            };
+            return state.capture.create_native_surface_session(kwin_adapter, surface, agent_id).await;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = (surface, agent_id);
             return Err(CaptureRegistryError::from_porthole(PortholeError::new(
                 ErrorCode::AdapterUnsupported,
-                "native capture sessions require a macOS backend-macos build",
+                "native capture sessions are unsupported on this platform",
             )));
         }
     }

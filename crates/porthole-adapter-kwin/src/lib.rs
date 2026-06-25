@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod screencast;
 
 mod launch;
 mod remote_desktop;
@@ -31,6 +32,7 @@ use tokio::{sync::Mutex, time::sleep};
 use crate::{
     bridge::KWinBridge,
     remote_desktop::{RemoteDesktopDevice, RemoteDesktopPortal, RemoteDesktopSession},
+    screencast::{ScreenCastPortal, ScreenCastSession},
     snapshot::{KWinSnapshotPayload, KWinWindow},
 };
 
@@ -42,6 +44,7 @@ pub struct KWinAdapter {
     bridge: KWinBridge,
     remote_desktop: RemoteDesktopPortal,
     remote_desktop_session: Arc<Mutex<Option<RemoteDesktopSession>>>,
+    screencast: ScreenCastPortal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,11 +60,16 @@ impl KWinAdapter {
             bridge,
             remote_desktop: RemoteDesktopPortal::new(),
             remote_desktop_session: Arc::new(Mutex::new(None)),
+            screencast: ScreenCastPortal::new(),
         }
     }
 
     pub fn bridge(&self) -> KWinBridge {
         self.bridge.clone()
+    }
+
+    pub async fn start_screencast_session(&self) -> Result<ScreenCastSession, PortholeError> {
+        self.screencast.start_window_session().await
     }
 
     fn no_snapshot_error() -> PortholeError {
