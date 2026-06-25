@@ -120,7 +120,11 @@ int porthole_native_linux_syncobj_timeline_wait(int drm_fd, uint32_t handle, uin
   request.points = (uintptr_t)points;
   request.count_handles = 1;
   request.flags = flags;
-  request.timeout_nsec = timeout_ns == UINT64_MAX ? INT64_MAX : now + (int64_t)timeout_ns;
+  if (timeout_ns == UINT64_MAX || timeout_ns > (uint64_t)(INT64_MAX - now)) {
+    request.timeout_nsec = INT64_MAX;
+  } else {
+    request.timeout_nsec = now + (int64_t)timeout_ns;
+  }
   if (ioctl(drm_fd, DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT, &request) != 0) {
     return porthole_native_linux_errno();
   }

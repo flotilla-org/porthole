@@ -464,11 +464,21 @@ where
 {
     let mut session = LinuxAttachStreamSession::new();
     while let Ok(request) = recv_json::<LinuxAttachRequest>(stream) {
-        let mut producer = match producer.lock() {
-            Ok(producer) => producer,
+        let passed_fds = match recv_linux_attach_request_fds(stream, &request) {
+            Ok(fds) => fds,
             Err(_) => break,
         };
-        if handle_linux_attach_request(stream, endpoint, &mut session, &mut producer, request).is_err() {
+        let outbound = {
+            let mut producer = match producer.lock() {
+                Ok(producer) => producer,
+                Err(_) => break,
+            };
+            match build_linux_attach_response(endpoint, &mut session, &mut producer, request, passed_fds) {
+                Ok(outbound) => outbound,
+                Err(_) => break,
+            }
+        };
+        if outbound.send(stream).is_err() {
             break;
         }
     }
@@ -484,85 +494,112 @@ where
     B: NativeFrameBackend<SurfaceHandle = LinuxSurfaceHandle, SyncHandle = LinuxSyncHandle> + LinuxNativeLeaseBackend,
 {
     let request = recv_json::<LinuxAttachRequest>(stream)?;
-    handle_linux_attach_request(stream, endpoint, session, producer, request)
+    let passed_fds = recv_linux_attach_request_fds(stream, &request)?;
+    build_linux_attach_response(endpoint, session, producer, request, passed_fds)?.send(stream)
 }
 
-fn handle_linux_attach_request<B>(
-    stream: &UnixStream,
+struct LinuxAttachOutbound {
+    response: LinuxAttachResponse,
+    fds: Vec<OwnedFd>,
+}
+
+impl LinuxAttachOutbound {
+    fn json(response: LinuxAttachResponse) -> Self {
+        Self { response, fds: Vec::new() }
+    }
+
+    fn with_fds(response: LinuxAttachResponse, fds: Vec<OwnedFd>) -> Self {
+        Self { response, fds }
+    }
+
+    fn send(self, stream: &UnixStream) -> Result<()> {
+        if self.fds.is_empty() {
+            send_json(stream, &self.response)
+        } else {
+            let raw_fds = self.fds.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
+            send_json_with_fds(stream, &self.response, &raw_fds)
+        }
+    }
+}
+
+fn recv_linux_attach_request_fds(stream: &UnixStream, request: &LinuxAttachRequest) -> Result<Option<Vec<OwnedFd>>> {
+    match request {
+        LinuxAttachRequest::RegisterReleaseSync { .. } => recv_fds(stream, LINUX_ATTACH_MAX_FDS).map(Some),
+        _ => Ok(None),
+    }
+}
+
+fn build_linux_attach_response<B>(
     endpoint: &AttachEndpoint,
     session: &mut LinuxAttachStreamSession,
     producer: &mut NativeTrackProducer<B>,
     request: LinuxAttachRequest,
-) -> Result<()>
+    passed_fds: Option<Vec<OwnedFd>>,
+) -> Result<LinuxAttachOutbound>
 where
     B: NativeFrameBackend<SurfaceHandle = LinuxSurfaceHandle, SyncHandle = LinuxSyncHandle> + LinuxNativeLeaseBackend,
 {
     match request {
         LinuxAttachRequest::Authorize { bearer_token } => {
             match endpoint.handle(&mut session.attach, producer, AttachRequest::Authorize { bearer_token }) {
-                Ok(AttachResponse::Authorized) => send_json(stream, &LinuxAttachResponse::Authorized),
-                Ok(AttachResponse::Granted(_)) => send_json(
-                    stream,
-                    &LinuxAttachResponse::Error {
-                        code: "invalid_state".to_string(),
-                        message: "authorize unexpectedly returned an attach grant".to_string(),
-                    },
-                ),
-                Err(error) => send_json(stream, &linux_attach_error_response(error)),
+                Ok(AttachResponse::Authorized) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Authorized)),
+                Ok(AttachResponse::Granted(_)) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+                    code: "invalid_state".to_string(),
+                    message: "authorize unexpectedly returned an attach grant".to_string(),
+                })),
+                Err(error) => Ok(LinuxAttachOutbound::json(linux_attach_error_response(error))),
             }
         }
         LinuxAttachRequest::Attach { consumer_id } => {
             match endpoint.handle(&mut session.attach, producer, AttachRequest::Attach { consumer_id }) {
                 Ok(AttachResponse::Granted(grant)) => {
                     let encoded = encode_linux_attach_grant(*grant)?;
-                    let raw_fds = encoded.raw_fds();
-                    send_json_with_fds(stream, &LinuxAttachResponse::Granted { grant: encoded.grant }, &raw_fds)
+                    Ok(LinuxAttachOutbound::with_fds(
+                        LinuxAttachResponse::Granted { grant: encoded.grant },
+                        encoded.fds,
+                    ))
                 }
-                Ok(AttachResponse::Authorized) => send_json(
-                    stream,
-                    &LinuxAttachResponse::Error {
-                        code: "invalid_state".to_string(),
-                        message: "attach unexpectedly returned authorization only".to_string(),
-                    },
-                ),
-                Err(error) => send_json(stream, &linux_attach_error_response(error)),
+                Ok(AttachResponse::Authorized) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+                    code: "invalid_state".to_string(),
+                    message: "attach unexpectedly returned authorization only".to_string(),
+                })),
+                Err(error) => Ok(LinuxAttachOutbound::json(linux_attach_error_response(error))),
             }
         }
-        LinuxAttachRequest::GetPool { pool_id } => match producer.export_current_pool() {
-            Ok(pool) if pool.pool_id == pool_id => {
+        LinuxAttachRequest::GetPool { pool_id } => match producer.export_pool(pool_id) {
+            Ok(pool) => {
                 let encoded = encode_linux_attach_pool(pool)?;
-                let raw_fds = encoded.raw_fds();
-                send_json_with_fds(stream, &LinuxAttachResponse::Pool { pool: encoded.pool }, &raw_fds)
+                Ok(LinuxAttachOutbound::with_fds(
+                    LinuxAttachResponse::Pool { pool: encoded.pool },
+                    encoded.fds,
+                ))
             }
-            Ok(_) => send_json(
-                stream,
-                &LinuxAttachResponse::Error {
-                    code: "not_found".to_string(),
-                    message: format!("pool id {pool_id} is not the current native pool"),
-                },
-            ),
-            Err(error) => send_json(stream, &linux_native_error_response(error)),
+            Err(CaptureTransferError::NativeBackend { .. }) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+                code: "not_found".to_string(),
+                message: format!("pool id {pool_id} is not active or recently retired"),
+            })),
+            Err(error) => Ok(LinuxAttachOutbound::json(linux_native_error_response(error))),
         },
         LinuxAttachRequest::AcquireLease { identity } => match producer.backend_mut().acquire_linux_lease(identity.into()) {
-            Ok(lease_id) => send_json(stream, &LinuxAttachResponse::LeaseAcquired { lease_id }),
-            Err(error) => send_json(stream, &linux_native_error_response(error)),
+            Ok(lease_id) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::LeaseAcquired { lease_id })),
+            Err(error) => Ok(LinuxAttachOutbound::json(linux_native_error_response(error))),
         },
         LinuxAttachRequest::RegisterReleaseSync { sync } => {
-            let fds = recv_fds(stream, LINUX_ATTACH_MAX_FDS)?;
+            let fds = passed_fds.ok_or_else(|| CaptureTransferError::FdPassing {
+                operation: "linux-register-release-sync",
+                message: "register release sync request did not include passed fds".to_string(),
+            })?;
             if let Err(error) = sync.validate_fd_indices(fds.len()) {
-                return send_json(
-                    stream,
-                    &LinuxAttachResponse::Error {
-                        code: "invalid_argument".to_string(),
-                        message: error.to_string(),
-                    },
-                );
+                return Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+                    code: "invalid_argument".to_string(),
+                    message: error.to_string(),
+                }));
             }
             let mut fds = LinuxFdTable::new(fds).into_fds();
             let fd = fds.swap_remove(sync.fd_index as usize);
             let release_sync_id = match producer.backend_mut().register_linux_release_sync(sync.clone(), fd) {
                 Ok(release_sync_id) => release_sync_id,
-                Err(error) => return send_json(stream, &linux_native_error_response(error)),
+                Err(error) => return Ok(LinuxAttachOutbound::json(linux_native_error_response(error))),
             };
             session.next_release_sync_id = session.next_release_sync_id.max(release_sync_id.saturating_add(1));
             session.release_syncs.insert(
@@ -572,24 +609,23 @@ where
                     _fds: LinuxFdTable::new(fds),
                 },
             );
-            send_json(stream, &LinuxAttachResponse::ReleaseSyncRegistered { release_sync_id })
+            Ok(LinuxAttachOutbound::json(LinuxAttachResponse::ReleaseSyncRegistered {
+                release_sync_id,
+            }))
         }
         LinuxAttachRequest::ReleaseFrame { release } => {
             let lease_id = release.lease_id();
             if let LinuxReleaseDescriptor::TimelineValue { release_sync_id, .. } = release
                 && session.registered_release_sync(release_sync_id).is_none()
             {
-                return send_json(
-                    stream,
-                    &LinuxAttachResponse::Error {
-                        code: "invalid_state".to_string(),
-                        message: format!("release sync id {release_sync_id} is not registered on this attach stream"),
-                    },
-                );
+                return Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+                    code: "invalid_state".to_string(),
+                    message: format!("release sync id {release_sync_id} is not registered on this attach stream"),
+                }));
             }
             match producer.backend_mut().release_linux_lease(lease_id, release.release()) {
-                Ok(()) => send_json(stream, &LinuxAttachResponse::FrameReleased),
-                Err(error) => send_json(stream, &linux_native_error_response(error)),
+                Ok(()) => Ok(LinuxAttachOutbound::json(LinuxAttachResponse::FrameReleased)),
+                Err(error) => Ok(LinuxAttachOutbound::json(linux_native_error_response(error))),
             }
         }
     }
@@ -629,22 +665,14 @@ struct EncodedLinuxAttachGrant {
     fds: Vec<OwnedFd>,
 }
 
-impl EncodedLinuxAttachGrant {
-    fn raw_fds(&self) -> Vec<RawFd> {
-        self.fds.iter().map(AsRawFd::as_raw_fd).collect()
-    }
-}
+impl EncodedLinuxAttachGrant {}
 
 struct EncodedLinuxAttachPool {
     pool: LinuxPoolDescriptor,
     fds: Vec<OwnedFd>,
 }
 
-impl EncodedLinuxAttachPool {
-    fn raw_fds(&self) -> Vec<RawFd> {
-        self.fds.iter().map(AsRawFd::as_raw_fd).collect()
-    }
-}
+impl EncodedLinuxAttachPool {}
 
 fn encode_linux_attach_grant(grant: AttachGrant<LinuxSurfaceHandle, LinuxSyncHandle>) -> Result<EncodedLinuxAttachGrant> {
     let mut fds = Vec::new();

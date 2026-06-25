@@ -96,7 +96,6 @@ const STATUS_OK: i32 = 0;
 const STATUS_NOT_AUTHORIZED: i32 = 1;
 const STATUS_INVALID_TOKEN: i32 = 2;
 const STATUS_ALREADY_ATTACHED: i32 = 3;
-const STATUS_INVALID_CONSUMER_ID: i32 = 4;
 const STATUS_GRANT_FAILED: i32 = 5;
 
 fn status_from_error(error: &AttachError) -> i32 {
@@ -104,7 +103,6 @@ fn status_from_error(error: &AttachError) -> i32 {
         AttachError::NotAuthorized => STATUS_NOT_AUTHORIZED,
         AttachError::InvalidToken => STATUS_INVALID_TOKEN,
         AttachError::AlreadyAttached => STATUS_ALREADY_ATTACHED,
-        AttachError::InvalidConsumerId => STATUS_INVALID_CONSUMER_ID,
         AttachError::Grant(_) => STATUS_GRANT_FAILED,
     }
 }
@@ -114,7 +112,6 @@ fn error_from_status(status: i32, operation: &'static str) -> AttachError {
         STATUS_NOT_AUTHORIZED => AttachError::NotAuthorized,
         STATUS_INVALID_TOKEN => AttachError::InvalidToken,
         STATUS_ALREADY_ATTACHED => AttachError::AlreadyAttached,
-        STATUS_INVALID_CONSUMER_ID => AttachError::InvalidConsumerId,
         STATUS_GRANT_FAILED => AttachError::Grant(CaptureTransferError::NativeBackend {
             operation,
             message: "producer-side grant assembly failed".to_string(),

@@ -124,15 +124,23 @@ pub fn recv_fds(stream: &UnixStream, max_fds: usize) -> Result<Vec<OwnedFd>> {
             });
         }
         let data = libc::CMSG_DATA(cmsg).cast::<RawFd>();
-        let mut received = Vec::with_capacity(fd_count);
-        for index in 0..fd_count {
-            let fd = *data.add(index);
-            if fd < 0 {
-                return Err(CaptureTransferError::MissingPassedFd);
-            }
-            received.push(OwnedFd::from_raw_fd(fd));
+        let raw_fds = std::slice::from_raw_parts(data, fd_count).to_vec();
+        let invalid_fd = raw_fds.iter().any(|fd| *fd < 0);
+        if invalid_fd {
+            close_raw_fds(&raw_fds);
+            return Err(CaptureTransferError::MissingPassedFd);
         }
-        Ok(received)
+        Ok(raw_fds.into_iter().map(|fd| OwnedFd::from_raw_fd(fd)).collect())
+    }
+}
+
+fn close_raw_fds(fds: &[RawFd]) {
+    for fd in fds.iter().copied().filter(|fd| *fd >= 0) {
+        // SAFETY: these fds were installed into this process by recvmsg and
+        // have not been wrapped in OwnedFd because the message was invalid.
+        unsafe {
+            libc::close(fd);
+        }
     }
 }
 

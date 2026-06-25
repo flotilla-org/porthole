@@ -257,7 +257,7 @@ async fn wait_prepared_response(
     let (response, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(portal_call_failed)?;
     match response {
         RESPONSE_SUCCESS => Ok(results),
-        RESPONSE_CANCELLED => Err(permission_needed("RemoteDesktop portal consent was cancelled")),
+        RESPONSE_CANCELLED => Err(portal_cancelled("RemoteDesktop portal consent was cancelled")),
         other => Err(PortholeError::new(
             ErrorCode::SystemPermissionRequestFailed,
             format!("RemoteDesktop portal request failed with response code {other}"),
@@ -492,6 +492,15 @@ fn portal_unavailable(reason: impl Into<String>) -> PortholeError {
     PortholeError::new(ErrorCode::SystemPermissionRequestFailed, reason.into()).with_details(json!({
         "permission": "remote_desktop",
         "reason": "RemoteDesktop portal is unavailable",
+        "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
+        "binary_path": current_exe(),
+    }))
+}
+
+fn portal_cancelled(reason: impl Into<String>) -> PortholeError {
+    PortholeError::new(ErrorCode::SystemPermissionRequestFailed, reason.into()).with_details(json!({
+        "permission": "remote_desktop",
+        "reason": "portal consent cancelled",
         "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
         "binary_path": current_exe(),
     }))

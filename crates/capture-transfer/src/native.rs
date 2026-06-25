@@ -22,7 +22,7 @@ pub mod linux;
 #[cfg(all(target_os = "macos", feature = "backend-macos"))]
 pub mod macos;
 
-use std::os::fd::OwnedFd;
+use std::{collections::VecDeque, os::fd::OwnedFd};
 
 use crate::{
     control_page::{PendingVideoRingEntry, VideoTrackControlPage},
@@ -185,6 +185,7 @@ pub struct NativeTrackProducer<B: NativeFrameBackend> {
     params: NativeStreamParams,
     page: VideoTrackControlPage,
     pool: B::SurfacePool,
+    retired_pools: VecDeque<B::SurfacePool>,
     pool_slot_count: u32,
     fence: B::Fence,
     exhaustion_policy: PoolExhaustionPolicy,
@@ -244,6 +245,7 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
             params,
             page,
             pool,
+            retired_pools: VecDeque::new(),
             pool_slot_count,
             fence,
             exhaustion_policy,
@@ -283,8 +285,12 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
                 message: format!("surface pool ({pool_slot_count} slots) must exceed the rounded ring capacity ({rounded_capacity})"),
             });
         }
+        let retired = std::mem::replace(&mut self.pool, pool);
+        self.retired_pools.push_back(retired);
+        while self.retired_pools.len() > 2 {
+            self.retired_pools.pop_front();
+        }
         self.params = params;
-        self.pool = pool;
         self.pool_slot_count = pool_slot_count;
         self.slot_cursors = vec![0; pool_slot_count as usize];
         self.next_slot_hint = 0;
@@ -412,11 +418,31 @@ impl<B: NativeFrameBackend> NativeTrackProducer<B> {
     /// re-sending the ring/fence grant. Existing attaches use this after a
     /// reconfiguration event.
     pub fn export_current_pool(&self) -> Result<AttachPool<B::SurfaceHandle>> {
+        self.export_pool(self.backend.pool_id(&self.pool))
+    }
+
+    /// Export the active or recently retired pool named by a ring entry.
+    pub fn export_pool(&self, pool_id: u64) -> Result<AttachPool<B::SurfaceHandle>> {
+        let pool = if self.backend.pool_id(&self.pool) == pool_id {
+            Some(&self.pool)
+        } else {
+            self.retired_pools.iter().find(|pool| self.backend.pool_id(pool) == pool_id)
+        }
+        .ok_or_else(|| CaptureTransferError::NativeBackend {
+            operation: "export-native-pool",
+            message: format!("pool id {pool_id} is not active or recently retired"),
+        })?;
+        let surface_handles = self.backend.export_surface_handles(pool)?;
         Ok(AttachPool {
-            pool_id: self.backend.pool_id(&self.pool),
-            pool_slot_count: self.pool_slot_count,
-            surface_handles: self.backend.export_surface_handles(&self.pool)?,
+            pool_id,
+            pool_slot_count: surface_handles.len() as u32,
+            surface_handles,
         })
+    }
+
+    #[must_use]
+    pub fn params(&self) -> &NativeStreamParams {
+        &self.params
     }
 
     /// The control page fd a consumer maps to read descriptors.
@@ -810,6 +836,9 @@ mod tests {
         assert_eq!(second.slot_id, 0);
         assert_eq!(second.config_generation, first.config_generation + 1);
         assert_eq!((second.width, second.height), (800, 600));
+        let retired_pool = producer.export_pool(first.pool_id).unwrap();
+        assert_eq!(retired_pool.pool_id, first.pool_id);
+        assert_eq!(retired_pool.surface_handles.len(), 3);
         assert_eq!(registry.surface_bytes(first.pool_id, first.slot_id).unwrap(), vec![1]);
         assert_eq!(registry.surface_bytes(second.pool_id, second.slot_id).unwrap(), vec![2]);
 

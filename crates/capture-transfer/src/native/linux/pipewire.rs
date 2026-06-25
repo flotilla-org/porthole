@@ -443,7 +443,7 @@ impl PipeWireNativeProducerObserver {
     }
 
     fn try_reconfigure_producer(state: &mut PipeWireNativeProducerState) -> Result<Option<SharedPipeWireNativeProducer>> {
-        if !state.reconfiguring || state.buffers.is_empty() {
+        if !state.reconfiguring {
             return Ok(None);
         }
         let Some(config) = state.config else {
@@ -452,6 +452,18 @@ impl PipeWireNativeProducerObserver {
         let Some(producer) = state.producer.as_ref().map(Arc::clone) else {
             return Ok(None);
         };
+        if state.buffers.is_empty() {
+            let params = {
+                let mut producer = producer.lock().expect("pipewire native producer poisoned");
+                Self::params_for_config(producer.backend_mut(), config)?
+            };
+            let current_params = producer.lock().expect("pipewire native producer poisoned").params().clone();
+            if params == current_params {
+                state.reconfiguring = false;
+                return Ok(Some(producer));
+            }
+            return Ok(None);
+        }
         let (frames, slot_map) = Self::drain_pending_pool(state);
         {
             let mut producer = producer.lock().expect("pipewire native producer poisoned");
