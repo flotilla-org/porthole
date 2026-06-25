@@ -32,6 +32,7 @@ use crate::{
 
 #[repr(C)]
 struct XpcGrant {
+    consumer_id: u64,
     consumer_slot: u64,
     ring_fd: i32,
     ring_map_len: u64,
@@ -76,6 +77,7 @@ mod ffi {
         pub fn porthole_xpc_client_attach(
             client: *mut c_void,
             consumer_id: u64,
+            out_consumer_id: *mut u64,
             out_consumer_slot: *mut u64,
             out_ring_fd: *mut i32,
             out_ring_map_len: *mut u64,
@@ -172,6 +174,7 @@ extern "C" fn attach_callback(ctx: *mut c_void, session_id: u64, consumer_id: u6
     };
     let AttachGrant {
         consumer_slot,
+        consumer_id,
         ring_fd,
         ring_map_len,
         pool_id,
@@ -186,6 +189,7 @@ extern "C" fn attach_callback(ctx: *mut c_void, session_id: u64, consumer_id: u6
         _sync_handle: sync_handle,
     };
     let out = unsafe { &mut *out_grant };
+    out.consumer_id = consumer_id;
     out.consumer_slot = consumer_slot;
     // The shim's NSFileHandle takes ownership (closeOnDealloc).
     out.ring_fd = ring_fd.into_raw_fd();
@@ -356,6 +360,7 @@ impl XpcAttachClient {
     /// shared memory only.
     pub fn attach(&self, consumer_id: u64) -> std::result::Result<AttachGrant<IoSurface, SharedEventHandle>, AttachError> {
         let mut consumer_slot = 0u64;
+        let mut assigned_consumer_id = 0u64;
         let mut ring_fd = -1i32;
         let mut ring_map_len = 0u64;
         let mut pool_id = 0u64;
@@ -368,6 +373,7 @@ impl XpcAttachClient {
             ffi::porthole_xpc_client_attach(
                 self.raw.as_ptr(),
                 consumer_id,
+                &mut assigned_consumer_id,
                 &mut consumer_slot,
                 &mut ring_fd,
                 &mut ring_map_len,
@@ -397,7 +403,7 @@ impl XpcAttachClient {
             unsafe { ffi::porthole_xpc_surface_array_free(surfaces) };
         }
         Ok(AttachGrant {
-            consumer_id,
+            consumer_id: assigned_consumer_id,
             consumer_slot,
             ring_fd: unsafe { OwnedFd::from_raw_fd(ring_fd) },
             ring_map_len,
