@@ -45,7 +45,7 @@ use crate::{
 };
 
 pub const LINUX_ATTACH_MAX_PLANES: usize = 4;
-pub const LINUX_ATTACH_MAX_FDS: usize = 256;
+pub const LINUX_ATTACH_MAX_FDS: usize = 253;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -871,6 +871,11 @@ mod tests {
             }
         ));
         assert!(error.to_string().contains("outside fd table"));
+    }
+
+    #[test]
+    fn fd_table_limit_matches_linux_scm_rights_limit() {
+        assert_eq!(super::LINUX_ATTACH_MAX_FDS, 253);
     }
 
     #[test]

@@ -791,51 +791,51 @@ pub unsafe extern "C" fn ft_native_register_release_sync(
     if sync.sync_kind == FT_NATIVE_SYNC_NONE {
         return FT_STATUS_UNSUPPORTED;
     }
-    #[cfg(target_os = "macos")]
-    if sync.sync_kind != FT_NATIVE_SYNC_MTL_SHARED_EVENT {
+    #[cfg(not(target_os = "linux"))]
+    {
         return FT_STATUS_UNSUPPORTED;
     }
     #[cfg(target_os = "linux")]
-    let release_sync_id = match &attach._transport {
-        FtNativeAttachTransport::Linux { _stream: stream, .. } => {
-            if sync.sync_kind != FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE {
-                return FT_STATUS_UNSUPPORTED;
-            }
-            let fd = unsafe { sync.handle.fd };
-            if fd < 0 {
-                return FT_STATUS_INVALID_ARGUMENT;
-            }
-            if send_json_then_fds(
-                stream,
-                &LinuxAttachRequest::RegisterReleaseSync {
-                    sync: LinuxSyncDescriptor {
-                        sync_kind: sync.sync_kind,
-                        sync_id: sync.sync_id,
-                        fd_index: 0,
-                    },
-                },
-                &[fd],
-            )
-            .is_err()
-            {
-                return FT_STATUS_ERROR;
-            }
-            match recv_json::<LinuxAttachResponse>(stream) {
-                Ok(LinuxAttachResponse::ReleaseSyncRegistered { release_sync_id }) => {
-                    attach.lease_book.register_release_sync_id(release_sync_id);
-                    release_sync_id
+    {
+        let release_sync_id = match &attach._transport {
+            FtNativeAttachTransport::Linux { _stream: stream, .. } => {
+                if sync.sync_kind != FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE {
+                    return FT_STATUS_UNSUPPORTED;
                 }
-                Ok(LinuxAttachResponse::Error { .. }) => return FT_STATUS_ERROR,
-                Ok(_) => return FT_STATUS_INVALID_STATE,
-                Err(_) => return FT_STATUS_ERROR,
+                let fd = unsafe { sync.handle.fd };
+                if fd < 0 {
+                    return FT_STATUS_INVALID_ARGUMENT;
+                }
+                if send_json_then_fds(
+                    stream,
+                    &LinuxAttachRequest::RegisterReleaseSync {
+                        sync: LinuxSyncDescriptor {
+                            sync_kind: sync.sync_kind,
+                            sync_id: sync.sync_id,
+                            fd_index: 0,
+                        },
+                    },
+                    &[fd],
+                )
+                .is_err()
+                {
+                    return FT_STATUS_ERROR;
+                }
+                match recv_json::<LinuxAttachResponse>(stream) {
+                    Ok(LinuxAttachResponse::ReleaseSyncRegistered { release_sync_id }) => {
+                        attach.lease_book.register_release_sync_id(release_sync_id);
+                        release_sync_id
+                    }
+                    Ok(LinuxAttachResponse::Error { .. }) => return FT_STATUS_ERROR,
+                    Ok(_) => return FT_STATUS_INVALID_STATE,
+                    Err(_) => return FT_STATUS_ERROR,
+                }
             }
-        }
-    };
-    #[cfg(not(target_os = "linux"))]
-    let release_sync_id = attach.lease_book.register_release_sync();
-    attach.release_syncs.insert(release_sync_id, *sync);
-    *out_release_sync_id = release_sync_id;
-    FT_STATUS_OK
+        };
+        attach.release_syncs.insert(release_sync_id, *sync);
+        *out_release_sync_id = release_sync_id;
+        FT_STATUS_OK
+    }
 }
 
 /// Release a frame lease.

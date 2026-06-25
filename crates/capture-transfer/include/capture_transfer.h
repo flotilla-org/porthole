@@ -354,6 +354,9 @@ ft_status ft_native_wait_frame(ft_native_attach *attach,
 ft_status ft_native_acquire_latest(ft_native_attach *attach,
                                    uint64_t min_cursor,
                                    ft_native_frame *out_frame);
+// Registers a release timeline for FT_NATIVE_RELEASE_TIMELINE_VALUE.
+// Currently supported only for Linux DRM syncobj timeline handles; other
+// platforms return FT_STATUS_UNSUPPORTED.
 ft_status ft_native_register_release_sync(ft_native_attach *attach,
                                           const ft_native_sync *sync,
                                           uint64_t *out_release_sync_id);
