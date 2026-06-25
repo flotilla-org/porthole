@@ -504,10 +504,7 @@ fn linux_stream_peer_closed(stream: &UnixStream) -> bool {
     if result > 0 {
         return false;
     }
-    !matches!(
-        std::io::Error::last_os_error().kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-    )
+    false
 }
 
 #[cfg(target_os = "linux")]
@@ -736,7 +733,13 @@ pub unsafe extern "C" fn ft_native_wait_frame(
         {
             return FT_STATUS_TIMEOUT;
         }
-        std::thread::sleep(Duration::from_millis(1));
+        let sleep_for = deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(1)))
+            .unwrap_or_else(|| Duration::from_millis(1));
+        if sleep_for.is_zero() {
+            return FT_STATUS_TIMEOUT;
+        }
+        std::thread::sleep(sleep_for);
     }
 }
 
@@ -926,11 +929,11 @@ pub unsafe extern "C" fn ft_native_poll_event(attach: *mut FtNativeAttach, out_e
     }
     let previous_pool_id = attach.last_event_pool_id;
     let pool_changed = previous_pool_id != 0 && previous_pool_id != pool_id;
-    attach.last_event_config_generation = generation;
-    attach.last_event_pool_id = pool_id;
     if attach.known_pool(pool_id).is_none() {
         match attach.fetch_linux_pool(pool_id) {
             Ok(_) => {
+                attach.last_event_config_generation = generation;
+                attach.last_event_pool_id = pool_id;
                 attach.pending_events.push_back(FtNativeEvent {
                     struct_size: size_of::<FtNativeEvent>() as u32,
                     kind: FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED,
@@ -956,6 +959,8 @@ pub unsafe extern "C" fn ft_native_poll_event(attach: *mut FtNativeAttach, out_e
             Err(status) => return status,
         }
     }
+    attach.last_event_config_generation = generation;
+    attach.last_event_pool_id = pool_id;
     if pool_changed {
         attach.pending_events.push_back(FtNativeEvent {
             struct_size: size_of::<FtNativeEvent>() as u32,

@@ -117,14 +117,22 @@ pub fn recv_fds(stream: &UnixStream, max_fds: usize) -> Result<Vec<OwnedFd>> {
             return Err(CaptureTransferError::MissingPassedFd);
         }
         let fd_count = fd_bytes / size_of::<RawFd>();
+        let data = libc::CMSG_DATA(cmsg).cast::<RawFd>();
+        let raw_fds = std::slice::from_raw_parts(data, fd_count).to_vec();
+        if message.msg_flags & libc::MSG_CTRUNC != 0 {
+            close_raw_fds(&raw_fds);
+            return Err(CaptureTransferError::FdPassing {
+                operation: "recvmsg",
+                message: "ancillary data truncated (MSG_CTRUNC)".to_string(),
+            });
+        }
         if fd_count > max_fds {
+            close_raw_fds(&raw_fds);
             return Err(CaptureTransferError::FdPassing {
                 operation: "recvmsg",
                 message: format!("received {fd_count} fds, maximum is {max_fds}"),
             });
         }
-        let data = libc::CMSG_DATA(cmsg).cast::<RawFd>();
-        let raw_fds = std::slice::from_raw_parts(data, fd_count).to_vec();
         let invalid_fd = raw_fds.iter().any(|fd| *fd < 0);
         if invalid_fd {
             close_raw_fds(&raw_fds);
@@ -214,6 +222,17 @@ mod tests {
 
         assert_eq!(first_contents, b"first");
         assert_eq!(second_contents, b"second");
+    }
+
+    #[test]
+    fn rejects_truncated_file_descriptor_messages() {
+        let (sender, receiver) = UnixStream::pair().unwrap();
+        let first = tempfile_file_with_contents(b"first");
+        let second = tempfile_file_with_contents(b"second");
+
+        send_fds(&sender, &[first.as_raw_fd(), second.as_raw_fd()]).unwrap();
+
+        assert!(recv_fds(&receiver, 1).is_err());
     }
 
     fn tempfile_file_with_contents(contents: &[u8]) -> File {

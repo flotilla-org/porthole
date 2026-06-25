@@ -263,6 +263,7 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "libc",
+ "pkg-config",
  "serde",
  "serde_json",
  "tempfile",

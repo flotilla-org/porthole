@@ -15,6 +15,7 @@ const PORTAL_DEST: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const SCREENCAST_IFACE: &str = "org.freedesktop.portal.ScreenCast";
 const REQUEST_IFACE: &str = "org.freedesktop.portal.Request";
+const SESSION_IFACE: &str = "org.freedesktop.portal.Session";
 
 const RESPONSE_SUCCESS: u32 = 0;
 const RESPONSE_CANCELLED: u32 = 1;
@@ -28,10 +29,22 @@ pub struct ScreenCastPortal;
 
 #[derive(Debug)]
 pub struct ScreenCastSession {
-    pub _connection: Connection,
+    pub connection: Connection,
     pub session_path: OwnedObjectPath,
     pub pipewire_remote: StdOwnedFd,
     pub streams: Vec<ScreenCastStream>,
+}
+
+impl Drop for ScreenCastSession {
+    fn drop(&mut self) {
+        let connection = self.connection.clone();
+        let session_path = self.session_path.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = close_session(connection, session_path).await;
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,7 +138,7 @@ impl ScreenCastPortal {
         let pipewire_remote: StdOwnedFd = remote.into();
 
         Ok(ScreenCastSession {
-            _connection: connection,
+            connection,
             session_path,
             pipewire_remote,
             streams,
@@ -146,6 +159,13 @@ async fn prepare_response_wait(connection: &Connection, token: &str) -> Result<(
         .map_err(portal_call_failed)?;
     let responses = proxy.receive_signal("Response").await.map_err(portal_call_failed)?;
     Ok((handle, responses))
+}
+
+async fn close_session(connection: Connection, session_path: OwnedObjectPath) -> Result<(), PortholeError> {
+    let proxy = Proxy::new(&connection, PORTAL_DEST, session_path.as_str(), SESSION_IFACE)
+        .await
+        .map_err(portal_call_failed)?;
+    proxy.call("Close", &()).await.map_err(portal_call_failed)
 }
 
 async fn wait_prepared_response(
