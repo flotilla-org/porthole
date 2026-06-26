@@ -718,7 +718,7 @@ pub unsafe extern "C" fn ft_native_wait_frame(
     let deadline = if timeout_ns == FT_WAIT_INFINITE {
         None
     } else {
-        Some(Instant::now() + Duration::from_nanos(timeout_ns))
+        Instant::now().checked_add(Duration::from_nanos(timeout_ns))
     };
     loop {
         match attach.page.read_latest_lossy_entry() {
@@ -940,20 +940,33 @@ pub unsafe extern "C" fn ft_native_poll_event(attach: *mut FtNativeAttach, out_e
             Ok(_) => {
                 attach.last_event_config_generation = generation;
                 attach.last_event_pool_id = pool_id;
+                if pool_changed {
+                    attach.pending_events.push_back(FtNativeEvent {
+                        struct_size: size_of::<FtNativeEvent>() as u32,
+                        kind: FT_NATIVE_EVENT_POOL_ADDED,
+                        pool_id,
+                        config_generation: generation,
+                    });
+                    attach.pending_events.push_back(FtNativeEvent {
+                        struct_size: size_of::<FtNativeEvent>() as u32,
+                        kind: FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED,
+                        pool_id,
+                        config_generation: generation,
+                    });
+                    *out_event = FtNativeEvent {
+                        struct_size: size_of::<FtNativeEvent>() as u32,
+                        kind: FT_NATIVE_EVENT_POOL_REMOVED,
+                        pool_id: previous_pool_id,
+                        config_generation: generation,
+                    };
+                    return FT_STATUS_OK;
+                }
                 attach.pending_events.push_back(FtNativeEvent {
                     struct_size: size_of::<FtNativeEvent>() as u32,
                     kind: FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED,
                     pool_id,
                     config_generation: generation,
                 });
-                if pool_changed {
-                    attach.pending_events.push_back(FtNativeEvent {
-                        struct_size: size_of::<FtNativeEvent>() as u32,
-                        kind: FT_NATIVE_EVENT_POOL_REMOVED,
-                        pool_id: previous_pool_id,
-                        config_generation: generation,
-                    });
-                }
                 *out_event = FtNativeEvent {
                     struct_size: size_of::<FtNativeEvent>() as u32,
                     kind: FT_NATIVE_EVENT_POOL_ADDED,
@@ -1455,8 +1468,8 @@ mod linux_tests {
             flags: 0,
         });
         assert_eq!(unsafe { ft_native_poll_event(attach, &mut event) }, FT_STATUS_OK);
-        assert_eq!(event.kind, super::FT_NATIVE_EVENT_POOL_ADDED);
-        assert_eq!(event.pool_id, 88);
+        assert_eq!(event.kind, super::FT_NATIVE_EVENT_POOL_REMOVED);
+        assert_eq!(event.pool_id, 77);
         assert_eq!(event.config_generation, 2);
 
         let mut undersized_pool = FtNativePool {
@@ -1489,13 +1502,13 @@ mod linux_tests {
         }
 
         assert_eq!(unsafe { ft_native_poll_event(attach, &mut event) }, FT_STATUS_OK);
-        assert_eq!(event.kind, FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED);
+        assert_eq!(event.kind, super::FT_NATIVE_EVENT_POOL_ADDED);
         assert_eq!(event.pool_id, 88);
         assert_eq!(event.config_generation, 2);
 
         assert_eq!(unsafe { ft_native_poll_event(attach, &mut event) }, FT_STATUS_OK);
-        assert_eq!(event.kind, super::FT_NATIVE_EVENT_POOL_REMOVED);
-        assert_eq!(event.pool_id, 77);
+        assert_eq!(event.kind, FT_NATIVE_EVENT_STREAM_CONFIG_CHANGED);
+        assert_eq!(event.pool_id, 88);
         assert_eq!(event.config_generation, 2);
 
         assert_eq!(unsafe { ft_native_get_pool(attach, 77, &mut pool) }, FT_STATUS_OK);

@@ -141,6 +141,7 @@ static struct spa_pod *porthole_pipewire_build_dmabuf_format(
       SPA_FORMAT_VIDEO_modifier,
       SPA_POD_PROP_FLAG_MANDATORY | SPA_POD_PROP_FLAG_DONT_FIXATE);
     spa_pod_builder_push_choice(&builder, &choice, SPA_CHOICE_Enum, 0);
+    spa_pod_builder_long(&builder, (int64_t)modifiers[0]);
     for (uint32_t i = 0; i < modifier_count; i++) {
       spa_pod_builder_long(&builder, (int64_t)modifiers[i]);
     }
@@ -408,6 +409,7 @@ int porthole_native_linux_pipewire_stream_open(
   handle->core = pw_context_connect_fd(handle->context, remote_fd, NULL, 0);
   if (handle->core == NULL) {
     int error = errno != 0 ? errno : EIO;
+    close(remote_fd);
     pw_thread_loop_unlock(handle->loop);
     porthole_native_linux_pipewire_stream_free(handle);
     return error;

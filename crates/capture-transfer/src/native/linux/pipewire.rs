@@ -28,7 +28,7 @@ use crate::{
         linux::{
             LinuxDmabufPlaneHandle, LinuxNativeLeaseBackend, LinuxSurfaceHandle, LinuxSyncDescriptor, LinuxSyncHandle,
             dmabuf::FT_NATIVE_HANDLE_DMABUF,
-            drm::{DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED, DrmDevice, DrmSyncobjTimeline, FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE},
+            drm::{DrmDevice, DrmSyncobjTimeline, FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE},
             vulkan,
         },
     },
@@ -950,7 +950,7 @@ impl PipeWireNativeBackend {
 
     fn refresh_release_syncs(&mut self) -> Result<()> {
         for (release_sync_id, timeline) in &self.release_syncs {
-            let reached_value = timeline.query(DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED)?;
+            let reached_value = timeline.query(0)?;
             self.lease_book
                 .complete_release_sync(*release_sync_id, reached_value)
                 .map_err(CaptureTransferError::from)?;
