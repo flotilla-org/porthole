@@ -4,6 +4,8 @@ use axum::{
     Router,
     routing::{get, post},
 };
+#[cfg(target_os = "linux")]
+use porthole_adapter_kwin::KWinAdapter;
 use porthole_core::adapter::Adapter;
 use tokio::net::UnixListener;
 use tracing::info;
@@ -102,19 +104,28 @@ pub async fn serve_with_agent_policy(
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
-    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+    serve_with_agent_policy_inner(
+        adapter,
+        socket_path,
+        agent_store,
+        events,
+        #[cfg(target_os = "linux")]
+        None,
+    )
+    .await
 }
 
 #[cfg(target_os = "linux")]
 pub async fn serve_with_agent_policy_and_kwin_bridge(
-    adapter: Arc<dyn Adapter>,
+    kwin_adapter: Arc<KWinAdapter>,
     socket_path: PathBuf,
     agent_store: AgentPolicyStore,
     events: EventBus,
     kwin_bridge: KWinBridge,
 ) -> std::io::Result<()> {
     let _kwin_bridge = spawn_session_service(kwin_bridge);
-    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events).await
+    let adapter: Arc<dyn Adapter> = kwin_adapter.clone();
+    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events, Some(kwin_adapter)).await
 }
 
 async fn serve_with_agent_policy_inner(
@@ -122,6 +133,7 @@ async fn serve_with_agent_policy_inner(
     socket_path: PathBuf,
     agent_store: AgentPolicyStore,
     events: EventBus,
+    #[cfg(target_os = "linux")] kwin_adapter: Option<Arc<KWinAdapter>>,
 ) -> std::io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -133,7 +145,14 @@ async fn serve_with_agent_policy_inner(
     info!(socket = %socket_path.display(), "portholed listening");
     let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
     let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
-    let app = build_router(AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events));
+    let state = AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events);
+    #[cfg(target_os = "linux")]
+    let state = if let Some(kwin_adapter) = kwin_adapter {
+        state.with_kwin_adapter(kwin_adapter)
+    } else {
+        state
+    };
+    let app = build_router(state);
     axum::serve(listener, app).await
 }
 

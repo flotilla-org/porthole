@@ -40,6 +40,8 @@ capture-transfer = { path = "../capture-transfer", features = ["backend-macos"] 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 porthole-adapter-kwin = { path = "../porthole-adapter-kwin" }
+# Native dmabuf/DRM/PipeWire attach path for Linux.
+capture-transfer = { path = "../capture-transfer", features = ["backend-linux"] }
 zbus = { workspace = true }
 
 [dev-dependencies]

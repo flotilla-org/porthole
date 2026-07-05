@@ -586,8 +586,9 @@ enum CaptureSessionCommand {
     /// Create a live capture session for an existing tracked surface.
     Surface {
         surface_id: String,
-        /// Use the macOS native IOSurface/Metal path (XPC attach) instead of
-        /// the CPU-shm fd-socket path.
+        /// Use the platform native handle path instead of the CPU-shm fd-socket
+        /// path: IOSurface/Metal over XPC on macOS, dmabuf/PipeWire over UDS
+        /// on Linux.
         #[arg(long)]
         native: bool,
         /// Print response as JSON.

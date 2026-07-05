@@ -10,6 +10,7 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 use zbus::{
     Connection, Proxy,
+    proxy::SignalStream,
     zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value},
 };
 
@@ -17,6 +18,7 @@ const PORTAL_DEST: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const REMOTE_DESKTOP_IFACE: &str = "org.freedesktop.portal.RemoteDesktop";
 const REQUEST_IFACE: &str = "org.freedesktop.portal.Request";
+const SESSION_IFACE: &str = "org.freedesktop.portal.Session";
 
 const RESPONSE_SUCCESS: u32 = 0;
 const RESPONSE_CANCELLED: u32 = 1;
@@ -75,17 +77,20 @@ impl RemoteDesktopPortal {
             .map_err(|error| portal_unavailable(format!("cannot connect to session bus: {error}")))?;
         let proxy = remote_desktop_proxy(&connection).await?;
 
-        let create_handle: OwnedObjectPath = proxy
+        let create_token = token_string("create");
+        let (create_handle, mut create_responses) = prepare_response_wait(&connection, &create_token).await?;
+        let returned_create_handle: OwnedObjectPath = proxy
             .call(
                 "CreateSession",
                 &options([
-                    ("handle_token", token_value("create")),
+                    ("handle_token", Value::from(create_token)),
                     ("session_handle_token", token_value("session")),
                 ]),
             )
             .await
             .map_err(portal_call_failed)?;
-        let create_results = wait_response(&connection, create_handle).await?;
+        ensure_expected_handle(&create_handle, &returned_create_handle)?;
+        let create_results = wait_prepared_response(&mut create_responses, &create_handle).await?;
         let session_handle = string_result(&create_results, "session_handle")?;
         let session_path = OwnedObjectPath::try_from(session_handle.as_str()).map_err(|error| {
             PortholeError::new(
@@ -94,13 +99,15 @@ impl RemoteDesktopPortal {
             )
         })?;
 
-        let select_handle: OwnedObjectPath = proxy
+        let select_token = token_string("select");
+        let (select_handle, mut select_responses) = prepare_response_wait(&connection, &select_token).await?;
+        let returned_select_handle: OwnedObjectPath = proxy
             .call(
                 "SelectDevices",
                 &(
                     ObjectPath::try_from(session_path.as_str()).map_err(portal_variant_error)?,
                     options([
-                        ("handle_token", token_value("select")),
+                        ("handle_token", Value::from(select_token)),
                         ("types", Value::U32(devices.0)),
                         ("persist_mode", Value::U32(1)),
                     ]),
@@ -108,20 +115,24 @@ impl RemoteDesktopPortal {
             )
             .await
             .map_err(portal_call_failed)?;
-        wait_response(&connection, select_handle).await?;
+        ensure_expected_handle(&select_handle, &returned_select_handle)?;
+        wait_prepared_response(&mut select_responses, &select_handle).await?;
 
-        let start_handle: OwnedObjectPath = proxy
+        let start_token = token_string("start");
+        let (start_handle, mut start_responses) = prepare_response_wait(&connection, &start_token).await?;
+        let returned_start_handle: OwnedObjectPath = proxy
             .call(
                 "Start",
                 &(
                     ObjectPath::try_from(session_path.as_str()).map_err(portal_variant_error)?,
                     "",
-                    options([("handle_token", token_value("start"))]),
+                    options([("handle_token", Value::from(start_token))]),
                 ),
             )
             .await
             .map_err(portal_call_failed)?;
-        let start_results = wait_response(&connection, start_handle).await?;
+        ensure_expected_handle(&start_handle, &returned_start_handle)?;
+        let start_results = wait_prepared_response(&mut start_responses, &start_handle).await?;
         let granted = u32_result(&start_results, "devices").unwrap_or(devices.0);
         Ok(RemoteDesktopSession {
             connection,
@@ -136,6 +147,18 @@ pub(crate) struct RemoteDesktopSession {
     connection: Connection,
     session_path: OwnedObjectPath,
     devices: RemoteDesktopDevices,
+}
+
+impl Drop for RemoteDesktopSession {
+    fn drop(&mut self) {
+        let connection = self.connection.clone();
+        let session_path = self.session_path.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = close_session(connection, session_path).await;
+            });
+        }
+    }
 }
 
 impl RemoteDesktopSession {
@@ -225,11 +248,26 @@ async fn remote_desktop_proxy(connection: &Connection) -> Result<Proxy<'_>, Port
         .map_err(|error| portal_unavailable(format!("RemoteDesktop portal is unavailable: {error}")))
 }
 
-async fn wait_response(connection: &Connection, handle: OwnedObjectPath) -> Result<HashMap<String, OwnedValue>, PortholeError> {
+async fn prepare_response_wait(connection: &Connection, token: &str) -> Result<(OwnedObjectPath, SignalStream<'static>), PortholeError> {
+    let handle = request_path(connection, token)?;
     let proxy = Proxy::new(connection, PORTAL_DEST, handle.as_str(), REQUEST_IFACE)
         .await
         .map_err(portal_call_failed)?;
-    let mut responses = proxy.receive_signal("Response").await.map_err(portal_call_failed)?;
+    let responses = proxy.receive_signal("Response").await.map_err(portal_call_failed)?;
+    Ok((handle, responses))
+}
+
+async fn close_session(connection: Connection, session_path: OwnedObjectPath) -> Result<(), PortholeError> {
+    let proxy = Proxy::new(&connection, PORTAL_DEST, session_path.as_str(), SESSION_IFACE)
+        .await
+        .map_err(portal_call_failed)?;
+    proxy.call("Close", &()).await.map_err(portal_call_failed)
+}
+
+async fn wait_prepared_response(
+    responses: &mut SignalStream<'static>,
+    handle: &OwnedObjectPath,
+) -> Result<HashMap<String, OwnedValue>, PortholeError> {
     let Some(message) = timeout(PORTAL_RESPONSE_TIMEOUT, responses.next())
         .await
         .map_err(|_| portal_response_timeout(handle.as_str()))?
@@ -239,7 +277,7 @@ async fn wait_response(connection: &Connection, handle: OwnedObjectPath) -> Resu
     let (response, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(portal_call_failed)?;
     match response {
         RESPONSE_SUCCESS => Ok(results),
-        RESPONSE_CANCELLED => Err(permission_needed("RemoteDesktop portal consent was cancelled")),
+        RESPONSE_CANCELLED => Err(portal_cancelled("RemoteDesktop portal consent was cancelled")),
         other => Err(PortholeError::new(
             ErrorCode::SystemPermissionRequestFailed,
             format!("RemoteDesktop portal request failed with response code {other}"),
@@ -250,6 +288,25 @@ async fn wait_response(connection: &Connection, handle: OwnedObjectPath) -> Resu
             "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
             "binary_path": current_exe(),
         }))),
+    }
+}
+
+fn request_path(connection: &Connection, token: &str) -> Result<OwnedObjectPath, PortholeError> {
+    let unique_name = connection
+        .unique_name()
+        .ok_or_else(|| PortholeError::new(ErrorCode::InternalError, "session bus connection has no unique name"))?;
+    let sender = unique_name.as_str().trim_start_matches(':').replace('.', "_");
+    OwnedObjectPath::try_from(format!("{PORTAL_PATH}/request/{sender}/{token}")).map_err(portal_variant_error)
+}
+
+fn ensure_expected_handle(expected: &OwnedObjectPath, returned: &OwnedObjectPath) -> Result<(), PortholeError> {
+    if expected == returned {
+        Ok(())
+    } else {
+        Err(PortholeError::new(
+            ErrorCode::InternalError,
+            format!("portal returned request handle {returned}, expected {expected}"),
+        ))
     }
 }
 
@@ -275,7 +332,11 @@ fn empty_options() -> HashMap<&'static str, Value<'static>> {
 }
 
 fn token_value(prefix: &str) -> Value<'static> {
-    Value::from(format!("{prefix}_{}", Uuid::new_v4().simple()))
+    Value::from(token_string(prefix))
+}
+
+fn token_string(prefix: &str) -> String {
+    format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
 fn string_result(results: &HashMap<String, OwnedValue>, key: &str) -> Result<String, PortholeError> {
@@ -451,6 +512,15 @@ fn portal_unavailable(reason: impl Into<String>) -> PortholeError {
     PortholeError::new(ErrorCode::SystemPermissionRequestFailed, reason.into()).with_details(json!({
         "permission": "remote_desktop",
         "reason": "RemoteDesktop portal is unavailable",
+        "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
+        "binary_path": current_exe(),
+    }))
+}
+
+fn portal_cancelled(reason: impl Into<String>) -> PortholeError {
+    PortholeError::new(ErrorCode::SystemPermissionRequestFailed, reason.into()).with_details(json!({
+        "permission": "remote_desktop",
+        "reason": "portal consent cancelled",
         "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
         "binary_path": current_exe(),
     }))

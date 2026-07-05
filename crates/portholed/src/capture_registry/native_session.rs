@@ -29,7 +29,9 @@ use porthole_adapter_macos::{
     sck_native::{NativeCapturedFrame, NativeSckCaptureStream, NativeVideoFramePublisher, start_native_window_capture},
 };
 use porthole_core::{ErrorCode, PortholeError, agent_policy::AgentId, surface::SurfaceInfo};
-use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, MACOS_NATIVE_ATTACH_MACH_SERVICE, NativeCaptureInfo};
+use porthole_protocol::capture_sessions::{
+    CreateCaptureSessionResponse, MACOS_NATIVE_ATTACH_MACH_SERVICE, NATIVE_ATTACH_TRANSPORT_MACOS_XPC, NativeCaptureInfo,
+};
 use uuid::Uuid;
 
 use super::{CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle};
@@ -253,7 +255,8 @@ pub(super) async fn create(
     };
 
     let native_info = NativeCaptureInfo {
-        mach_service_name: MACOS_NATIVE_ATTACH_MACH_SERVICE.to_string(),
+        transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+        endpoint: MACOS_NATIVE_ATTACH_MACH_SERVICE.to_string(),
         attach_token,
     };
 

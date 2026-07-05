@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
+#[cfg(target_os = "linux")]
+use porthole_adapter_kwin::KWinAdapter;
 use porthole_core::{
     adapter::Adapter, attach_pipeline::AttachPipeline, handle::HandleStore, input_pipeline::InputPipeline, launch::LaunchPipeline,
     replace_pipeline::ReplacePipeline, wait_pipeline::WaitPipeline,
@@ -10,6 +12,8 @@ use crate::{agent_store::AgentPolicyStore, capture_registry::CaptureRegistry, ev
 #[derive(Clone)]
 pub struct AppState {
     pub adapter: Arc<dyn Adapter>,
+    #[cfg(target_os = "linux")]
+    pub kwin_adapter: Option<Arc<KWinAdapter>>,
     pub handles: HandleStore,
     pub pipeline: Arc<LaunchPipeline>,
     pub replace: Arc<ReplacePipeline>,
@@ -68,6 +72,8 @@ impl AppState {
         let attach = Arc::new(AttachPipeline::new(adapter.clone(), handles.clone()));
         Self {
             adapter,
+            #[cfg(target_os = "linux")]
+            kwin_adapter: None,
             handles,
             pipeline,
             replace,
@@ -80,6 +86,13 @@ impl AppState {
             started_at: Instant::now(),
             daemon_version: env!("CARGO_PKG_VERSION"),
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn with_kwin_adapter(mut self, kwin_adapter: Arc<KWinAdapter>) -> Self {
+        self.kwin_adapter = Some(kwin_adapter);
+        self
     }
 
     pub fn uptime_seconds(&self) -> u64 {

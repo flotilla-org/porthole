@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use porthole_protocol::capture_sessions::CreateCaptureSessionResponse;
+use porthole_protocol::capture_sessions::{
+    CreateCaptureSessionResponse, NATIVE_ATTACH_TRANSPORT_MACOS_XPC, NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET,
+};
 
 use crate::client::{ClientError, DaemonClient};
 
@@ -57,25 +59,33 @@ fn print_session_response(
 }
 
 pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, response: &CreateCaptureSessionResponse) -> String {
-    // Native sessions are consumed over XPC; the viewer connects to the mach
-    // service with the per-session attach secret, not the fd socket.
+    // Native sessions are consumed through the descriptor endpoint with the
+    // per-session attach secret, not through the CPU fd socket.
     if let Some(native) = &response.native {
+        let endpoint_label = match native.transport_kind {
+            NATIVE_ATTACH_TRANSPORT_MACOS_XPC => "mach_service",
+            NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET => "attach_socket",
+            _ => "attach_endpoint",
+        };
         return format!(
             "porthole_socket: {control_socket_path}\n\
              session_id: {}\n\
              source_id: {}\n\
              track_id: {}\n\
              status: {}\n\
-             mach_service: {}\n\
+             native_transport: {}\n\
+             {endpoint_label}: {}\n\
              attach_token: {}\n\
-             viewer: capture-viewer-sdl --native --mach-service {} --token {}\n",
+             viewer: capture-viewer-sdl --native --transport-kind {} --endpoint {} --token {}\n",
             response.session_id,
             response.source_id,
             response.track_id,
             response.status,
-            native.mach_service_name,
+            native.transport_kind,
+            native.endpoint,
             native.attach_token,
-            native.mach_service_name,
+            native.transport_kind,
+            native.endpoint,
             native.attach_token,
         );
     }

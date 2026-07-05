@@ -203,6 +203,24 @@ This path requires the normal porthole macOS permissions. If it returns
 `system_permission_needed`, run `porthole onboard` for the daemon identity and
 retry; do not route around the permission failure.
 
+For the Linux native dmabuf path, run the ignored live smoke from inside a real
+KDE/Wayland desktop session:
+
+```sh
+PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 \
+  cargo test -p portholed --locked \
+    live_kde_pipewire_native_session_attaches_and_acquires_one_dmabuf_frame \
+    -- --ignored --nocapture
+```
+
+This exercises the full ScreenCast portal -> PipeWire dmabuf producer -> Linux
+UDS attach -> C ABI lease/release path. It requires a session bus that can
+activate `org.freedesktop.portal.Desktop` with the `ScreenCast` interface,
+PipeWire, portal consent, and a render node (default `/dev/dri/renderD128`, or
+set `PORTHOLE_DRM_RENDER_NODE`). If the test reports a missing portal interface
+or there is no `DISPLAY`/`WAYLAND_DISPLAY`, rerun it from the graphical user
+session rather than weakening the capture path.
+
 ## What *not* to do when permissions are missing
 
 Per `AGENTS.md`: stop, state the missing permission, tell the user to run `porthole onboard`, wait. Do not build mock layers, feature flags, or "degrade to empty" paths. Preflight returns `system_permission_needed` with remediation — surface that, don't route around it.

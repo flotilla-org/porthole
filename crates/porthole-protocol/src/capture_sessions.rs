@@ -5,17 +5,21 @@ use serde::{Deserialize, Serialize};
 /// service by looking this name up; the LaunchAgent plist written by
 /// `porthole install` registers it.
 pub const MACOS_NATIVE_ATTACH_MACH_SERVICE: &str = "work.flotilla.porthole.attach";
+pub const NATIVE_ATTACH_TRANSPORT_MACOS_XPC: u32 = 1;
+pub const NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET: u32 = 2;
 
-/// How a consumer reaches a macOS native (IOSurface/Metal) capture session.
+/// How a consumer reaches a native capture session.
 /// Present only on native sessions; its absence means the CPU-shm fd-socket
-/// path (`fd_socket_path`) applies. The viewer connects to `mach_service_name`
-/// over XPC and presents `attach_token` as the bearer — a per-session
-/// capability minted by portholed and conveyed here over the already
-/// authenticated control socket, so the daemon never has to recover an agent
-/// token's plaintext (it stores only hashes).
+/// path (`fd_socket_path`) applies. The transport and endpoint map directly to
+/// `ft_native_attach_descriptor`: macOS uses XPC with the Mach service name as
+/// endpoint, Linux uses a Unix-domain socket path. `attach_token` is a
+/// per-session capability minted by portholed and conveyed here over the
+/// already authenticated control socket, so the daemon never has to recover an
+/// agent token's plaintext (it stores only hashes).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NativeCaptureInfo {
-    pub mach_service_name: String,
+    pub transport_kind: u32,
+    pub endpoint: String,
     pub attach_token: String,
 }
 
@@ -117,7 +121,8 @@ mod tests {
             status_message: None,
             fd_socket_path: String::new(),
             native: Some(NativeCaptureInfo {
-                mach_service_name: "work.flotilla.porthole.attach".into(),
+                transport_kind: super::NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+                endpoint: "work.flotilla.porthole.attach".into(),
                 attach_token: "pta_session.secret".into(),
             }),
         };
