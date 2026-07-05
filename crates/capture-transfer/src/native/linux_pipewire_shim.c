@@ -207,6 +207,12 @@ static void porthole_pipewire_stream_process(void *data) {
         buffer->time,
         buffer->buffer);
     }
+    /* Known gap (#104): this hands the dmabuf straight back to the
+     * compositor, which may write the next frame into it before a consumer
+     * lease resolves. Lease gating only covers the producer's own republish
+     * of a slot; gating this handback needs a deeper buffer negotiation or
+     * an explicit-sync release point. Consumers can observe torn content
+     * until that lands. */
     pw_stream_queue_buffer(handle->stream, buffer);
   }
 }

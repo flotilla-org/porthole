@@ -171,10 +171,12 @@ pub(super) async fn create(
                 "native PipeWire stream produced no first frame".to_string(),
             ));
         };
-        producer
-            .control_page()
-            .read_entry_for_cursor(cursor)
-            .map_err(|error| CaptureRegistryError::Capture(error.to_string()))?
+        producer.control_page().read_entry_for_cursor(cursor).map_err(|error| {
+            // Fallible under a fast producer: the ring can lap this
+            // cursor between latest_cursor() above and the read.
+            registry.remove_session(&session_id);
+            CaptureRegistryError::Capture(error.to_string())
+        })?
     };
 
     let attach_token = format!("ptas_{}", Uuid::new_v4().simple());
