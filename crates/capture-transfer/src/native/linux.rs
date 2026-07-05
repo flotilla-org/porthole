@@ -46,6 +46,11 @@ use crate::{
 
 pub const LINUX_ATTACH_MAX_PLANES: usize = 4;
 pub const LINUX_ATTACH_MAX_FDS: usize = 253;
+/// Upper bound on one newline-delimited attach message. The largest real
+/// message is a granted pool descriptor, a few KiB; the cap only exists so a
+/// peer that never sends a newline cannot grow the read buffer without bound
+/// while it holds the serve loop.
+pub const LINUX_ATTACH_MAX_JSON_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -539,6 +544,17 @@ fn build_linux_attach_response<B>(
 where
     B: NativeFrameBackend<SurfaceHandle = LinuxSurfaceHandle, SyncHandle = LinuxSyncHandle> + LinuxNativeLeaseBackend,
 {
+    // Handshake requests enforce their own ordering inside
+    // `AttachEndpoint::handle`. Everything else operates on producer state a
+    // session only legitimately reaches through its grant, so require a
+    // completed attach unconditionally — otherwise a peer that skips the
+    // handshake could probe pools or release another consumer's lease.
+    if !matches!(request, LinuxAttachRequest::Authorize { .. } | LinuxAttachRequest::Attach { .. }) && !session.attach.is_attached() {
+        return Ok(LinuxAttachOutbound::json(LinuxAttachResponse::Error {
+            code: "not_authorized".to_string(),
+            message: "attach stream operations require a completed attach".to_string(),
+        }));
+    }
     match request {
         LinuxAttachRequest::Authorize { bearer_token } => {
             match endpoint.handle(&mut session.attach, producer, AttachRequest::Authorize { bearer_token }) {
@@ -777,6 +793,12 @@ fn read_json_line(stream: &UnixStream) -> Result<String> {
         }
         if byte[0] == b'\n' {
             break;
+        }
+        if line.len() >= LINUX_ATTACH_MAX_JSON_BYTES {
+            return Err(CaptureTransferError::FdPassing {
+                operation: "read-linux-attach",
+                message: format!("attach message exceeds {LINUX_ATTACH_MAX_JSON_BYTES} bytes without a newline"),
+            });
         }
         line.push(byte[0]);
     }
@@ -1037,6 +1059,111 @@ mod tests {
     }
 
     #[test]
+    fn operations_on_an_unauthenticated_endpoint_still_require_attach() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let endpoint = AttachEndpoint::new(None);
+        let mut session = LinuxAttachStreamSession::new();
+        let mut producer = NativeTrackProducer::new(
+            TestLinuxBackend::new(),
+            NativeStreamParams {
+                width: 64,
+                height: 32,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                color_space: ColorSpace::Srgb,
+                clock_domain: ClockDomain::HostTime,
+                modifier: 0,
+            },
+            2,
+            3,
+            PoolExhaustionPolicy::Fail,
+        )
+        .unwrap();
+
+        send_json(&client, &LinuxAttachRequest::GetPool { pool_id: 700 }).unwrap();
+        handle_linux_attach_stream_message(&server, &endpoint, &mut session, &mut producer).unwrap();
+        assert_eq!(
+            recv_json::<LinuxAttachResponse>(&client).unwrap(),
+            LinuxAttachResponse::Error {
+                code: "not_authorized".to_string(),
+                message: "attach stream operations require a completed attach".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_operations_before_attach_on_an_authenticated_endpoint() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let endpoint = AttachEndpoint::new(Some("pta_agent.linux".to_string()));
+        let mut session = LinuxAttachStreamSession::new();
+        let mut producer = NativeTrackProducer::new(
+            TestLinuxBackend::new(),
+            NativeStreamParams {
+                width: 64,
+                height: 32,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                color_space: ColorSpace::Srgb,
+                clock_domain: ClockDomain::HostTime,
+                modifier: 0,
+            },
+            2,
+            3,
+            PoolExhaustionPolicy::Fail,
+        )
+        .unwrap();
+
+        // Straight to operations, skipping Authorize/Attach entirely.
+        send_json(
+            &client,
+            &LinuxAttachRequest::AcquireLease {
+                identity: LinuxLeaseIdentity {
+                    cursor: 11,
+                    sequence: 22,
+                    pool_id: 700,
+                    slot_id: 1,
+                },
+            },
+        )
+        .unwrap();
+        handle_linux_attach_stream_message(&server, &endpoint, &mut session, &mut producer).unwrap();
+        let LinuxAttachResponse::Error { code, .. } = recv_json::<LinuxAttachResponse>(&client).unwrap() else {
+            panic!("expected not_authorized error");
+        };
+        assert_eq!(code, "not_authorized");
+        assert!(!producer.backend_mut().lease_book.slot_has_unresolved_leases(700, 1));
+
+        send_json(
+            &client,
+            &LinuxAttachRequest::ReleaseFrame {
+                release: LinuxReleaseDescriptor::Now { lease_id: 1 },
+            },
+        )
+        .unwrap();
+        handle_linux_attach_stream_message(&server, &endpoint, &mut session, &mut producer).unwrap();
+        let LinuxAttachResponse::Error { code, .. } = recv_json::<LinuxAttachResponse>(&client).unwrap() else {
+            panic!("expected not_authorized error");
+        };
+        assert_eq!(code, "not_authorized");
+
+        send_json(&client, &LinuxAttachRequest::GetPool { pool_id: 1 }).unwrap();
+        handle_linux_attach_stream_message(&server, &endpoint, &mut session, &mut producer).unwrap();
+        let LinuxAttachResponse::Error { code, .. } = recv_json::<LinuxAttachResponse>(&client).unwrap() else {
+            panic!("expected not_authorized error");
+        };
+        assert_eq!(code, "not_authorized");
+    }
+
+    #[test]
+    fn caps_attach_message_length() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let mut writer = &client;
+        // One byte past the cap, no newline: the reader must fail instead of
+        // buffering an unbounded line.
+        writer.write_all(&vec![b'x'; super::LINUX_ATTACH_MAX_JSON_BYTES + 1]).unwrap();
+        let error = recv_json::<LinuxAttachRequest>(&server).unwrap_err();
+        assert!(error.to_string().contains("without a newline"), "unexpected error: {error}");
+    }
+
+    #[test]
     fn linux_attach_server_accepts_streams_and_cleans_up_socket_path() {
         let tempdir = tempfile::tempdir().unwrap();
         let socket_path = tempdir.path().join("missing").join("native.sock");
@@ -1109,6 +1236,11 @@ mod tests {
             PoolExhaustionPolicy::Fail,
         )
         .unwrap();
+
+        send_json(&client, &LinuxAttachRequest::Attach { consumer_id: 0 }).unwrap();
+        handle_linux_attach_stream_message(&server, &endpoint, &mut session, &mut producer).unwrap();
+        let (response, _fd_table): (LinuxAttachResponse, _) = recv_json_with_fds(&client, 8).unwrap();
+        assert!(matches!(response, LinuxAttachResponse::Granted { .. }));
 
         send_json(
             &client,

@@ -101,6 +101,18 @@ pub struct AttachSession {
     attached: bool,
 }
 
+impl AttachSession {
+    /// Whether `Attach` has completed on this session. Transports gate
+    /// post-handshake operations (pool fetch, lease acquire/release,
+    /// release-sync registration) on this: they all act on producer state a
+    /// session only legitimately reaches through its grant, so ordering is
+    /// enforced unconditionally — even on unauthenticated endpoints.
+    #[must_use]
+    pub fn is_attached(&self) -> bool {
+        self.attached
+    }
+}
+
 /// The producer-side endpoint: validates ordering and authorization, then
 /// asks the producer for the one-time grant.
 #[derive(Debug)]
@@ -308,6 +320,27 @@ mod tests {
             assert_eq!(registry.surface_bytes(handle_pool, handle_slot).unwrap(), vec![sequence as u8]);
         }
         assert_eq!(transport.messages, handshake_messages, "setup channel used after attach");
+    }
+
+    #[test]
+    fn session_reports_attached_only_after_a_grant() {
+        let registry = FakeSurfaceRegistry::default();
+        let mut producer = producer(&registry);
+        let mut transport = FakeTransport::new(Some("pta_agent.secret"));
+
+        assert!(!transport.session.is_attached());
+        transport
+            .request(
+                &mut producer,
+                AttachRequest::Authorize {
+                    bearer_token: "pta_agent.secret".to_string(),
+                },
+            )
+            .unwrap();
+        // Authorized but not yet attached: operations must still be refused.
+        assert!(!transport.session.is_attached());
+        attach(&mut transport, &mut producer, 7);
+        assert!(transport.session.is_attached());
     }
 
     #[test]

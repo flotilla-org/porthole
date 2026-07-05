@@ -98,9 +98,10 @@ pub union FtNativeSyncHandle {
 
 impl std::fmt::Debug for FtNativeSyncHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The discriminant lives in FtNativeSync.sync_kind. Printing the raw
-        // pointer form keeps Debug side-effect free.
-        write!(f, "FtNativeSyncHandle({:p})", unsafe { self.object })
+        // The discriminant lives in FtNativeSync.sync_kind, so Debug cannot
+        // know which arm is live — and reading the 8-byte `object` arm after
+        // a 4-byte `fd` write would read uninitialized bytes. Stay opaque.
+        f.write_str("FtNativeSyncHandle(<opaque>)")
     }
 }
 

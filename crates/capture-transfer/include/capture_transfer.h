@@ -323,7 +323,12 @@ typedef struct ft_native_event {
 } ft_native_event;
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-/* Pin the native ABI; mirror is the #[repr(C)] block in src/ffi_native.rs. */
+/* Pin the native ABI; mirror is the #[repr(C)] block in src/ffi_native.rs.
+ * The sizes below assume 8-byte pointers (pointer-bearing structs like
+ * ft_native_sync and ft_native_grant shrink under ILP32). Declare the
+ * constraint explicitly so a 32-bit build fails with one clear message
+ * instead of a wall of packing asserts. */
+_Static_assert(sizeof(void *) == 8, "jackstay native ABI assumes 64-bit pointers (no ILP32 target yet)");
 _Static_assert(sizeof(ft_native_attach_descriptor) == 40, "native attach descriptor size");
 _Static_assert(offsetof(ft_native_attach_descriptor, requested_consumer_id) == 8, "native attach descriptor packing");
 _Static_assert(offsetof(ft_native_attach_descriptor, endpoint) == 16, "native attach descriptor packing");
