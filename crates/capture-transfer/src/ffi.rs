@@ -919,6 +919,29 @@ mod tests {
         ft_producer_register_source, ft_producer_register_track,
     };
 
+    /// The header and this crate each state the ABI version; nothing else
+    /// ties them together, so a bump that touches one side and not the other
+    /// would silently break the startup check `ft_abi_version()` exists for.
+    /// Parse the header's defines and compare.
+    #[test]
+    fn header_and_library_agree_on_the_abi_version() {
+        let header = include_str!("../include/capture_transfer.h");
+        let define = |name: &str| -> u32 {
+            let marker = format!("#define {name} ");
+            header
+                .lines()
+                .find_map(|line| line.strip_prefix(&marker))
+                .unwrap_or_else(|| panic!("{name} not defined in capture_transfer.h"))
+                .trim()
+                .parse()
+                .unwrap_or_else(|error| panic!("{name} is not a bare integer: {error}"))
+        };
+        assert_eq!(define("FT_ABI_VERSION_MAJOR"), super::FT_ABI_VERSION_MAJOR);
+        assert_eq!(define("FT_ABI_VERSION_MINOR"), super::FT_ABI_VERSION_MINOR);
+        assert_eq!(super::ft_abi_version(), super::FT_ABI_VERSION);
+        assert_eq!(super::FT_ABI_VERSION, 0x0001_0000);
+    }
+
     #[test]
     fn producer_consumer_smoke_through_c_abi() {
         let mut producer: *mut FtProducer = ptr::null_mut();
