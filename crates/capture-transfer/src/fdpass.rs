@@ -108,7 +108,12 @@ pub fn recv_fds(stream: &UnixStream, max_fds: usize) -> Result<Vec<OwnedFd>> {
         if cmsg.is_null() || (*cmsg).cmsg_level != libc::SOL_SOCKET || (*cmsg).cmsg_type != libc::SCM_RIGHTS {
             return Err(CaptureTransferError::MissingPassedFd);
         }
-        let control_message_len = (*cmsg).cmsg_len as usize;
+        // When the control buffer is too small (MSG_CTRUNC), macOS leaves
+        // cmsg_len at the sender's untruncated length; only msg_controllen
+        // reflects what the kernel actually delivered. Interpreting the
+        // difference as fds would read bytes the kernel never wrote — and
+        // then close whatever fd numbers those bytes happen to spell.
+        let control_message_len = ((*cmsg).cmsg_len as usize).min(message.msg_controllen as usize);
         if control_message_len < cmsg_len(0) {
             return Err(CaptureTransferError::MissingPassedFd);
         }
@@ -236,7 +241,14 @@ mod tests {
 
         send_fds(&sender, &[first.as_raw_fd(), second.as_raw_fd()]).unwrap();
 
+        // On macOS a truncated cmsg keeps the sender's untruncated cmsg_len,
+        // so the undelivered tail of the zeroed control buffer spells fd 0.
+        // Without the msg_controllen clamp the truncation cleanup closed it
+        // (stdin) out from under the whole process.
+        let fd0_open_before = unsafe { libc::fcntl(0, libc::F_GETFD) } != -1;
         assert!(recv_fds(&receiver, 1).is_err());
+        let fd0_open_after = unsafe { libc::fcntl(0, libc::F_GETFD) } != -1;
+        assert_eq!(fd0_open_after, fd0_open_before, "truncated recv closed an fd it never received");
     }
 
     fn tempfile_file_with_contents(contents: &[u8]) -> File {
