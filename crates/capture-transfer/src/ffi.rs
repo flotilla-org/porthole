@@ -17,6 +17,21 @@ use crate::{
 
 pub type FtStatus = i32;
 
+/// ABI version of this library, as `(major << 16) | minor`. Mirror of
+/// `FT_ABI_VERSION` in `capture_transfer.h`; consumers compare their header's
+/// constant against [`ft_abi_version`] at startup. Additions land as new
+/// functions and new attach-stream operations under a minor bump; existing
+/// struct layouts never change without a major bump.
+pub const FT_ABI_VERSION_MAJOR: u32 = 1;
+pub const FT_ABI_VERSION_MINOR: u32 = 0;
+pub const FT_ABI_VERSION: u32 = (FT_ABI_VERSION_MAJOR << 16) | FT_ABI_VERSION_MINOR;
+
+/// Report the linked library's ABI version.
+#[unsafe(no_mangle)]
+pub extern "C" fn ft_abi_version() -> u32 {
+    FT_ABI_VERSION
+}
+
 pub const FT_STATUS_OK: FtStatus = 0;
 pub const FT_STATUS_EMPTY: FtStatus = 1;
 pub const FT_STATUS_INVALID_ARGUMENT: FtStatus = 2;

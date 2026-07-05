@@ -8,6 +8,20 @@
 extern "C" {
 #endif
 
+/*
+ * ABI version this header describes, as (major << 16) | minor. Compare
+ * against ft_abi_version() from the linked library at startup: a major
+ * mismatch is incompatible; a larger library minor is compatible (additions
+ * arrive as new functions and new attach-stream operations, never as changes
+ * to existing struct layouts — those are pinned by the _Static_asserts
+ * below).
+ */
+#define FT_ABI_VERSION_MAJOR 1
+#define FT_ABI_VERSION_MINOR 0
+#define FT_ABI_VERSION ((uint32_t)((FT_ABI_VERSION_MAJOR << 16) | FT_ABI_VERSION_MINOR))
+
+uint32_t ft_abi_version(void);
+
 #define FT_STATUS_OK 0
 #define FT_STATUS_EMPTY 1
 #define FT_STATUS_INVALID_ARGUMENT 2

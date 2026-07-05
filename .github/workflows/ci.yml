@@ -61,3 +61,43 @@ jobs:
             ${{ runner.os }}-cargo-test-
       - run: cargo build -p porthole --locked
       - run: cargo test --workspace --locked
+
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+      - run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev
+      - run: cargo test --workspace --locked
+      # Compile gate only: the runners have no DRM render node or PipeWire
+      # session, so the backend's hardware-touching tests can't run here.
+      - run: cargo build -p capture-transfer --locked --features backend-linux
+
+  abi:
+    name: C ABI guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A C11 compiler and Zig's translate-c both consume the public headers,
+      # standing in for the downstream C and Zig (katzensteg) consumers so a
+      # header edit can't silently break them.
+      - run: cc -std=c11 -fsyntax-only crates/capture-transfer/include/capture_transfer.h
+      - run: cc -std=c11 -fsyntax-only crates/capture-transfer/include/jackstay_ring.h
+      - run: cc -std=c11 -I crates/capture-transfer/include -fsyntax-only crates/capture-transfer/src/native/c_abi_header_smoke.c
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - run: zig translate-c -lc crates/capture-transfer/include/capture_transfer.h > /dev/null
+      - run: zig translate-c -lc crates/capture-transfer/include/jackstay_ring.h > /dev/null
