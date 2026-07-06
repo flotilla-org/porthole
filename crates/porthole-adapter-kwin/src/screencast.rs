@@ -238,6 +238,11 @@ async fn wait_prepared_response(
         .with_details(json!({
             "permission": "screencast",
             "reason": format!("portal response code {other}"),
+            // An outright portal rejection is the one case where a stale/invalid
+            // cached restore_data is the plausible cause, so it is safe to drop
+            // the token and retry once without it. Timeouts, transport failures,
+            // and user cancellation are not restore_data faults and must not.
+            "restore_data_retryable": true,
             "settings_path": "KDE System Settings -> Security & Privacy -> Application Permissions",
             "binary_path": current_exe(),
         }))),
@@ -245,7 +250,14 @@ async fn wait_prepared_response(
 }
 
 fn should_retry_without_restore_data(error: &PortholeError) -> bool {
-    matches!(error.code, ErrorCode::SystemPermissionRequestFailed)
+    // Only an explicit portal rejection (not a timeout, transport error, or
+    // cancellation, which share the same ErrorCode) points at a stale token.
+    error
+        .details
+        .as_ref()
+        .and_then(|details| details.get("restore_data_retryable"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn configured_portal_response_timeout() -> Duration {
@@ -293,7 +305,23 @@ fn write_cached_restore_data_to_path(path: &Path, restore_data: &OwnedValue) -> 
     let mut bytes = Vec::with_capacity(SCREENCAST_RESTORE_DATA_CACHE_VERSION.len() + data.bytes().len());
     bytes.extend_from_slice(SCREENCAST_RESTORE_DATA_CACHE_VERSION);
     bytes.extend_from_slice(data.bytes());
-    fs::write(path, bytes)
+    // restore_data is effectively a credential: with persist_mode it re-grants
+    // persistent screen-capture without a fresh consent prompt. Keep it owner-
+    // only (0600), matching agent_store.rs / shm.rs. set_permissions after the
+    // write tightens the file even if it pre-existed with looser bits.
+    use std::{
+        io::Write as _,
+        os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+    };
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(&bytes)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
 }
 
 fn read_cached_restore_data_from_path(path: &Path) -> Option<OwnedValue> {

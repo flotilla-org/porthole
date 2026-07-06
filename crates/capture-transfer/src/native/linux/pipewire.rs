@@ -1031,6 +1031,14 @@ impl PipeWireNativeBackend {
             .collect::<Result<Vec<_>>>()?;
         let (pipewire_slot_ids, surfaces): (Vec<_>, Vec<_>) = surfaces.into_iter().unzip();
         let surface_count = surfaces.len();
+        // Drop mappings for superseded pools whose leases have all resolved.
+        // Entries with an outstanding lease are kept so release still finds the
+        // pw slot (a reconfigure can race a held buffer); they are pruned on a
+        // later allocation once their lease resolves. Bounds the map, which
+        // would otherwise grow one entry per slot per renegotiation forever.
+        let lease_book = &self.lease_book;
+        self.pipewire_slot_ids
+            .retain(|&(entry_pool, entry_slot), _| lease_book.slot_has_unresolved_leases(entry_pool, entry_slot));
         for (slot_id, pipewire_slot_id) in pipewire_slot_ids.iter().copied().enumerate() {
             self.pipewire_slot_ids.insert((pool_id, slot_id as u32), pipewire_slot_id);
         }

@@ -197,10 +197,22 @@ static void porthole_pipewire_stream_add_buffer(void *data, struct pw_buffer *bu
   }
 }
 
+static struct porthole_native_linux_pipewire_held_buffer *
+porthole_pipewire_stream_detach_held(struct porthole_native_linux_pipewire_stream *handle, uint32_t slot_id);
+
 static void porthole_pipewire_stream_remove_buffer(void *data, struct pw_buffer *buffer) {
   struct porthole_native_linux_pipewire_stream *handle = data;
   struct porthole_native_linux_pipewire_buffer_user_data *buffer_data = buffer->user_data;
   if (buffer_data != NULL) {
+    /* If a consumer's lease has not resolved, this buffer may still be in the
+     * held list while PipeWire destroys it (e.g. a renegotiation replaces the
+     * pool). Drop the held-list node without queuing it back: the underlying
+     * pw_buffer is going away, so a later release or forced handback must not
+     * touch it. Runs on the loop thread, serialized against the locked
+     * release path. */
+    struct porthole_native_linux_pipewire_held_buffer *stale =
+      porthole_pipewire_stream_detach_held(handle, buffer_data->slot_id);
+    free(stale);
     if (handle->callbacks.buffer_removed != NULL) {
       handle->callbacks.buffer_removed(handle->callbacks.user_data, buffer_data->slot_id);
     }
@@ -277,7 +289,9 @@ static bool porthole_pipewire_stream_hold_buffer(struct porthole_native_linux_pi
 
   struct porthole_native_linux_pipewire_held_buffer *held = calloc(1, sizeof(*held));
   if (held == NULL) {
-    handle->forced_handback_count++;
+    /* Not a forced handback: the caller requeues this buffer immediately when
+     * hold returns false, so leave forced_handback_count (which counts held
+     * buffers stolen under saturation) unskewed. */
     return false;
   }
   held->slot_id = slot_id;
@@ -438,10 +452,18 @@ static void porthole_native_linux_pipewire_stream_free(struct porthole_native_li
   if (handle == NULL) {
     return;
   }
+  /* Drain the held list under the thread-loop lock: the loop thread may still
+   * be running process/add_buffer/remove_buffer, which mutate the same list.
+   * Every other mutator locks first (see _release_buffer); this one must too.
+   * Release the lock before pw_thread_loop_stop, which reacquires it to join. */
+  if (handle->loop != NULL) {
+    pw_thread_loop_lock(handle->loop);
+  }
   while (handle->held_head != NULL) {
     porthole_pipewire_stream_force_oldest_handback(handle);
   }
   if (handle->loop != NULL) {
+    pw_thread_loop_unlock(handle->loop);
     pw_thread_loop_stop(handle->loop);
   }
   if (handle->stream != NULL) {
