@@ -14,8 +14,8 @@ use capture_transfer::{
         linux::{
             LinuxAttachServer,
             pipewire::{
-                PipeWireNativeBackend, PipeWireNativeProducerHandle, PipeWireNativeProducerObserver, PipeWireStream, PipeWireStreamTarget,
-                SharedPipeWireNativeProducer,
+                PipeWireBufferReleaser, PipeWireNativeBackend, PipeWireNativeProducerHandle, PipeWireNativeProducerObserver,
+                PipeWireStream, PipeWireStreamTarget, SharedPipeWireNativeProducer,
             },
         },
     },
@@ -122,7 +122,8 @@ pub(super) async fn create(
         },
     );
 
-    let backend = match PipeWireNativeBackend::open(drm_render_node()) {
+    let buffer_releaser = PipeWireBufferReleaser::new();
+    let backend = match PipeWireNativeBackend::open_with_buffer_releaser(drm_render_node(), Some(buffer_releaser.clone())) {
         Ok(backend) => backend,
         Err(error) => {
             registry.remove_session(&session_id);
@@ -147,14 +148,18 @@ pub(super) async fn create(
         }
     };
     let (observer, producer_handle) = PipeWireNativeProducerObserver::new(backend, 1, PoolExhaustionPolicy::DropFrame);
-    let stream =
-        match PipeWireStream::open_remote_with_observer(&screencast.pipewire_remote, stream_target(&stream_info), Box::new(observer)) {
-            Ok(stream) => stream,
-            Err(error) => {
-                registry.remove_session(&session_id);
-                return Err(CaptureRegistryError::from_capture(error));
-            }
-        };
+    let stream = match PipeWireStream::open_remote_with_observer_and_releaser(
+        &screencast.pipewire_remote,
+        stream_target(&stream_info),
+        Box::new(observer),
+        buffer_releaser,
+    ) {
+        Ok(stream) => stream,
+        Err(error) => {
+            registry.remove_session(&session_id);
+            return Err(CaptureRegistryError::from_capture(error));
+        }
+    };
     let producer = match wait_for_producer(&producer_handle).await {
         Ok(producer) => producer,
         Err(error) => {
@@ -284,7 +289,7 @@ mod tests {
     use std::{ffi::CString, ptr, sync::Arc};
 
     use capture_transfer::{
-        ffi::{FT_STATUS_OK, FT_STATUS_TIMEOUT},
+        ffi::{FT_STATUS_EMPTY, FT_STATUS_OK, FT_STATUS_TIMEOUT},
         ffi_native::{
             FT_NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET, FT_NATIVE_HANDLE_DMABUF, FT_NATIVE_RELEASE_NOW, FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE,
             FtNativeAttach, FtNativeAttachDescriptor, FtNativeFrame, FtNativeGrant, FtNativeRelease, ft_native_acquire_latest,
@@ -297,19 +302,58 @@ mod tests {
     use super::*;
     use crate::capture_registry::CaptureRegistry;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "requires a real KDE/Wayland session, ScreenCast portal consent, PipeWire, and /dev/dri/renderD128"]
-    async fn live_kde_pipewire_native_session_attaches_and_acquires_one_dmabuf_frame() {
-        if std::env::var_os("PORTHOLE_LIVE_KDE_NATIVE_SMOKE").is_none() {
-            eprintln!("set PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 to run the live KDE/PipeWire native capture smoke");
-            return;
+    struct LiveNativeSession {
+        registry: CaptureRegistry,
+        session_id: String,
+        attach: *mut FtNativeAttach,
+        grant: FtNativeGrant,
+    }
+
+    impl Drop for LiveNativeSession {
+        fn drop(&mut self) {
+            if !self.attach.is_null() {
+                unsafe { ft_native_attach_destroy(self.attach) };
+            }
+            let _ = self.registry.close_session(&self.session_id);
         }
+    }
+
+    fn empty_frame() -> FtNativeFrame {
+        FtNativeFrame {
+            struct_size: std::mem::size_of::<FtNativeFrame>() as u32,
+            flags: 0,
+            lease_id: 0,
+            cursor: 0,
+            sequence: 0,
+            timestamp_ns: 0,
+            pool_id: 0,
+            slot_id: 0,
+            width: 0,
+            height: 0,
+            pixel_format: 0,
+            producer_sync_id: 0,
+            producer_sync_value: 0,
+        }
+    }
+
+    fn release_now(attach: *mut FtNativeAttach, lease_id: u64) {
+        let release = FtNativeRelease {
+            struct_size: std::mem::size_of::<FtNativeRelease>() as u32,
+            release_kind: FT_NATIVE_RELEASE_NOW,
+            lease_id,
+            release_sync_id: 0,
+            release_value: 0,
+        };
+        assert_eq!(unsafe { ft_native_release_frame(attach, &release) }, FT_STATUS_OK);
+    }
+
+    async fn connect_live_native_session(test_name: &str, agent_id: &str) -> LiveNativeSession {
         let registry = CaptureRegistry::disabled();
         let kwin = Arc::new(KWinAdapter::new(KWinBridge::new()));
         let mut surface = SurfaceInfo::window(SurfaceId::new(), std::process::id());
-        surface.title = Some("porthole linux native smoke".to_string());
+        surface.title = Some(test_name.to_string());
 
-        let response = create(&registry, kwin, surface, AgentId::from("agent_linux_native_smoke"))
+        let response = create(&registry, kwin, surface, AgentId::from(agent_id))
             .await
             .expect("native KDE/PipeWire capture session should start");
         let native = response.native.expect("native capture info should be present");
@@ -341,50 +385,134 @@ mod tests {
         assert_eq!(grant.pool_count, 1);
         assert_eq!(grant.producer_sync.sync_kind, FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE);
 
+        LiveNativeSession {
+            registry,
+            session_id: response.session_id,
+            attach,
+            grant,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a real KDE/Wayland session, ScreenCast portal consent, PipeWire, and /dev/dri/renderD128"]
+    async fn live_kde_pipewire_native_session_attaches_and_acquires_one_dmabuf_frame() {
+        if std::env::var_os("PORTHOLE_LIVE_KDE_NATIVE_SMOKE").is_none() {
+            eprintln!("set PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 to run the live KDE/PipeWire native capture smoke");
+            return;
+        }
+        let session = connect_live_native_session("porthole linux native smoke", "agent_linux_native_smoke").await;
+
         let mut ready_cursor = 0;
-        let wait_status = unsafe { ft_native_wait_frame(attach, 0, 1_000_000_000, &mut ready_cursor) };
+        let wait_status = unsafe { ft_native_wait_frame(session.attach, 0, 1_000_000_000, &mut ready_cursor) };
         assert!(
             wait_status == FT_STATUS_OK || wait_status == FT_STATUS_TIMEOUT,
             "unexpected wait status {wait_status}"
         );
 
-        let mut frame = FtNativeFrame {
-            struct_size: std::mem::size_of::<FtNativeFrame>() as u32,
-            flags: 0,
-            lease_id: 0,
-            cursor: 0,
-            sequence: 0,
-            timestamp_ns: 0,
-            pool_id: 0,
-            slot_id: 0,
-            width: 0,
-            height: 0,
-            pixel_format: 0,
-            producer_sync_id: 0,
-            producer_sync_value: 0,
-        };
-        assert_eq!(unsafe { ft_native_acquire_latest(attach, 0, &mut frame) }, FT_STATUS_OK);
+        let mut frame = empty_frame();
+        assert_eq!(unsafe { ft_native_acquire_latest(session.attach, 0, &mut frame) }, FT_STATUS_OK);
         assert_ne!(frame.lease_id, 0);
         assert!(frame.width > 0);
         assert!(frame.height > 0);
 
-        let pool = unsafe { *grant.pools };
+        let pool = unsafe { *session.grant.pools };
         assert_eq!(pool.pool_id, frame.pool_id);
+        assert_eq!(
+            pool.surface_count, 4,
+            "KWin should honor porthole's requested four-buffer PipeWire pool"
+        );
         assert!(frame.slot_id < pool.surface_count);
         let surface = unsafe { *pool.surfaces.add(frame.slot_id as usize) };
         assert_eq!(surface.handle_kind, FT_NATIVE_HANDLE_DMABUF);
         assert!(surface.plane_count > 0);
         assert!(surface.planes[0].fd >= 0);
 
-        let release = FtNativeRelease {
-            struct_size: std::mem::size_of::<FtNativeRelease>() as u32,
-            release_kind: FT_NATIVE_RELEASE_NOW,
-            lease_id: frame.lease_id,
-            release_sync_id: 0,
-            release_value: 0,
-        };
-        assert_eq!(unsafe { ft_native_release_frame(attach, &release) }, FT_STATUS_OK);
-        unsafe { ft_native_attach_destroy(attach) };
-        registry.close_session(&response.session_id).unwrap();
+        release_now(session.attach, frame.lease_id);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a real KDE/Wayland session, ScreenCast portal consent, PipeWire, and /dev/dri/renderD128"]
+    async fn live_kde_pipewire_native_session_holds_pipewire_slot_until_lease_release() {
+        if std::env::var_os("PORTHOLE_LIVE_KDE_NATIVE_SMOKE").is_none() {
+            eprintln!("set PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 to run the live KDE/PipeWire native capture smoke");
+            return;
+        }
+        let session = connect_live_native_session("porthole linux native lease_gate", "agent_linux_native_lease_gate").await;
+        let pool = unsafe { *session.grant.pools };
+        assert_eq!(
+            pool.surface_count, 4,
+            "KWin should honor porthole's requested four-buffer PipeWire pool"
+        );
+
+        let mut first = empty_frame();
+        assert_eq!(
+            unsafe { ft_native_wait_frame(session.attach, 0, 1_000_000_000, &mut first.cursor) },
+            FT_STATUS_OK
+        );
+        assert_eq!(unsafe { ft_native_acquire_latest(session.attach, 0, &mut first) }, FT_STATUS_OK);
+        let held_lease_id = first.lease_id;
+        let held_slot_id = first.slot_id;
+        let mut last_cursor = first.cursor;
+        let mut observed_other_slot = false;
+
+        let before_release_deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < before_release_deadline {
+            let mut ready_cursor = 0;
+            let wait_status = unsafe { ft_native_wait_frame(session.attach, last_cursor, 500_000_000, &mut ready_cursor) };
+            if wait_status == FT_STATUS_TIMEOUT {
+                continue;
+            }
+            assert_eq!(wait_status, FT_STATUS_OK, "unexpected wait status {wait_status}");
+
+            let mut frame = empty_frame();
+            let acquire_status = unsafe { ft_native_acquire_latest(session.attach, last_cursor, &mut frame) };
+            if acquire_status == FT_STATUS_EMPTY {
+                continue;
+            }
+            assert_eq!(acquire_status, FT_STATUS_OK, "unexpected acquire status {acquire_status}");
+            assert_ne!(
+                frame.slot_id, held_slot_id,
+                "held PipeWire slot {held_slot_id} was republished before its native lease released"
+            );
+            observed_other_slot = true;
+            last_cursor = frame.cursor;
+            release_now(session.attach, frame.lease_id);
+        }
+        assert!(
+            observed_other_slot,
+            "live KWin stream did not publish another slot while the first slot was held"
+        );
+
+        release_now(session.attach, held_lease_id);
+
+        let after_release_deadline = Instant::now() + Duration::from_secs(5);
+        let mut observed_released_slot = false;
+        while Instant::now() < after_release_deadline {
+            let mut ready_cursor = 0;
+            let wait_status = unsafe { ft_native_wait_frame(session.attach, last_cursor, 500_000_000, &mut ready_cursor) };
+            if wait_status == FT_STATUS_TIMEOUT {
+                continue;
+            }
+            assert_eq!(wait_status, FT_STATUS_OK, "unexpected wait status {wait_status}");
+
+            let mut frame = empty_frame();
+            let acquire_status = unsafe { ft_native_acquire_latest(session.attach, last_cursor, &mut frame) };
+            if acquire_status == FT_STATUS_EMPTY {
+                continue;
+            }
+            assert_eq!(acquire_status, FT_STATUS_OK, "unexpected acquire status {acquire_status}");
+            last_cursor = frame.cursor;
+            if frame.slot_id == held_slot_id {
+                observed_released_slot = true;
+            }
+            release_now(session.attach, frame.lease_id);
+            if observed_released_slot {
+                break;
+            }
+        }
+        assert!(
+            observed_released_slot,
+            "released PipeWire slot {held_slot_id} did not become reusable after the native lease released"
+        );
     }
 }
