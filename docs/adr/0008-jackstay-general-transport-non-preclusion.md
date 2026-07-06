@@ -144,8 +144,11 @@ The resulting order:
    *Amended 2026-07-06 (PR #105): the guardrails landed, but the version is
    deliberately stamped 0.1 — nothing is being distributed yet, so the 1.0
    stability promise waits until an external consumer needs it. Major 0 means
-   layouts may still change freely, with a minor bump as the only signal.
-   Step 3 (extraction) is deferred with it.*
+   layouts may still change freely, with a minor bump as the only signal.*
+   *Corrected same day: the 0.1 decision defers only the stamp. Extraction
+   (step 3) is not tied to it — "extract at the freeze" overstated the
+   coupling; a separate repo and a 0.x version coexist fine, and extraction
+   proceeds on its own schedule.*
 3. **Extract jackstay to its own repo *at* the freeze** — still last. katzensteg
    already consumes via dylib/header with no extraction, which is the proof that
    extraction marks the freeze rather than being a prerequisite for anything.
