@@ -21,9 +21,11 @@ pub type FtStatus = i32;
 /// `FT_ABI_VERSION` in `capture_transfer.h`; consumers compare their header's
 /// constant against [`ft_abi_version`] at startup. Additions land as new
 /// functions and new attach-stream operations under a minor bump; existing
-/// struct layouts never change without a major bump.
-pub const FT_ABI_VERSION_MAJOR: u32 = 1;
-pub const FT_ABI_VERSION_MINOR: u32 = 0;
+/// struct layouts never change without a major bump. Major 0 means
+/// pre-stabilization: layouts may still change freely, with a minor bump as
+/// the only signal; 1.0 waits until an external consumer needs the promise.
+pub const FT_ABI_VERSION_MAJOR: u32 = 0;
+pub const FT_ABI_VERSION_MINOR: u32 = 1;
 pub const FT_ABI_VERSION: u32 = (FT_ABI_VERSION_MAJOR << 16) | FT_ABI_VERSION_MINOR;
 
 /// Report the linked library's ABI version.
@@ -939,7 +941,7 @@ mod tests {
         assert_eq!(define("FT_ABI_VERSION_MAJOR"), super::FT_ABI_VERSION_MAJOR);
         assert_eq!(define("FT_ABI_VERSION_MINOR"), super::FT_ABI_VERSION_MINOR);
         assert_eq!(super::ft_abi_version(), super::FT_ABI_VERSION);
-        assert_eq!(super::FT_ABI_VERSION, 0x0001_0000);
+        assert_eq!(super::FT_ABI_VERSION, 0x0000_0001);
     }
 
     #[test]

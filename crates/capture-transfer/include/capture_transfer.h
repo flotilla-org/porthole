@@ -15,9 +15,13 @@ extern "C" {
  * arrive as new functions and new attach-stream operations, never as changes
  * to existing struct layouts — those are pinned by the _Static_asserts
  * below).
+ *
+ * Major 0 means pre-stabilization: layouts may still change freely, with a
+ * minor bump as the only signal. The 1.0 stamp waits until an external
+ * consumer needs the stability promise.
  */
-#define FT_ABI_VERSION_MAJOR 1
-#define FT_ABI_VERSION_MINOR 0
+#define FT_ABI_VERSION_MAJOR 0
+#define FT_ABI_VERSION_MINOR 1
 #define FT_ABI_VERSION ((uint32_t)((FT_ABI_VERSION_MAJOR << 16) | FT_ABI_VERSION_MINOR))
 
 uint32_t ft_abi_version(void);
