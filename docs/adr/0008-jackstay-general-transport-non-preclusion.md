@@ -141,6 +141,11 @@ The resulting order:
 2. **Freeze the C ABI 1.0** — handle discrimination final; ABI-version field
    beside the existing struct-size `_Static_assert`s; wire in the `zig translate-c`
    + `cc -std=c11` regression guards.
+   *Amended 2026-07-06 (PR #105): the guardrails landed, but the version is
+   deliberately stamped 0.1 — nothing is being distributed yet, so the 1.0
+   stability promise waits until an external consumer needs it. Major 0 means
+   layouts may still change freely, with a minor bump as the only signal.
+   Step 3 (extraction) is deferred with it.*
 3. **Extract jackstay to its own repo *at* the freeze** — still last. katzensteg
    already consumes via dylib/header with no extraction, which is the proof that
    extraction marks the freeze rather than being a prerequisite for anything.
