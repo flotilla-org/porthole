@@ -100,6 +100,12 @@ unsafe extern "C" {
 
 #[cfg(windows)]
 fn named_pipe_name() -> String {
+    // SECURITY: confidentiality currently relies on the pipe's default security
+    // descriptor from ServerOptions::create. On a shared / RDP host this must
+    // restrict cross-user access the way the Unix socket's per-uid runtime dir
+    // (0700) does; the default DACL grants the creator + SYSTEM/Administrators,
+    // but this needs an explicit confirmation (and likely a hardened DACL)
+    // before multi-user Windows deployment. Tracked as Windows-port follow-up.
     let Some(username) = std::env::var("USERNAME").ok().filter(|value| !value.is_empty()) else {
         return r"\\.\pipe\porthole".to_string();
     };
@@ -265,11 +271,34 @@ async fn serve_windows(name: String, router: Router) -> std::io::Result<()> {
         ServerOptions::new().first_pipe_instance(first_pipe_instance).create(name)
     }
 
+    // Keep re-creating the next pipe instance until it succeeds. A transient
+    // failure to re-arm (or to accept a connection) must degrade to a dropped
+    // connection, not propagate out of the accept loop and take the whole
+    // daemon down — matching how axum::serve's Unix accept loop tolerates
+    // transient per-connection errors and keeps serving.
+    async fn rearm(name: &str) -> NamedPipeServer {
+        loop {
+            match create_pipe(name, false) {
+                Ok(pipe) => return pipe,
+                Err(error) => {
+                    tracing::error!(%error, "failed to re-arm named pipe instance; retrying");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+
+    // The first instance must bind or there is no endpoint at all (mirrors a
+    // failed UnixListener::bind, which the Unix path also propagates).
     let mut pipe = create_pipe(&name, true)?;
     loop {
-        pipe.connect().await?;
+        if let Err(error) = pipe.connect().await {
+            tracing::warn!(%error, "named pipe connect failed; re-arming instance");
+            pipe = rearm(&name).await;
+            continue;
+        }
         let connected = pipe;
-        pipe = create_pipe(&name, false)?;
+        pipe = rearm(&name).await;
         let service = TowerToHyperService::new(router.clone().into_service());
         tokio::spawn(async move {
             let io = TokioIo::new(connected);
