@@ -638,8 +638,30 @@ enum ConditionArg {
     TitleMatches,
 }
 
+#[cfg(windows)]
+fn main() -> std::process::ExitCode {
+    std::thread::Builder::new()
+        .name("porthole-main".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime should initialize")
+                .block_on(async_main())
+        })
+        .expect("porthole main thread should spawn")
+        .join()
+        .expect("porthole main thread should not panic")
+}
+
+#[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    async_main().await
+}
+
+async fn async_main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let control_socket_path = socket_path();
     let mut client = DaemonClient::new(&control_socket_path);

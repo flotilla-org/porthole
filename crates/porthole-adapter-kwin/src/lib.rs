@@ -1,3 +1,8 @@
+#![cfg(target_os = "linux")]
+// The KWin/KDE adapter is Linux-only (KWin script bridge, xdg-desktop-portal
+// ScreenCast/RemoteDesktop over D-Bus). The whole crate compiles to nothing on
+// other targets; portholed only depends on it under cfg(target_os = "linux").
+
 pub mod bridge;
 pub mod screencast;
 
