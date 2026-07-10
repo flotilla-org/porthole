@@ -85,6 +85,34 @@ jobs:
       # session, so the backend's hardware-touching tests can't run here.
       - run: cargo build -p capture-transfer --locked --features backend-linux
 
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+      # Capture is stubbed on Windows (Layer 1), so the whole workspace compiles
+      # but several tests assert capture/Unix-socket behavior that differs under
+      # the stub (capture-transfer's shm tests, portholed's capture-adjacent
+      # route guards, the Unix-socket-path CLI tests). Until those are gated for
+      # Windows, this job is a compile gate over every crate plus the portable
+      # logic tests (core / protocol / the new transport crate) — enough to catch
+      # a Windows build or wire regression. Widening test coverage is tracked as
+      # a follow-up.
+      - run: cargo build --workspace --locked
+      - run: cargo test -p porthole-core -p porthole-protocol -p porthole-transport --locked
+
   abi:
     name: C ABI guards
     runs-on: ubuntu-latest
