@@ -1,23 +1,32 @@
+#![cfg_attr(windows, allow(dead_code))]
+
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+#[cfg(unix)]
+use std::{
+    collections::{BTreeMap, BTreeSet},
     io::{BufRead, BufReader, Write},
     os::{
         fd::AsRawFd,
         unix::net::{UnixListener, UnixStream},
     },
-    path::PathBuf,
-    sync::{Arc, Mutex},
     thread,
 };
 
+#[cfg(unix)]
 use capture_transfer::{
     fdpass,
+    transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
+};
+use capture_transfer::{
     model::{
         ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
         VideoTrackDesc,
     },
     state::SessionState,
-    transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
     video::{AcquiredVideoFrame, ConsumerId, OrderedVideoAcquire, VideoControlPageRegistration, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
@@ -216,6 +225,7 @@ impl CaptureRegistry {
         Self::with_optional_fd_socket_agent_policy(fd_socket_path, Some(agent_store))
     }
 
+    #[cfg(unix)]
     fn with_optional_fd_socket_agent_policy(fd_socket_path: PathBuf, agent_store: Option<AgentPolicyStore>) -> std::io::Result<Self> {
         if let Some(parent) = fd_socket_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -231,6 +241,15 @@ impl CaptureRegistry {
         };
         spawn_fd_listener(listener, registry.clone());
         Ok(registry)
+    }
+
+    #[cfg(windows)]
+    fn with_optional_fd_socket_agent_policy(_fd_socket_path: PathBuf, agent_store: Option<AgentPolicyStore>) -> std::io::Result<Self> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(CaptureRegistryInner::default())),
+            fd_socket_path: None,
+            agent_store,
+        })
     }
 
     pub fn create_synthetic_session(&self) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
@@ -910,6 +929,7 @@ async fn run_capture_session_monitor(registry: CaptureRegistry, task_session_id:
 
 struct LatestFrameReply {
     response: LatestVideoFrameResponse,
+    #[cfg(unix)]
     fd: Option<std::os::fd::OwnedFd>,
     frame: AcquiredVideoFrame,
     control_page: Option<VideoControlPageRegistration>,
@@ -937,6 +957,7 @@ fn latest_reply_from_frame(
     include_control_page: bool,
     frame: AcquiredVideoFrame,
 ) -> Result<LatestFrameReply, CaptureRegistryError> {
+    #[cfg(unix)]
     let fd = if frame.cpu_pool_registration().is_some() {
         None
     } else {
@@ -990,12 +1011,14 @@ fn latest_reply_from_frame(
     };
     Ok(LatestFrameReply {
         response,
+        #[cfg(unix)]
         fd,
         frame,
         control_page,
     })
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct FdConnectionState {
     next_lease_id: u64,
@@ -1156,6 +1179,7 @@ fn capture_damage_kind(damage_kind: VideoCaptureDamageKind) -> DamageKind {
     }
 }
 
+#[cfg(unix)]
 fn spawn_fd_listener(listener: UnixListener, registry: CaptureRegistry) {
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -1167,6 +1191,7 @@ fn spawn_fd_listener(listener: UnixListener, registry: CaptureRegistry) {
     });
 }
 
+#[cfg(unix)]
 fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Result<(), CaptureRegistryError> {
     let reader_stream = stream.try_clone().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
     let mut reader = BufReader::new(reader_stream);
@@ -1258,6 +1283,7 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
     result
 }
 
+#[cfg(unix)]
 fn send_frame_reply(
     stream: &mut UnixStream,
     session_id: &str,
@@ -1322,6 +1348,7 @@ fn send_frame_reply(
     Ok(())
 }
 
+#[cfg(unix)]
 fn send_unavailable_reply(stream: &mut UnixStream, fields: &OrderedUnavailableReply) -> Result<(), CaptureRegistryError> {
     write_capture_transfer_message(
         stream,
@@ -1338,11 +1365,13 @@ fn send_unavailable_reply(stream: &mut UnixStream, fields: &OrderedUnavailableRe
     stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))
 }
 
+#[cfg(unix)]
 fn write_capture_transfer_message(stream: &mut UnixStream, message: &CaptureTransferMessage) -> Result<(), CaptureRegistryError> {
     let line = serde_json::to_string(message).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
     writeln!(stream, "{line}").map_err(|error| CaptureRegistryError::Io(error.to_string()))
 }
 
+#[cfg(unix)]
 fn video_frame_message_from_response(response: &LatestVideoFrameResponse) -> CaptureTransferMessage {
     CaptureTransferMessage::VideoFrame {
         session_id: response.session_id.clone(),
@@ -1416,7 +1445,7 @@ fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::{
         collections::VecDeque,

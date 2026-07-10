@@ -6,22 +6,30 @@ use std::{
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request, header::AUTHORIZATION};
-use hyper_util::client::legacy::Client;
-use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use porthole_protocol::error::WireError;
+use porthole_transport::{Endpoint, LocalHttpClient};
 use serde::{Serialize, de::DeserializeOwned};
 
 pub struct DaemonClient {
-    socket: std::path::PathBuf,
-    http: Client<UnixConnector, Full<Bytes>>,
+    http: LocalHttpClient,
     bearer_token: Option<String>,
 }
 
 impl DaemonClient {
     pub fn new(socket: impl AsRef<Path>) -> Self {
+        #[cfg(unix)]
+        let endpoint = Endpoint::from_socket_path(socket.as_ref().to_path_buf());
+        #[cfg(windows)]
+        let endpoint = Endpoint::from_named_pipe_name(socket.as_ref().to_string_lossy().into_owned());
         Self {
-            socket: socket.as_ref().to_path_buf(),
-            http: Client::unix(),
+            http: LocalHttpClient::new(endpoint),
+            bearer_token: None,
+        }
+    }
+
+    pub fn from_endpoint(endpoint: Endpoint) -> Self {
+        Self {
+            http: LocalHttpClient::new(endpoint),
             bearer_token: None,
         }
     }
@@ -58,7 +66,7 @@ impl DaemonClient {
     }
 
     fn build_empty_request(&self, method: Method, path: &str) -> Result<Request<Full<Bytes>>, hyper::http::Error> {
-        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
+        let uri = local_uri(path);
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(token) = &self.bearer_token {
             builder = builder.header(AUTHORIZATION, format!("Bearer {token}"));
@@ -67,7 +75,7 @@ impl DaemonClient {
     }
 
     fn build_json_request<B: Serialize>(&self, method: Method, path: &str, body: &B) -> Result<Request<Full<Bytes>>, ClientError> {
-        let uri: hyper::Uri = UnixUri::new(&self.socket, path).into();
+        let uri = local_uri(path);
         let body_bytes = serde_json::to_vec(body)?;
         let mut builder = Request::builder()
             .method(method)
@@ -115,6 +123,12 @@ impl DaemonClient {
         let value = serde_json::from_slice(&body)?;
         Ok(value)
     }
+}
+
+fn local_uri(path: &str) -> hyper::Uri {
+    format!("http://localhost{path}")
+        .parse()
+        .expect("daemon request path should form a valid URI")
 }
 
 #[derive(Debug, thiserror::Error)]

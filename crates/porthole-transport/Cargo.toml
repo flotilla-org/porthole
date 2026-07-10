@@ -1,0 +1,20 @@
+[package]
+name = "porthole-transport"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+bytes = { workspace = true }
+http-body-util = "0.1"
+hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["server-auto", "service"] }
+tokio = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

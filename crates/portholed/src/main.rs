@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use porthole_adapter_kwin::{KWinAdapter, bridge::KWinBridge};
-use portholed::runtime::socket_path;
+use portholed::runtime::control_endpoint;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
 
@@ -32,7 +32,7 @@ async fn main() -> std::io::Result<()> {
         }
     }
 
-    let path = socket_path();
+    let endpoint = control_endpoint();
     let agent_store = portholed::agent_store::AgentPolicyStore::open_default()
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -41,19 +41,19 @@ async fn main() -> std::io::Result<()> {
         if let Some((kwin_adapter, kwin_bridge)) = kwin {
             portholed::server::serve_with_agent_policy_and_kwin_bridge(
                 kwin_adapter,
-                path,
+                endpoint,
                 agent_store,
                 portholed::events::EventBus::new(),
                 kwin_bridge,
             )
             .await
         } else {
-            portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+            portholed::server::serve_with_agent_policy(adapter, endpoint, agent_store, portholed::events::EventBus::new()).await
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
-        portholed::server::serve_with_agent_policy(adapter, path, agent_store, portholed::events::EventBus::new()).await
+        portholed::server::serve_with_agent_policy(adapter, endpoint, agent_store, portholed::events::EventBus::new()).await
     }
 }
 

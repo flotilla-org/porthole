@@ -14,10 +14,10 @@ capture-transfer = { path = "../capture-transfer" }
 clap = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
-hyperlocal = { workspace = true }
 http-body-util = "0.1"
 porthole-core = { path = "../porthole-core" }
 porthole-protocol = { path = "../porthole-protocol" }
+porthole-transport = { path = "../porthole-transport" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

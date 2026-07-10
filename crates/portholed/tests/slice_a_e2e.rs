@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::{sync::Arc, time::Duration};
 
 mod common;

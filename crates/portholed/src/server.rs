@@ -1,4 +1,6 @@
-use std::{path::PathBuf, sync::Arc};
+#[cfg(unix)]
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use axum::{
     Router,
@@ -7,7 +9,7 @@ use axum::{
 #[cfg(target_os = "linux")]
 use porthole_adapter_kwin::KWinAdapter;
 use porthole_core::adapter::Adapter;
-use tokio::net::UnixListener;
+use porthole_transport::Endpoint;
 use tracing::info;
 
 #[cfg(target_os = "linux")]
@@ -91,22 +93,39 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-pub async fn serve(adapter: Arc<dyn Adapter>, socket_path: PathBuf) -> std::io::Result<()> {
+pub trait IntoControlEndpoint {
+    fn into_control_endpoint(self) -> Endpoint;
+}
+
+#[cfg(unix)]
+impl IntoControlEndpoint for PathBuf {
+    fn into_control_endpoint(self) -> Endpoint {
+        Endpoint::from_socket_path(self)
+    }
+}
+
+impl IntoControlEndpoint for Endpoint {
+    fn into_control_endpoint(self) -> Endpoint {
+        self
+    }
+}
+
+pub async fn serve(adapter: Arc<dyn Adapter>, endpoint: impl IntoControlEndpoint) -> std::io::Result<()> {
     let agent_store = AgentPolicyStore::open_default()
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
-    serve_with_agent_policy(adapter, socket_path, agent_store, EventBus::new()).await
+    serve_with_agent_policy(adapter, endpoint, agent_store, EventBus::new()).await
 }
 
 pub async fn serve_with_agent_policy(
     adapter: Arc<dyn Adapter>,
-    socket_path: PathBuf,
+    endpoint: impl IntoControlEndpoint,
     agent_store: AgentPolicyStore,
     events: EventBus,
 ) -> std::io::Result<()> {
     serve_with_agent_policy_inner(
         adapter,
-        socket_path,
+        endpoint.into_control_endpoint(),
         agent_store,
         events,
         #[cfg(target_os = "linux")]
@@ -118,33 +137,31 @@ pub async fn serve_with_agent_policy(
 #[cfg(target_os = "linux")]
 pub async fn serve_with_agent_policy_and_kwin_bridge(
     kwin_adapter: Arc<KWinAdapter>,
-    socket_path: PathBuf,
+    endpoint: impl IntoControlEndpoint,
     agent_store: AgentPolicyStore,
     events: EventBus,
     kwin_bridge: KWinBridge,
 ) -> std::io::Result<()> {
     let _kwin_bridge = spawn_session_service(kwin_bridge);
     let adapter: Arc<dyn Adapter> = kwin_adapter.clone();
-    serve_with_agent_policy_inner(adapter, socket_path, agent_store, events, Some(kwin_adapter)).await
+    serve_with_agent_policy_inner(adapter, endpoint.into_control_endpoint(), agent_store, events, Some(kwin_adapter)).await
 }
 
 async fn serve_with_agent_policy_inner(
     adapter: Arc<dyn Adapter>,
-    socket_path: PathBuf,
+    endpoint: Endpoint,
     agent_store: AgentPolicyStore,
     events: EventBus,
     #[cfg(target_os = "linux")] kwin_adapter: Option<Arc<KWinAdapter>>,
 ) -> std::io::Result<()> {
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
-    }
-    let listener = UnixListener::bind(&socket_path)?;
-    info!(socket = %socket_path.display(), "portholed listening");
-    let capture_socket_path = socket_path.with_file_name("capture-transfer.sock");
-    let capture = crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?;
+    info!(endpoint = %endpoint.display_name(), "portholed listening");
+    #[cfg(unix)]
+    let capture = {
+        let capture_socket_path = endpoint.as_socket_path().with_file_name("capture-transfer.sock");
+        crate::capture_registry::CaptureRegistry::with_fd_socket_and_agent_policy(capture_socket_path, agent_store.clone())?
+    };
+    #[cfg(windows)]
+    let capture = crate::capture_registry::CaptureRegistry::disabled_with_agent_policy(agent_store.clone());
     let state = AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events);
     #[cfg(target_os = "linux")]
     let state = if let Some(kwin_adapter) = kwin_adapter {
@@ -153,10 +170,10 @@ async fn serve_with_agent_policy_inner(
         state
     };
     let app = build_router(state);
-    axum::serve(listener, app).await
+    porthole_transport::serve(endpoint, app).await
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::{
         collections::BTreeMap,

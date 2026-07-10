@@ -18,14 +18,19 @@
 //! bundle (the LaunchAgent plist rides along inside `Contents/Library/`) and
 //! tells the user to open the app once.
 
+#[cfg(unix)]
+use std::os::unix;
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::{
     env, fs, io,
-    os::unix,
     path::{Path, PathBuf},
 };
 
 use crate::client::ClientError;
 
+#[cfg(unix)]
 const BUNDLE_NAME: &str = "Porthole.app";
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +44,7 @@ pub enum InstallError {
     #[error("no write permission for {0}; re-run with --user for a per-user install at ~/Applications")]
     SystemInstallNoPermission(PathBuf),
     #[error("io error at {path}: {source}")]
+    #[cfg(unix)]
     Io {
         path: PathBuf,
         #[source]
@@ -55,6 +61,7 @@ pub enum InstallPrefix {
 }
 
 impl InstallPrefix {
+    #[cfg(unix)]
     fn applications_dir(self) -> Result<PathBuf, InstallError> {
         match self {
             InstallPrefix::System => Ok(PathBuf::from("/Applications")),
@@ -77,17 +84,31 @@ pub struct UninstallOptions {
 /// Run `porthole install`. Returns Ok(()) on success; prints progress and the
 /// PATH hint to stdout. The caller (CLI) handles exit code mapping.
 pub async fn install(opts: InstallOptions) -> Result<(), ClientError> {
+    #[cfg(windows)]
+    {
+        let _ = opts;
+        Err(ClientError::Local("porthole install is not supported on Windows yet".into()))
+    }
+    #[cfg(unix)]
     do_install(opts).map_err(client_err)
 }
 
 pub async fn uninstall(opts: UninstallOptions) -> Result<(), ClientError> {
+    #[cfg(windows)]
+    {
+        let _ = opts;
+        Err(ClientError::Local("porthole uninstall is not supported on Windows yet".into()))
+    }
+    #[cfg(unix)]
     do_uninstall(opts).map_err(client_err)
 }
 
+#[cfg(unix)]
 fn client_err(e: InstallError) -> ClientError {
     ClientError::Local(e.to_string())
 }
 
+#[cfg(unix)]
 fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
     let src_bundle = locate_running_bundle()?;
     let dst_apps = opts.prefix.applications_dir()?;
@@ -154,6 +175,7 @@ fn do_install(opts: InstallOptions) -> Result<(), InstallError> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn do_uninstall(opts: UninstallOptions) -> Result<(), InstallError> {
     let symlink_path = home()?.join(".local/bin/porthole");
     if symlink_path.is_symlink() {
@@ -182,6 +204,7 @@ fn do_uninstall(opts: UninstallOptions) -> Result<(), InstallError> {
 /// On the system install path this catches the no-admin case before we
 /// touch the existing bundle, surfacing a clear `--user` hint instead of a
 /// generic mid-install permission-denied.
+#[cfg(unix)]
 fn check_writable(dir: &Path) -> Result<(), InstallError> {
     let probe = dir.join(".porthole-install-probe");
     match fs::write(&probe, b"") {
@@ -194,10 +217,12 @@ fn check_writable(dir: &Path) -> Result<(), InstallError> {
     }
 }
 
+#[cfg(unix)]
 fn home() -> Result<PathBuf, InstallError> {
     env::var_os("HOME").map(PathBuf::from).ok_or(InstallError::NoHome)
 }
 
+#[cfg(unix)]
 fn io_err(path: &Path, source: io::Error) -> InstallError {
     InstallError::Io {
         path: path.to_path_buf(),
@@ -207,21 +232,25 @@ fn io_err(path: &Path, source: io::Error) -> InstallError {
 
 /// Walks up from `current_exe` to find the enclosing `.app` bundle. Returns
 /// the bundle directory, or NotInBundle if there isn't one.
+#[cfg(unix)]
 fn locate_running_bundle() -> Result<PathBuf, InstallError> {
     let exe = env::current_exe().map_err(|e| io_err(Path::new("<current_exe>"), e))?;
     locate_bundle_from(&exe).ok_or(InstallError::NotInBundle(exe))
 }
 
+#[cfg(unix)]
 fn locate_bundle_from(exe: &Path) -> Option<PathBuf> {
     exe.ancestors()
         .find(|p| p.extension().map(|e| e == "app").unwrap_or(false))
         .map(|p| p.to_path_buf())
 }
 
+#[cfg(unix)]
 fn path_contains(path_env: &str, dir: &Path) -> bool {
     path_env.split(':').any(|p| Path::new(p) == dir)
 }
 
+#[cfg(unix)]
 fn remove_path(p: &Path) -> Result<(), InstallError> {
     if p.is_dir() {
         fs::remove_dir_all(p).map_err(|e| io_err(p, e))
@@ -230,6 +259,7 @@ fn remove_path(p: &Path) -> Result<(), InstallError> {
     }
 }
 
+#[cfg(unix)]
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), InstallError> {
     fs::create_dir_all(dst).map_err(|e| io_err(dst, e))?;
     for entry in fs::read_dir(src).map_err(|e| io_err(src, e))? {
@@ -249,7 +279,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), InstallError> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

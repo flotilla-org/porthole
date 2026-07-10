@@ -4,6 +4,7 @@ members = [
     "crates/capture-transfer",
     "crates/porthole-core",
     "crates/porthole-protocol",
+    "crates/porthole-transport",
     "crates/portholed",
     "crates/porthole",
     "crates/porthole-adapter-macos",

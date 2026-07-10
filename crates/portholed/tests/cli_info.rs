@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::{sync::Arc, time::Duration};
 
 use porthole_core::in_memory::InMemoryAdapter;

@@ -1,6 +1,7 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs, io,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -186,12 +187,15 @@ fn copy_file(from: &Path, to: &Path) -> Result<(), BundleError> {
 
 fn copy_executable(from: &Path, to: &Path) -> Result<(), BundleError> {
     copy_file(from, to)?;
-    let mut permissions = fs::metadata(to)
+    let permissions = fs::metadata(to)
         .map_err(|source| BundleError::Io {
             context: format!("failed to read permissions for {}", to.display()),
             source,
         })?
         .permissions();
+    #[cfg(unix)]
+    let mut permissions = permissions;
+    #[cfg(unix)]
     permissions.set_mode(0o755);
     fs::set_permissions(to, permissions).map_err(|source| BundleError::Io {
         context: format!("failed to make {} executable", to.display()),

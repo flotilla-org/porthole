@@ -16,7 +16,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use porthole_protocol::{error::WireError, info::InfoResponse, system_permission::SystemPermissionPromptOutcome};
+#[cfg(not(windows))]
+use porthole_protocol::error::WireError;
+use porthole_protocol::{info::InfoResponse, system_permission::SystemPermissionPromptOutcome};
 
 use crate::{
     client::{ClientError, DaemonClient},
@@ -91,112 +93,121 @@ impl OnboardClient for InteractiveOnboardClient<'_> {
 }
 
 pub async fn run(client: &dyn OnboardClient, opts: OnboardOptions) -> Result<OnboardResult, ClientError> {
-    let info = client.get_info().await?;
-    let Some(adapter) = info.adapters.into_iter().next() else {
-        println!("no adapters loaded");
-        return Ok(OnboardResult { exit_code: 0 });
-    };
-    let perms = adapter.system_permissions;
-    if perms.is_empty() {
-        println!("adapter {} advertises no system permissions; nothing to onboard", adapter.name);
-        return Ok(OnboardResult { exit_code: 0 });
+    #[cfg(windows)]
+    {
+        let _ = (client, opts);
+        Err(ClientError::Local("porthole onboard is not supported on Windows yet".into()))
     }
-
-    let ungranted: Vec<String> = perms.iter().filter(|p| !p.granted).map(|p| p.name.clone()).collect();
-    if ungranted.is_empty() {
-        for p in &perms {
-            println!("  system permission {}: granted", p.name);
+    #[cfg(not(windows))]
+    {
+        let info = client.get_info().await?;
+        let Some(adapter) = info.adapters.into_iter().next() else {
+            println!("no adapters loaded");
+            return Ok(OnboardResult { exit_code: 0 });
+        };
+        let perms = adapter.system_permissions;
+        if perms.is_empty() {
+            println!("adapter {} advertises no system permissions; nothing to onboard", adapter.name);
+            return Ok(OnboardResult { exit_code: 0 });
         }
-        return Ok(OnboardResult { exit_code: 0 });
-    }
 
-    let mut had_request_error = false;
-    let mut still_missing: Vec<String> = vec![];
+        let ungranted: Vec<String> = perms.iter().filter(|p| !p.granted).map(|p| p.name.clone()).collect();
+        if ungranted.is_empty() {
+            for p in &perms {
+                println!("  system permission {}: granted", p.name);
+            }
+            return Ok(OnboardResult { exit_code: 0 });
+        }
 
-    for name in &ungranted {
-        match client.request_prompt(name).await {
-            Ok(_) => {
+        let mut had_request_error = false;
+        let mut still_missing: Vec<String> = vec![];
+
+        for name in &ungranted {
+            match client.request_prompt(name).await {
+                Ok(_) => {
+                    println!();
+                    println!("  prompt fired for {name}");
+                    println!("  grant in: {}", settings_path_fallback(name));
+
+                    if opts.no_wait {
+                        // Fire and forget; the function exits below with code 3
+                        // before still_missing is consulted, so we don't need to
+                        // track this permission's post-grant state.
+                        continue;
+                    }
+
+                    println!("  press Enter when granted (or Ctrl+C to abort the rest of onboarding):");
+                    client.wait_for_user_continue();
+
+                    println!("  restarting daemon to refresh trust state...");
+                    let restarted = client.restart_daemon().await?;
+                    if !restarted {
+                        eprintln!(
+                            "  warning: daemon is not under launchd; auto-restart unavailable. Restart it manually, then re-run `porthole onboard` to verify."
+                        );
+                        eprintln!("  (Run `porthole install` to register the daemon with launchd.)");
+                        still_missing.push(name.clone());
+                        continue;
+                    }
+                    // If the daemon doesn't come back up within the configured
+                    // restart timeout, treat that as "this permission's status
+                    // is unknown" rather than aborting the whole flow — the
+                    // remaining permissions might still be onboardable, and a
+                    // simple re-run of `porthole onboard` recovers when the
+                    // daemon catches up.
+                    if let Err(e) = client.wait_until_ready().await {
+                        eprintln!("  warning: daemon didn't come back online within restart timeout: {e}");
+                        eprintln!("  marking {name} as still-missing; re-run `porthole onboard` after the daemon recovers.");
+                        still_missing.push(name.clone());
+                        continue;
+                    }
+
+                    let after = client.get_info().await?;
+                    let granted_now = after
+                        .adapters
+                        .first()
+                        .and_then(|a| a.system_permissions.iter().find(|p| p.name == *name))
+                        .map(|p| p.granted)
+                        .unwrap_or(false);
+                    if granted_now {
+                        println!("  ✓ {name}: granted");
+                    } else {
+                        println!("  ✗ {name}: still missing — was the dialog dismissed without granting?");
+                        still_missing.push(name.clone());
+                    }
+                }
+                Err(ClientError::Api(wire)) => {
+                    had_request_error = true;
+                    print_request_error(name, &wire);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        if opts.no_wait {
+            // 3 means "fire-and-forget mode succeeded; caller handles restart
+            // and verification." A request error in this branch means we
+            // couldn't even fire the prompt — that's a real failure the caller
+            // shouldn't ignore, so it gets exit 1 even in no_wait mode.
+            let exit_code = if had_request_error { 1 } else { 3 };
+            return Ok(OnboardResult { exit_code });
+        }
+
+        let exit_code = if had_request_error || !still_missing.is_empty() {
+            if !still_missing.is_empty() {
                 println!();
-                println!("  prompt fired for {name}");
-                println!("  grant in: {}", settings_path_fallback(name));
-
-                if opts.no_wait {
-                    // Fire and forget; the function exits below with code 3
-                    // before still_missing is consulted, so we don't need to
-                    // track this permission's post-grant state.
-                    continue;
-                }
-
-                println!("  press Enter when granted (or Ctrl+C to abort the rest of onboarding):");
-                client.wait_for_user_continue();
-
-                println!("  restarting daemon to refresh trust state...");
-                let restarted = client.restart_daemon().await?;
-                if !restarted {
-                    eprintln!(
-                        "  warning: daemon is not under launchd; auto-restart unavailable. Restart it manually, then re-run `porthole onboard` to verify."
-                    );
-                    eprintln!("  (Run `porthole install` to register the daemon with launchd.)");
-                    still_missing.push(name.clone());
-                    continue;
-                }
-                // If the daemon doesn't come back up within the configured
-                // restart timeout, treat that as "this permission's status
-                // is unknown" rather than aborting the whole flow — the
-                // remaining permissions might still be onboardable, and a
-                // simple re-run of `porthole onboard` recovers when the
-                // daemon catches up.
-                if let Err(e) = client.wait_until_ready().await {
-                    eprintln!("  warning: daemon didn't come back online within restart timeout: {e}");
-                    eprintln!("  marking {name} as still-missing; re-run `porthole onboard` after the daemon recovers.");
-                    still_missing.push(name.clone());
-                    continue;
-                }
-
-                let after = client.get_info().await?;
-                let granted_now = after
-                    .adapters
-                    .first()
-                    .and_then(|a| a.system_permissions.iter().find(|p| p.name == *name))
-                    .map(|p| p.granted)
-                    .unwrap_or(false);
-                if granted_now {
-                    println!("  ✓ {name}: granted");
-                } else {
-                    println!("  ✗ {name}: still missing — was the dialog dismissed without granting?");
-                    still_missing.push(name.clone());
-                }
+                println!("Still missing: {}.", still_missing.join(", "));
+                println!("Grant in Settings and re-run `porthole onboard` to verify.");
             }
-            Err(ClientError::Api(wire)) => {
-                had_request_error = true;
-                print_request_error(name, &wire);
-            }
-            Err(e) => return Err(e),
-        }
+            1
+        } else {
+            0
+        };
+        Ok(OnboardResult { exit_code })
     }
-
-    if opts.no_wait {
-        // 3 means "fire-and-forget mode succeeded; caller handles restart
-        // and verification." A request error in this branch means we
-        // couldn't even fire the prompt — that's a real failure the caller
-        // shouldn't ignore, so it gets exit 1 even in no_wait mode.
-        let exit_code = if had_request_error { 1 } else { 3 };
-        return Ok(OnboardResult { exit_code });
-    }
-
-    let exit_code = if had_request_error || !still_missing.is_empty() {
-        if !still_missing.is_empty() {
-            println!();
-            println!("Still missing: {}.", still_missing.join(", "));
-            println!("Grant in Settings and re-run `porthole onboard` to verify.");
-        }
-        1
-    } else {
-        0
-    };
-    Ok(OnboardResult { exit_code })
 }
 
+#[cfg(not(windows))]
 fn settings_path_fallback(name: &str) -> &'static str {
     match name {
         "accessibility" => "System Settings → Privacy & Security → Accessibility",
@@ -205,6 +216,7 @@ fn settings_path_fallback(name: &str) -> &'static str {
     }
 }
 
+#[cfg(not(windows))]
 fn print_request_error(name: &str, err: &WireError) {
     eprintln!("  request failed for {name}: {} ({})", err.message, err.code);
     if let Some(details) = &err.details {
@@ -217,7 +229,7 @@ fn print_request_error(name: &str, err: &WireError) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use std::sync::Mutex;
 
