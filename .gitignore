@@ -11,4 +11,3 @@ __pycache__/
 /*.png
 /*.json
 
-# Private dependency checkout used by CI
