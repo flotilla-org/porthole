@@ -69,6 +69,8 @@ and record the build revisions, commands and screenshot evidence.
 - [ ] macOS regression verification and demonstrated drift fixes, using a separate
   client terminal on kiwi. [#115](https://github.com/flotilla-org/porthole/issues/115); #89 blocks the full launch
   proof. Retain the installed bundle, launchd ownership and real OS grants.
+  [Comte verification](2026-09-07-comte-desktop-workflow.md) now demonstrates the
+  supervised flow from kiwi; pre-granting access to future windows remains open.
 - [ ] KWin regression verification and demonstrated drift fixes, attaching from
   kiwi to cleat in the target's GUI session. [#116](https://github.com/flotilla-org/porthole/issues/116). Establish
   the current need for #108/#78 from the tested screenshot path; do not assume a
