@@ -153,20 +153,29 @@ impl AgentPolicyStore {
     }
 
     pub async fn open_default() -> StoreResult<Self> {
-        let home = std::env::var_os("HOME").ok_or_else(|| {
-            AgentStoreError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "HOME is not set; cannot locate Application Support",
-            ))
-        })?;
-        Self::open_at_path(
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("Porthole")
-                .join("agent-policy.sqlite"),
-        )
-        .await
+        #[cfg(windows)]
+        {
+            let local = std::env::var_os("LOCALAPPDATA")
+                .ok_or_else(|| AgentStoreError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "LOCALAPPDATA is not set")))?;
+            Self::open_at_path(PathBuf::from(local).join("Porthole").join("agent-policy.sqlite")).await
+        }
+        #[cfg(not(windows))]
+        {
+            let home = std::env::var_os("HOME").ok_or_else(|| {
+                AgentStoreError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "HOME is not set; cannot locate Application Support",
+                ))
+            })?;
+            Self::open_at_path(
+                PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("Porthole")
+                    .join("agent-policy.sqlite"),
+            )
+            .await
+        }
     }
 
     pub async fn open_at_path(path: impl AsRef<Path>) -> StoreResult<Self> {

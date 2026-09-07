@@ -1264,6 +1264,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "porthole-adapter-windows"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "image",
+ "porthole-core",
+ "regex",
+ "tokio",
+ "uuid",
+ "windows-sys",
+]
+
+[[package]]
 name = "porthole-core"
 version = "0.0.0"
 dependencies = [
@@ -1319,6 +1332,7 @@ dependencies = [
  "porthole",
  "porthole-adapter-kwin",
  "porthole-adapter-macos",
+ "porthole-adapter-windows",
  "porthole-core",
  "porthole-protocol",
  "porthole-transport",

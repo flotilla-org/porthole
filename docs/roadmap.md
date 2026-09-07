@@ -11,7 +11,7 @@ Last revised: 2026-09-07. Decisions: [ADR-0010](adr/0010-jackstay-extraction-and
 What has shipped on GitHub `main` (through PR #110; a checkout at #109 predates the Windows CI job):
 
 - macOS adapter for launch (process + artifact), input (key/text/click/scroll), wait (Stable / Dirty / Exists / Gone / TitleMatches), screenshot, focus, close, attention, displays, search, attach, replace, placement, snapshot_geometry.
-- Shared local HTTP transport between `portholed` and `porthole`: Unix Domain Sockets on macOS/Linux and named pipes on Windows (#109). Windows still uses the in-memory desktop adapter; real Windows desktop operations remain open work.
+- Shared local HTTP transport between `portholed` and `porthole`: Unix Domain Sockets on macOS/Linux and named pipes on Windows (#109). The Windows adapter now implements native process launch, focus, keyboard input, one-shot PNG screenshots and close (#117); see [Windows scope and validation](windows-desktop.md).
 - System-permissions slice: `porthole onboard` flow, `/info` permission status, `/system-permissions/request` route, capability-aware error mapping (`SystemPermissionNeeded`, `SystemPermissionRequestFailed`).
 - macOS bundle install/uninstall and helper onboarding. The helper registers `portholed` as its own launchd agent so the daemon owns its native capture attach MachService (#98).
 - Dev bundle script (`scripts/dev-bundle.sh`) producing an Apple Development signed `.app` with `portholed` and `porthole` in one bundle for stable TCC identity across rebuilds; ad-hoc signing is a hard failure because it invalidates TCC grants on rebuild.
