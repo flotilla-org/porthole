@@ -170,7 +170,7 @@ Returns:
   "surface_id": "surf_...",
   "surface_was_preexisting": false,
   "confidence": "strong",
-  "correlation": "tag",
+  "correlation": "pid_tree",
   "placement": { "type": "not_requested" }
 }
 ```
