@@ -54,6 +54,9 @@ def main():
             json.dump(identity, file)
     else:
         state = json.loads((root / 'state.json').read_text())
+        if args.action == 'cleanup' and not state.get('terminal_launch', {}).get('surface_id'):
+            parser.error('start did not record a terminal surface; inspect the failed launch and reconcile '
+                         'its run-owned processes and identity before cleanup; no cleanup actions were taken')
         if not (root / 'identity.json').exists():
             raise RuntimeError('identity already removed by cleanup, or setup did not finish')
         identity = json.loads((root / 'identity.json').read_text())

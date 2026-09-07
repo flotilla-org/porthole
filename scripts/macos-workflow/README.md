@@ -19,7 +19,7 @@ Choose a new evidence directory for each run. For example, from the repository
 root on the target:
 
 ```sh
-python3 scripts/macos-workflow/operator.py start "$HOME/dev/porthole-workflow-run" \
+python3 scripts/macos-workflow/workflow.py start "$HOME/dev/porthole-workflow-run" \
   --cleat /absolute/path/to/bin/cleat \
   --agent-command 'codex --no-alt-screen -s workspace-write -a on-request'
 python3 scripts/macos-workflow/prepare-fixture.py "$HOME/dev/porthole-workflow-run" \
@@ -49,7 +49,7 @@ additional Porthole grants. When the agent reports `agent_permission_needed`, th
 operator runs:
 
 ```sh
-python3 scripts/macos-workflow/operator.py approve "$HOME/dev/porthole-workflow-run"
+python3 scripts/macos-workflow/workflow.py approve "$HOME/dev/porthole-workflow-run"
 ```
 
 This approves pending requests only for the run's identity, using the existing
@@ -73,11 +73,14 @@ Inspect `editor.png` and compare `editor-result.json` with the task's expected
 text. Preserve daemon registration, OS/build details, Porthole and cleat revisions,
 launch responses and the three attachment records in the evidence directory.
 
-Once verification finishes, confirm `state.json` contains only this run's terminal
-and editor surface IDs, then run:
+The coding agent writes `state.json`, and cleanup trusts its surface list; the
+script does not independently verify ownership. Before cleanup, the operator must
+compare that list with this run's saved terminal launch response and
+`editor-launch.json`, confirming that no unrelated surface IDs were added. This is
+a supervised local-trust recipe, not an authorization boundary. Then run:
 
 ```sh
-python3 scripts/macos-workflow/operator.py cleanup "$HOME/dev/porthole-workflow-run"
+python3 scripts/macos-workflow/workflow.py cleanup "$HOME/dev/porthole-workflow-run"
 ```
 
 Cleanup stops the test cleat session, signals its terminal wrapper to finish,
