@@ -2,8 +2,9 @@
 
 Native local desktop acceptance passed on 2026-09-07 at 20:55 UTC. The committed
 PNG visibly shows both lines entered through porthole's named-pipe API and CLI.
-The all-platform test gate is **not clean on Windows**: four failures reproduce
-on the untouched base. Build, strict Clippy and pinned formatting pass.
+The initial full-suite run had four inherited Windows failures. These were
+fixed during PR integration on 2026-09-08; all four required gates now pass
+on Windows and macOS. The original baseline results are retained below.
 
 ## Revisions and environment
 
@@ -130,3 +131,20 @@ bounded native PrintWindow capture, and unsupported pointer/placement/content-re
 pixel waits and continuous capture. #118 startup and cleat-launch orchestration
 were not implemented. The branch is for supervising-session review; no PR,
 issue comment or merge was created by this task.
+
+## PR integration follow-up — 2026-09-08
+
+After merging main (`c263e18`), the coordinator corrected the four inherited
+failures. The status CLI test uses a unique child-process `USERNAME` to select
+an isolated Windows named pipe, while retaining temporary-directory socket
+isolation on Unix. Swift scratch-path expectations use native filesystem
+separators. The authorization test still checks denial before approval, then
+expects successful capture on Unix and `adapter_unsupported` on Windows.
+The Windows disabled capture-transport error now maps to that code instead of
+misreporting a valid request as `invalid_argument`.
+
+On gouda, all four required commands passed: workspace build, full workspace
+tests, strict Clippy, and pinned formatting. These checks ran over SSH and do
+not replace the interactive Session 1 desktop acceptance above. All four gates
+also passed on macOS. Windows CI now runs the full workspace suite rather than
+a selected package list; Linux CI passed before this follow-up and will rerun.

@@ -114,5 +114,5 @@ They also cover missing executable errors, shared wait rejection and the shared
 key-name vocabulary. Interactive acceptance is manual, not claimed from CI.
 
 See [the gouda evidence report](2026-09-07-windows-117-evidence.md) for tested
-revisions, commands, PNG and inherited Windows gate failures. Broader Windows
-test portability remains #111; macOS/Linux regression gates need those platforms.
+revisions, commands, PNG, the original Windows test failures, and their fixes.
+The full Windows workspace test suite now passes and runs in CI.
