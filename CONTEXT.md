@@ -1,12 +1,15 @@
 # Porthole
 
-Porthole exposes a small HTTP API for inspecting and driving desktop windows from
-test harnesses and orchestration tools. It is intended to be cross-platform:
-**macOS first** (today's implementation), with **Linux compositor adapters**
-(KWin first, then other compositors such as Hyprland as separate adapters) and
-**Windows** to follow. The primary near-term consumers are terminal-emulator
-test harnesses (kitty-image-tests and similar); the eventual consumer is
-**flotilla**, an agent fleet controller.
+Porthole exposes a local HTTP API for inspecting and driving desktop windows from
+test harnesses and orchestration tools. It has macOS and KWin/Plasma Wayland
+adapters. Windows has a named-pipe control plane; real Windows desktop operations
+are an active milestone. Consumers include terminal-emulator test harnesses and
+flotilla's desktop agent workflows.
+
+The current plan extracts Jackstay as an independent 0.x library and verifies one
+GUI-session agent workflow across macOS, KWin and Windows. See
+[ADR-0010](docs/adr/0010-jackstay-extraction-and-desktop-workflow-milestones.md)
+and the [roadmap](docs/roadmap.md).
 
 The vocabulary below is intentionally platform-neutral; macOS-specific
 realisations are flagged inline. New adapters should land on the same
@@ -43,8 +46,9 @@ _Avoid_: CGWindowID, window id, native id.
 
 **Platform adapter**:
 The crate that implements porthole's surface operations against a specific OS.
-Today only `porthole-adapter-macos` exists; future siblings will cover KWin,
-Hyprland, and Windows. The porthole-core API is what every adapter must satisfy.
+The macOS and KWin adapters exist; Windows desktop operations are planned and
+Hyprland remains a later target. The porthole-core API defines the shared surface
+contract; adapters report unsupported operations explicitly.
 _Avoid_: backend, driver.
 
 **Linux compositor adapter**:
@@ -91,9 +95,11 @@ The single-producer, multi-consumer broadcast transfer ring — shared memory fo
 the hot path, a setup socket for one-time handle/fd passing — that streams
 captured surfaces (and, later, structured events) to heterogeneous consumers
 (native panes, browsers, terminals). Today it is the in-repo `capture-transfer`
-crate; it is to be extracted as a standalone, language-neutral library. Porthole
-is a **producer/consumer integration** on top of jackstay, not the owner of its
-protocol semantics.
+crate; the accepted plan extracts it as a standalone Rust library with a
+versioned C ABI and no 0.x stability promise. Porthole is a **producer/consumer
+integration** on top of Jackstay. Jackstay owns its transport semantics and may
+include reusable capture mechanisms such as PipeWire; the host supplies capture
+authority, source selection and desktop orchestration.
 _Avoid_: capture-transfer (as the long-term name), the ring, transfer channel.
 
 **Native handle path**:
@@ -126,6 +132,28 @@ capability. A native pane and a pty-bound terminal are different classes and mus
 not be treated alike; a slow terminal consumer must be lappable without affecting
 a fast native one.
 _Avoid_: subscriber type, sink kind.
+
+### Desktop agent workflow
+
+**Portholed Vessel**:
+A Vessel whose terminal, cleat daemon and coding agent porthole launches inside
+an already logged-in GUI session. The agent receives a pre-provisioned porthole
+token through the existing development authority path and uses target-local
+porthole for desktop operations. Porthole starts automatically within that login;
+creating the login is outside the current milestone.
+
+**Terminal attachment**:
+`cleat attach` connects the operator to the agent's terminal. A remote client
+reaches the cleat daemon inside the target GUI session through an explicitly
+configured connection. This does not imply a live remote desktop video view.
+Cleat owns the Pool and terminal session lifetime.
+
+**Capture host**:
+The application that obtains capture permission, selects the source, applies
+caller authorization and supervises the desktop capture session. Porthole is
+one capture host; a compositor or desktop environment may also host Jackstay.
+For PipeWire, the host supplies an already-open connection and stream identity.
+This responsibility does not require Jackstay to adopt the host's token model.
 
 ### Coordinate units
 

@@ -42,3 +42,13 @@ This was established empirically by the #81 spike on macOS 26 / Apple M4.
 - The handshake *protocol* (what crosses at attach, ordering, auth) stays
   platform-neutral behind the `NativeFrameBackend` transport seam; only the
   transport (XPC vs UDS) is platform-specific.
+
+## 2026-09-05 extraction amendment
+
+[ADR-0010](0010-jackstay-extraction-and-desktop-workflow-milestones.md) preserves
+this brokered path for porthole's macOS desktop capture. It also requires a
+standalone synthetic producer/viewer example in Jackstay without a porthole
+daemon. The example may supply its own setup host using existing transport
+mechanisms; it does not require a general coordinator framework. Other host
+applications can supply their own capture authority. Porthole is one such host,
+not a mandatory dependency of Jackstay.
