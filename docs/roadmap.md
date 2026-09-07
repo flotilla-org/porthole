@@ -24,7 +24,7 @@ What has shipped on GitHub `main` (through PR #110; a checkout at #109 predates 
 What's known missing or rough:
 
 - General agent authority and native notification approvals are deferred under [ADR-0006](adr/0006-agent-permission-authority-deferred.md). The existing local-trust mint/grant path supports development and launch-time provisioning; it is not a separate agent/operator security boundary.
-- macOS launch correlation still depends on reading another process's environment, which #89 reports broken on macOS 26. Deterministic signing (#95) and false native attach readiness (#97) have separate open fixes.
+- macOS launch correlation now uses the native launch result's PID in the #89 implementation, with live launch/input/screenshot checks passing; merge is pending. [Validation and limits](2026-09-07-macos-launch-correlation.md). Brokered and descendant processes remain #10. Deterministic signing (#95) and false native attach readiness (#97) have separate open fixes.
 - KWin unattended capture remains #108; older portal-start blocker #78 needs revalidation against the chosen installed-app path. Native performance measurement (#86) and GPU-error handling (#92) remain open.
 - Agent-permission enforcement covers drive routes plus most observe/manage/record HTTP routes. Protected surface capture-session fd-socket consumption requires a bearer-token handshake on the capture-transfer channel; synthetic capture sessions remain public because they do not touch the real desktop.
 - Recording live-smoke remains permission-blocked for freshly built daemon identities unless the installed bundle has Accessibility and Screen Recording grants.
@@ -69,6 +69,8 @@ and record the build revisions, commands and screenshot evidence.
 - [ ] macOS regression verification and demonstrated drift fixes, using a separate
   client terminal on kiwi. [#115](https://github.com/flotilla-org/porthole/issues/115); #89 blocks the full launch
   proof. Retain the installed bundle, launchd ownership and real OS grants.
+  [Comte verification](2026-09-07-comte-desktop-workflow.md) now demonstrates the
+  supervised flow from kiwi; pre-granting access to future windows remains open.
 - [ ] KWin regression verification and demonstrated drift fixes, attaching from
   kiwi to cleat in the target's GUI session. [#116](https://github.com/flotilla-org/porthole/issues/116). Establish
   the current need for #108/#78 from the tested screenshot path; do not assume a

@@ -1240,6 +1240,7 @@ name = "porthole-adapter-macos"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "block2",
  "bytes",
  "cc",
  "core-foundation",
@@ -1260,7 +1261,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
