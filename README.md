@@ -4,8 +4,8 @@ OS-level presentation substrate for agents: launch apps and artifacts, drive the
 
 Status: pre-release, with macOS/KWin desktop adapters and a Windows control plane. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
 
-Source builds currently require access to private `flotilla-org/jackstay`, pinned
-in Cargo.toml. See [private dependency setup](docs/development.md#private-jackstay-dependency).
+Source builds use a pinned revision of public `flotilla-org/jackstay`. See
+[dependency setup](docs/development.md#jackstay-dependency).
 
 ## What is porthole?
 

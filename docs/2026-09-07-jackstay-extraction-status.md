@@ -1,6 +1,6 @@
 # Jackstay extraction status, 2026-09-07
 
-Jackstay now lives in private `flotilla-org/jackstay` at revision
+Jackstay now lives in public `flotilla-org/jackstay` at revision
 `1d0770e943d01fc4a59c26c17162377f7e817a82` (package 0.1.0). The filtered history
 preserves 68 commits affecting the original library and viewer; a committed map
 records the source commit IDs. The Rust implementation and optional PipeWire
@@ -85,14 +85,12 @@ are removed. The viewer build discovers the dependency through Cargo metadata.
 Native capture producers, portal consent and porthole's integration tests stay in
 porthole. Jackstay owns its C/Zig header checks and native-library CI.
 
-GitHub rejected a read-only deploy key because deploy keys are disabled for this
-repository. Porthole CI now expects `JACKSTAY_READ_TOKEN`, a repository-scoped
-read-only Contents token for Jackstay. That secret still needs operator setup;
-no personal login token was copied into CI. Local Git access used the existing
-GitHub CLI credential helper.
+Jackstay was made public on 2026-09-07. Cargo now fetches the pinned revision
+directly; the private checkout action and `JACKSTAY_READ_TOKEN` requirement are
+removed. No additional GitHub credential is needed for builds.
 
 Issue #113's independent extraction is complete. Issue #114 remains open pending
-private-dependency CI. KWin native capture, lease release and screenshots have
-live evidence; Linux movie recording remains unsupported and must not be marked
-complete under the recording acceptance criterion. The Windows and desktop workflow issues #115–#118
-have not been implemented by this extraction.
+CI. KWin native capture, lease release and screenshots have live evidence; Linux
+movie recording remains unsupported and must not be marked complete under the
+recording acceptance criterion. The Windows and desktop workflow issues
+#115–#118 have not been implemented by this extraction.

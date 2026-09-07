@@ -27,9 +27,6 @@ jobs:
     needs: fmt
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-jackstay
-        with:
-          token: ${{ secrets.JACKSTAY_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -51,9 +48,6 @@ jobs:
     needs: fmt
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-jackstay
-        with:
-          token: ${{ secrets.JACKSTAY_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         with:
@@ -74,9 +68,6 @@ jobs:
     needs: fmt
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-jackstay
-        with:
-          token: ${{ secrets.JACKSTAY_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         with:
@@ -100,9 +91,6 @@ jobs:
     needs: fmt
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-jackstay
-        with:
-          token: ${{ secrets.JACKSTAY_READ_TOKEN }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         with:

@@ -94,7 +94,7 @@ _Avoid_: Linux TCC, portal permission, permanent grant.
 The single-producer, multi-consumer broadcast transfer ring — shared memory for
 the hot path, a setup socket for one-time handle/fd passing — that streams
 captured surfaces (and, later, structured events) to heterogeneous consumers
-(native panes, browsers, terminals). It lives in private
+(native panes, browsers, terminals). It lives in public
 `flotilla-org/jackstay`, consumed by porthole as a pinned Rust dependency with a
 versioned C ABI and no 0.x stability promise. Porthole is a **producer/consumer
 integration** on top of Jackstay. Jackstay owns its transport semantics and may

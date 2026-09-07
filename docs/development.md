@@ -2,18 +2,13 @@
 
 This covers first-time setup, day-to-day workflow, and what to do when grants go sideways.
 
-## Private Jackstay dependency
+## Jackstay dependency
 
-The workspace pins `jackstay` to a Git revision in private
-`flotilla-org/jackstay`. Builds require access to that repository. Cargo uses the
-Git CLI so it can use your configured credential helper. For a GitHub CLI login,
-run `gh auth setup-git` once; no token belongs in Cargo.toml or the Git URL.
-
-CI fetches the same pinned revision with the repository's `JACKSTAY_READ_TOKEN`
-Actions secret (read-only Contents access to Jackstay). The setup action points
-Cargo's Git fetch at that checkout; no credential is persisted in Cargo config.
-Jackstay owns its C/Zig header and native-library CI. Porthole CI covers its own
-integration and platform adapters.
+The workspace pins `jackstay` to a Git revision in public
+`flotilla-org/jackstay`. Cargo fetches it directly for local and CI builds;
+no GitHub credential or Actions secret is required. Jackstay owns its C/Zig
+header and native-library CI. Porthole CI covers its own integration and platform
+adapters.
 
 For temporary sibling-checkout work, use a local Cargo configuration patch:
 
@@ -147,7 +142,7 @@ These tests use whatever daemon is currently running (or spawn their own from `C
 
 ## Capture transfer SDL viewer
 
-The SDL reference viewer lives in the private Jackstay repository. The helper
+The SDL reference viewer lives in the public Jackstay repository. The helper
 requires CMake 3.24 or newer (`--fresh` clears the source-path cache on pin changes). It
 resolves the exact revision from Cargo metadata, builds its library and
 viewer, and writes the result into porthole's target directory. It works with the

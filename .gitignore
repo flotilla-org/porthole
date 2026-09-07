@@ -12,4 +12,3 @@ __pycache__/
 /*.json
 
 # Private dependency checkout used by CI
-/.deps/

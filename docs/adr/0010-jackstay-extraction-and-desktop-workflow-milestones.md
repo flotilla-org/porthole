@@ -10,11 +10,11 @@ goal and does not gate this work.
 
 ### Jackstay as a usable 0.x dependency
 
-Extract Jackstay into `~/dev/jackstay` and initially push it to the private
-`flotilla-org/jackstay` repository. Preserve the relevant source history. Porthole
-will consume a pinned revision of that repository; a temporary requirement for
-private-repository access in developer builds and CI is accepted. Public release
-and a stable API are separate later decisions.
+Extract Jackstay into `~/dev/jackstay` and preserve the relevant source history.
+Porthole consumes a pinned revision of `flotilla-org/jackstay`. The initial
+private-repository decision was revised on 2026-09-07: Jackstay is public, so
+local builds and CI can fetch it without credentials. API stability remains a
+separate later decision.
 
 The extraction is complete when the independent library and reference viewer
 work, porthole consumes the external dependency, and the existing macOS and Linux
