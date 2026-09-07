@@ -2,6 +2,27 @@
 
 This covers first-time setup, day-to-day workflow, and what to do when grants go sideways.
 
+## Jackstay dependency
+
+The workspace pins `jackstay` to a Git revision in public
+`flotilla-org/jackstay`. Cargo fetches it directly for local and CI builds;
+no GitHub credential or Actions secret is required. Jackstay owns its C/Zig
+header and native-library CI. Porthole CI covers its own integration and platform
+adapters.
+
+For temporary sibling-checkout work, use a local Cargo configuration patch:
+
+```toml
+[patch."https://github.com/flotilla-org/jackstay"]
+jackstay = { path = "/absolute/path/to/jackstay/crates/jackstay" }
+```
+
+Pass the untracked config file with `cargo --config /path/to/local.toml ...`.
+The patch changes Cargo.lock's source resolution while it is active. Restore the
+pinned dependency and regenerate/check the lockfile before committing; do not
+commit a machine-specific path. The viewer helper also respects Cargo's normal
+local config files.
+
 ## First-time setup
 
 Porthole's macOS adapter needs **Accessibility** and **Screen Recording** system permissions. Grants are tied to a binary's code signature + path; the dev bundle gives a stable identity so grants persist across rebuilds.
@@ -121,17 +142,16 @@ These tests use whatever daemon is currently running (or spawn their own from `C
 
 ## Capture transfer SDL viewer
 
-The first capture-transfer dogfood viewer lives in `tools/capture-viewer-sdl`.
-It can run a synthetic producer in-process, or ask `portholed` to create a
-synthetic daemon session and consume frames through the fd-passing transport.
-Build and smoke-test the in-process path with:
+The SDL reference viewer lives in the public Jackstay repository. The helper
+requires CMake 3.24 or newer (`--fresh` clears the source-path cache on pin changes). It
+resolves the exact revision from Cargo metadata, builds its library and
+viewer, and writes the result into porthole's target directory. It works with the
+pinned Git source or an explicit local Cargo patch.
 
 ```sh
-cargo build -p capture-transfer -p porthole -p portholed --locked
-cmake -S tools/capture-viewer-sdl -B target/capture-viewer-sdl \
-  -DCAPTURE_TRANSFER_LIB="$PWD/target/debug/libcapture_transfer.dylib"
-cmake --build target/capture-viewer-sdl
-SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl --frames 3
+cargo build -p porthole -p portholed --locked
+python3 scripts/build-jackstay-viewer.py
+SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl --frames 30
 ```
 
 Smoke-test the daemon-backed path with:
@@ -212,6 +232,13 @@ PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 \
     live_kde_pipewire_native_session_attaches_and_acquires_one_dmabuf_frame \
     -- --ignored --nocapture
 ```
+
+Select a continuously updating window in the chooser. For the lease-release
+check, run the same command with
+`live_kde_pipewire_native_session_holds_pipewire_slot_until_lease_release`.
+It needs updates after release to observe the slot being reused; an idle source
+can fail that observation even when the held slot was protected. KDE can ask for
+sharing approval again on each invocation.
 
 This exercises the full ScreenCast portal -> PipeWire dmabuf producer -> Linux
 UDS attach -> C ABI lease/release path. It requires a session bus that can

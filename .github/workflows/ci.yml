@@ -83,7 +83,7 @@ jobs:
       - run: cargo test --workspace --locked
       # Compile gate only: the runners have no DRM render node or PipeWire
       # session, so the backend's hardware-touching tests can't run here.
-      - run: cargo build -p capture-transfer --locked --features backend-linux
+      - run: cargo build -p portholed --locked
 
   test-windows:
     name: Test (Windows)
@@ -104,7 +104,7 @@ jobs:
             ${{ runner.os }}-cargo-test-
       # Capture is stubbed on Windows (Layer 1), so the whole workspace compiles
       # but several tests assert capture/Unix-socket behavior that differs under
-      # the stub (capture-transfer's shm tests, portholed's capture-adjacent
+      # the stub (portholed's capture-adjacent
       # route guards, the Unix-socket-path CLI tests). Until those are gated for
       # Windows, this job is a compile gate over every crate plus the portable
       # logic tests (core / protocol / the new transport crate) — enough to catch
@@ -112,20 +112,3 @@ jobs:
       # a follow-up.
       - run: cargo build --workspace --locked
       - run: cargo test -p porthole-core -p porthole-protocol -p porthole-transport --locked
-
-  abi:
-    name: C ABI guards
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # A C11 compiler and Zig's translate-c both consume the public headers,
-      # standing in for the downstream C and Zig (katzensteg) consumers so a
-      # header edit can't silently break them.
-      - run: cc -std=c11 -fsyntax-only crates/capture-transfer/include/capture_transfer.h
-      - run: cc -std=c11 -fsyntax-only crates/capture-transfer/include/jackstay_ring.h
-      - run: cc -std=c11 -I crates/capture-transfer/include -fsyntax-only crates/capture-transfer/src/native/c_abi_header_smoke.c
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.2
-      - run: zig translate-c -lc crates/capture-transfer/include/capture_transfer.h > /dev/null
-      - run: zig translate-c -lc crates/capture-transfer/include/jackstay_ring.h > /dev/null

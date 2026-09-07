@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
 };
 
-use capture_transfer::native::macos::IoSurface;
+use jackstay::native::macos::IoSurface;
 use porthole_core::{ErrorCode, PortholeError, surface::SurfaceInfo};
 
 use crate::{MacOsAdapter, permissions::ensure_screen_recording_granted};
@@ -193,7 +193,7 @@ extern "C" fn native_error_callback(ctx: *mut c_void, message: *const c_char) {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use capture_transfer::{model::PixelFormat, native::macos::IoSurface};
+    use jackstay::{model::PixelFormat, native::macos::IoSurface};
 
     use super::{
         NativeCallbackState, NativeCapturedFrame, NativeVideoFramePublisher, SckNativeFrame, native_error_callback, native_frame_callback,

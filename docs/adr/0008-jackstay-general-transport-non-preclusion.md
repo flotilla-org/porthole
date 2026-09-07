@@ -1,5 +1,9 @@
 # Jackstay is a general app-to-app transport; topology stays non-precluded
 
+Current milestone: [ADR-0010](0010-jackstay-extraction-and-desktop-workflow-milestones.md)
+permits breaking 0.x changes and separates extraction from stability. The general
+shapes below remain design intent; they are not a current ABI-freeze requirement.
+
 Jackstay's reason to exist is not surface capture specifically — it is the
 **lowest-cost cross-platform transport between apps for any stream**. Video was
 the *hardest* case and was done first (zero-copy GPU handle + explicit fence, see
@@ -37,11 +41,12 @@ remains addable without an ABI break.
 ## Coordinator is a role; porthole is one instance
 
 - **"Coordinator" is a jackstay concept**, not a porthole feature. porthole is
-  one coordinator *instance* that happens to hold the right authority (macOS TCC)
-  and delegation capability. The privileged *instantiation of capture* stays in
-  porthole on macOS because the OS forces it (ADR-0007); on Linux/Windows a
-  standalone small program can stand that up, so the capture instantiator is less
-  coupled to the coordinator there.
+  one coordinator *instance* that holds the required desktop permissions and
+  delegation capability. The current macOS desktop capture integration stays in
+  porthole with its installed identity and launchd broker (ADR-0007). Another host
+  can supply its own authorized source; Jackstay does not require porthole as its
+  authority. Reusable capture mechanisms such as PipeWire may live in Jackstay
+  while the host obtains permission and supervises the session (ADR-0010).
 - **Broker-less floor: trust is environmental.** In the component case — a
   consumer forks a producer and they share inherited fds — naming, auth, and
   trust are entirely OS-provided (permissions, namespaces). Jackstay's *core* adds
@@ -49,9 +54,9 @@ remains addable without an ABI break.
   (consistent with ADR-0006: authority lives outside, porthole only verifies).
   This is already the right shape: `AttachEndpoint::new` takes
   `expected_bearer: Option<String>` — auth is optional today. Keep it optional.
-  Note this is a *design-possible* topology under these invariants, not a v1
-  scope change: per ADR-0007 the supported introduction path in v1 remains the
-  broker; direct no-coordinator rings stay out of scope until a need lands.
+  ADR-0010 now requires an independent synthetic producer/viewer example using
+  the existing setup mechanisms. The porthole macOS desktop path keeps its broker;
+  a general coordinator or topology framework remains outside the milestone.
 
 ## Setup is capability + expectation declaration (deferred, not precluded)
 
@@ -109,57 +114,33 @@ Once katzensteg (Zig), the libghostty-vt fork (Zig), cleat, and `capture-viewer-
   fd-passing transport). **Windows is shape-compatible** with macOS (single
   shareable NT handle + counter fence) and validates little, so it comes later.
 
-## Sequencing: extract ≠ freeze; Linux is the only gate
+## Sequencing: extract at 0.x; stability comes later
 
-The "extract jackstay" and "add cross-platform backends" questions are not a
-straight A-vs-B. The decisive reframe is that **extraction and C-ABI *freeze* are
-different events**: extraction (its own repo) is a cheap, history-preserving move
-the clean one-way boundary already allows (ADR-0005); the *freeze* is the
-expensive, irreversible commitment, because the downstream repos pin it. So the
-real question is what gates the freeze — and after honest accounting, it is one
-thing.
+Updated 2026-09-05 by [ADR-0010](0010-jackstay-extraction-and-desktop-workflow-milestones.md).
+The July amendment deferred only the 1.0 stamp, but left contradictory statements
+that tied extraction to freezing the ABI. Those statements are superseded.
 
-- **Consumer/cross-language validation is already in motion, not a phase.** The
-  in-tree `capture-viewer-sdl` is C and already links the header end to end on
-  macOS, so C linkage is proven. katzensteg has already consumed the dylib via
-  its DYLD path (Zig consumption proven) and is gaining direct Metal support —
-  i.e. it is becoming a non-co-designed, full-native **Zig** consumer on its own
-  schedule. A `zig translate-c` check is therefore a **regression guard** (cheap
-  CI smoke so a future header edit can't silently break katzensteg), **not** a
-  pre-freeze gate.
-- **The freeze gate reduces to one genuine unknown: the Linux backend, both
-  sides.** Only Linux exercises dmabuf→GL/Vulkan import, the `surface_use_count`
-  replacement (no dmabuf equivalent), and multi-plane/modifier handle
-  discrimination. katzensteg's macOS Metal work validates none of those.
-- **Windows comes later** — single shareable NT handle + counter fence is
-  shape-compatible with macOS, so it validates little.
+Extract Jackstay as a usable 0.x dependency in its own private repository.
+Porthole consumes a pinned revision. The standalone synthetic producer/viewer
+proof and real macOS/Linux native integration checks establish the extraction's
+completion; no Windows capture implementation or API stability promise is needed.
+The C ABI stays versioned and may change during 0.x development.
 
-The resulting order:
+Linux has already exercised the handle, modifier and lease contracts that macOS
+alone could not validate. Preserve that implementation and verify the real
+PipeWire producer and native consumer across the new repository boundary.
+This is regression coverage, not an instruction to implement Linux again or
+freeze the ABI before moving it.
 
-1. **Linux producer + consumer reference** (in-monorepo, against `capture-transfer`)
-   — the entire freeze gate.
-2. **Freeze the C ABI 1.0** — handle discrimination final; ABI-version field
-   beside the existing struct-size `_Static_assert`s; wire in the `zig translate-c`
-   + `cc -std=c11` regression guards.
-   *Amended 2026-07-06 (PR #105): the guardrails landed, but the version is
-   deliberately stamped 0.1 — nothing is being distributed yet, so the 1.0
-   stability promise waits until an external consumer needs it. Major 0 means
-   layouts may still change freely, with a minor bump as the only signal.*
-   *Corrected same day: the 0.1 decision defers only the stamp. Extraction
-   (step 3) is not tied to it — "extract at the freeze" overstated the
-   coupling; a separate repo and a 0.x version coexist fine, and extraction
-   proceeds on its own schedule.*
-3. **Extract jackstay to its own repo *at* the freeze** — still last. katzensteg
-   already consumes via dylib/header with no extraction, which is the proof that
-   extraction marks the freeze rather than being a prerequisite for anything.
-4. **Additive, post-freeze:** audio (the ring already carries
-   `clock_domain`/`timestamp_ns`, so it does not break the wire) → input
-   (symmetric-role/reverse) → Windows (on demand).
-5. **Coordinator / translator / remoting machinery — last**, when a concrete need
-   lands (non-preclusion until then).
+Windows desktop launch/input/screenshots proceed independently. Windows native
+capture can reshape the transport contracts later. The existing C header checks
+and cross-language guards remain regression checks; direct Katzensteg integration
+is not an extraction gate.
 
-Net: **B (Linux) before A (extraction); A is gated solely on the Linux-driven
-freeze.** Linux is the one thing standing between here and a freezable ABI.
+Audio, input streams, translation and network streaming remain later additions
+when a concrete consumer needs them. Tender introduces no dependency or new
+requirements for this extraction. API stability and public distribution remain
+separate future decisions.
 
 ## Relationship to other ADRs
 

@@ -17,11 +17,11 @@ use std::{
 };
 
 #[cfg(unix)]
-use capture_transfer::{
+use jackstay::{
     fdpass,
     transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
 };
-use capture_transfer::{
+use jackstay::{
     model::{
         ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
         VideoTrackDesc,
@@ -1072,7 +1072,7 @@ pub enum CaptureRegistryError {
 }
 
 impl CaptureRegistryError {
-    pub(crate) fn from_capture(error: capture_transfer::CaptureTransferError) -> Self {
+    pub(crate) fn from_capture(error: jackstay::CaptureTransferError) -> Self {
         Self::Capture(error.to_string())
     }
 
@@ -1455,7 +1455,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use capture_transfer::{
+    use jackstay::{
         control_page::VideoTrackControlPage,
         model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
         video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
@@ -1542,8 +1542,8 @@ mod tests {
     fn latest_frame_reply_keeps_frame_pinned_until_release() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1599,8 +1599,8 @@ mod tests {
     fn latest_frame_for_consumer_preserves_skip_accounting() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(3);
         video.publish(track_id, test_desc(1), &[1]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1661,8 +1661,8 @@ mod tests {
     fn fd_connection_disconnect_releases_outstanding_leases() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1703,7 +1703,7 @@ mod tests {
         assert_eq!(control["op"], "register_video_control_page");
         assert_eq!(control["consumer_id"], 1);
         assert_eq!(control["consumer_slot"], 0);
-        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
 
@@ -1711,14 +1711,14 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
         // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
         let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
@@ -1736,8 +1736,8 @@ mod tests {
         let identity = agent_store.create_identity("agent", None, 1_000).await.unwrap();
         let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1785,8 +1785,8 @@ mod tests {
         let other = agent_store.create_identity("other", None, 1_001).await.unwrap();
         let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1834,8 +1834,8 @@ mod tests {
         let token = owner.token.clone();
         let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -1884,21 +1884,21 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(control["op"], "register_video_control_page");
-        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
         let _control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
         // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
         let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
@@ -1924,8 +1924,8 @@ mod tests {
         let owner_a_token = owner_a.token.clone();
         let owner_b = agent_store.create_identity("owner-b", None, 1_001).await.unwrap();
         let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let session_a_id = "session-a".to_string();
         let session_b_id = "session-b".to_string();
 
@@ -2008,8 +2008,8 @@ mod tests {
         let token = owner.token.clone();
         let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -2057,8 +2057,8 @@ mod tests {
     fn fd_connection_serves_unowned_session_without_authorize() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(1);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -2097,21 +2097,21 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(control["op"], "register_video_control_page");
-        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
         let _control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
         let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
         assert_ne!(response.lease_id, 0);
         // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
         let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
@@ -2134,8 +2134,8 @@ mod tests {
     fn fd_connection_acquires_requested_producer_cursor() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(2);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
@@ -2178,7 +2178,7 @@ mod tests {
         assert_eq!(control["op"], "register_video_control_page");
         assert_eq!(control["consumer_id"], 1);
         assert_eq!(control["consumer_slot"], 0);
-        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
 
@@ -2186,7 +2186,7 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
@@ -2195,7 +2195,7 @@ mod tests {
         assert_eq!(response.sequence, 1);
         assert_ne!(response.lease_id, 0);
         // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
         let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [1, 2, 3, 4]);
 
@@ -2219,8 +2219,8 @@ mod tests {
     fn fd_connection_acquires_next_video_frame_in_order() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(3);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
@@ -2263,7 +2263,7 @@ mod tests {
         assert_eq!(control["op"], "register_video_control_page");
         assert_eq!(control["consumer_id"], 1);
         assert_eq!(control["consumer_slot"], 0);
-        let control_fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.shadow_read_entry_for_cursor(2).unwrap().sequence, 2);
 
@@ -2271,7 +2271,7 @@ mod tests {
         reader.read_line(&mut line).unwrap();
         let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
         assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = capture_transfer::fdpass::recv_fd(&client).unwrap();
+        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
 
         line.clear();
         reader.read_line(&mut line).unwrap();
@@ -2280,7 +2280,7 @@ mod tests {
         assert_eq!(response.sequence, 2);
         assert_ne!(response.lease_id, 0);
         // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = capture_transfer::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
+        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
         let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
         assert_eq!(bytes, [5, 6, 7, 8]);
 
@@ -2304,8 +2304,8 @@ mod tests {
     fn fd_connection_reports_lapped_ordered_video_frame() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(2);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
@@ -2367,8 +2367,8 @@ mod tests {
     fn fd_connection_reports_empty_ordered_video_frame() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let mut video = VideoSlotManager::new_reusable_pool(2);
         video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
         registry.inner.lock().unwrap().sessions.insert(
@@ -2427,8 +2427,8 @@ mod tests {
     fn latest_frame_rejects_starting_session_before_track_lookup() {
         let registry = CaptureRegistry::disabled();
         let session_id = "starting-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2464,8 +2464,8 @@ mod tests {
     fn latest_frame_rejects_failed_session_before_track_lookup() {
         let registry = CaptureRegistry::disabled();
         let session_id = "failed-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2501,8 +2501,8 @@ mod tests {
     fn latest_frame_rejects_closed_session_before_track_lookup() {
         let registry = CaptureRegistry::disabled();
         let session_id = "closed-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2538,8 +2538,8 @@ mod tests {
     async fn capture_session_monitor_marks_session_closed_when_stream_ends() {
         let registry = CaptureRegistry::disabled();
         let session_id = "owned-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2576,8 +2576,8 @@ mod tests {
     async fn close_session_sends_startup_cancel_signal() {
         let registry = CaptureRegistry::disabled();
         let session_id = "starting-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
@@ -2605,8 +2605,8 @@ mod tests {
     async fn capture_session_monitor_marks_session_failed_on_error() {
         let registry = CaptureRegistry::disabled();
         let session_id = "publisher-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2646,8 +2646,8 @@ mod tests {
     async fn capture_session_monitor_wakes_startup_waiter_on_error() {
         let registry = CaptureRegistry::disabled();
         let session_id = "publisher-starting-session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
@@ -2721,7 +2721,7 @@ mod tests {
     #[test]
     fn borrowed_capture_frame_view_publishes_into_video_slots() {
         let mut video = VideoSlotManager::new_reusable_pool(2);
-        let track = capture_transfer::model::TrackId::new(1);
+        let track = jackstay::model::TrackId::new(1);
         let pixels = [9, 8, 7, 6, 5, 4, 3, 2];
         let metadata = VideoCaptureFrameMetadata {
             sequence: 11,
@@ -2741,7 +2741,7 @@ mod tests {
 
         publish_capture_frame_view_to_video(&mut video, track, VideoCaptureFrameView { metadata, bytes: &pixels }).unwrap();
 
-        let frame = video.acquire_latest(capture_transfer::video::ConsumerId::new(1), track).unwrap();
+        let frame = video.acquire_latest(jackstay::video::ConsumerId::new(1), track).unwrap();
         assert_eq!(frame.desc.sequence, 11);
         assert_eq!(frame.desc.damage_base_sequence, 10);
         assert_eq!(frame.bytes(), pixels);
@@ -2751,8 +2751,8 @@ mod tests {
     fn registry_frame_publisher_updates_session_and_signals_first_frame() {
         let registry = CaptureRegistry::disabled();
         let session_id = "session".to_string();
-        let source_id = capture_transfer::model::SourceId::new(1);
-        let track_id = capture_transfer::model::TrackId::new(1);
+        let source_id = jackstay::model::SourceId::new(1);
+        let track_id = jackstay::model::TrackId::new(1);
         registry.inner.lock().unwrap().sessions.insert(
             session_id.clone(),
             CaptureSession {
@@ -2799,10 +2799,7 @@ mod tests {
         assert_eq!(session.height, 1);
         assert_eq!(session.stride, 4);
         assert_eq!(session.lifecycle, CaptureSessionLifecycle::Ready);
-        let frame = session
-            .video
-            .acquire_latest(capture_transfer::video::ConsumerId::new(1), track_id)
-            .unwrap();
+        let frame = session.video.acquire_latest(jackstay::video::ConsumerId::new(1), track_id).unwrap();
         assert_eq!(frame.bytes(), pixels);
     }
 }

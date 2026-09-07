@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/capture-transfer",
     "crates/porthole-core",
     "crates/porthole-protocol",
     "crates/porthole-transport",
@@ -19,6 +18,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
+jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "1d0770e943d01fc4a59c26c17162377f7e817a82" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"

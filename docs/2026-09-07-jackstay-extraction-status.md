@@ -1,0 +1,96 @@
+# Jackstay extraction status, 2026-09-07
+
+Jackstay now lives in public `flotilla-org/jackstay` at revision
+`1d0770e943d01fc4a59c26c17162377f7e817a82` (package 0.1.0). The filtered history
+preserves 68 commits affecting the original library and viewer; a committed map
+records the source commit IDs. The Rust implementation and optional PipeWire
+mechanism moved together. Capture authority stays with the host.
+
+## Completed verification
+
+- Jackstay workspace build, tests, clippy and pinned format check passed locally.
+  The backend-macos tests and clippy checks also passed.
+- The SDL viewer consumed and validated 30 synthetic frames in both the offline
+  dummy-video run and a normal desktop-window run. This is an in-process C-ABI
+  proof, not a live desktop capture or cross-process native-handle claim.
+- Jackstay CI passed on macOS and Linux (including native-feature tests and the
+  SDL smoke), Windows compilation, and C11/Zig public-header guards:
+  https://github.com/flotilla-org/jackstay/actions/runs/34117956720
+- Porthole's workspace build, tests, clippy and pinned format check passed after
+  switching to the external dependency. Its viewer helper resolved Cargo's pinned
+  Git checkout and passed the standalone CTest smoke from that source.
+
+## Live macOS verification
+
+The installed development bundle kept its existing Apple Development signing
+identity and both OS permissions. A separately launched SDL window was attached
+as a surface using a temporary test agent with approved Observe/Record grants.
+The test agent was revoked and its viewer/session cleaned up afterward.
+
+Screenshot capture produced the expected 640x424 window image. A two-second
+recording decoded as H.264 with 117 frames and no laps. A later native viewer run
+reported `presented_frames=30` with successful Metal submission and lease release.
+This does not measure GPU completion, copy overhead or the cleat agent workflow.
+
+Live recording exposed two inherited Jackstay retention bugs. The storage
+capacity now matches the ring's power-of-two capacity, and pinned frames cannot
+cause another advertised frame's storage to be reused or pruned. Both fixes have
+regression tests that failed before the fixes. One repeat recording reported a
+ring overrun; later runs succeeded, so this is evidence of functional capture,
+not a sustained throughput or stability claim.
+
+Local evidence is under
+`/var/folders/6z/8gmpf02s6gz_9zfgj292bpy00000gn/T/porthole-live-extraction-f_71txov`
+(screenshot and decoded recording) and sibling `porthole-live-extraction-0gdkh67m`
+(native frame-count log). The daemon used Jackstay `e08db67` for these runs;
+`1d0770e` adds only the viewer's stricter success checks and documentation.
+
+## Live KWin verification
+
+Paneer was logged into KDE Wayland on 2026-09-07. Verification used porthole
+`32ff475` in `/home/robert/dev/porthole-jackstay-validation`, Jackstay `1d0770e`,
+KWin/Plasma 6.6.4, PipeWire 1.4.11 and kernel 6.19.14-108.fc42.x86_64.
+Commands ran through the existing graphical user's systemd manager and session
+bus; the user approved the ScreenCast chooser. No cleat session was needed.
+
+- The live native attach test acquired a real Konsole dmabuf frame through the
+  extracted library's C ABI, verified four buffers and released the lease.
+- The live lease test passed with a Konsole continuously printing numbers. It
+  confirmed that a held slot was not republished and became reusable after
+  release. An earlier run on the user's original Konsole did not observe reuse;
+  keep the selected source updating throughout this test.
+- A tracked test Konsole produced a screenshot through KWin ScreenShot2. The
+  resulting PNG was inspected. The test used porthole's desktop entry pointing
+  at the validation daemon and a temporary agent with approved access.
+- Recording returned `adapter_unsupported (KWin adapter does not support
+  recording yet)`. The non-macOS movie writer also explicitly rejects recording.
+  This is an existing platform limitation, not an extraction regression or a
+  passing movie-recording check.
+- All four required porthole gates passed on paneer. The extracted Jackstay
+  `backend-linux` suite passed 161 tests. Its opportunistic hardware tests can
+  return early. `/dev/dma_heap/system` denied access to the test user, so the
+  dma-heap synthetic allocation and real-image import probes skipped. The live
+  KWin tests used actual compositor-produced dmabufs and did run.
+
+Evidence on paneer: `/tmp/porthole-jackstay-native.log`,
+`/tmp/porthole-jackstay-lease-moving.log`,
+`/tmp/porthole-jackstay-desktop.log`,
+`/tmp/porthole-jackstay-library-tests.log`, and
+`/tmp/porthole-jackstay-evidence-mq9_bfvc/screenshot.png`.
+
+## Integration state
+
+Porthole's source and lockfile pin Jackstay; the duplicate crate and viewer source
+are removed. The viewer build discovers the dependency through Cargo metadata.
+Native capture producers, portal consent and porthole's integration tests stay in
+porthole. Jackstay owns its C/Zig header checks and native-library CI.
+
+Jackstay was made public on 2026-09-07. Cargo now fetches the pinned revision
+directly; the private checkout action and `JACKSTAY_READ_TOKEN` requirement are
+removed. No additional GitHub credential is needed for builds.
+
+Issue #113's independent extraction is complete. Issue #114 remains open pending
+CI. KWin native capture, lease release and screenshots have live evidence; Linux
+movie recording remains unsupported and must not be marked complete under the
+recording acceptance criterion. The Windows and desktop workflow issues
+#115–#118 have not been implemented by this extraction.

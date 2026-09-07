@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use capture_transfer::{
+use jackstay::{
     model::{PixelFormat, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
     native::{
         NativeStreamParams, NativeTrackProducer, PoolExhaustionPolicy,
@@ -87,8 +87,8 @@ impl NativeRegistryPublisher {
             width: frame.width,
             height: frame.height,
             pixel_format: PixelFormat::Bgra8Unorm,
-            color_space: capture_transfer::model::ColorSpace::Srgb,
-            clock_domain: capture_transfer::model::ClockDomain::MediaTime,
+            color_space: jackstay::model::ColorSpace::Srgb,
+            clock_domain: jackstay::model::ClockDomain::MediaTime,
             modifier: 0,
         };
         // Ring 4 / pool 8: latest-wins capture, a comfortable margin over the
@@ -140,7 +140,7 @@ impl NativeVideoFramePublisher for NativeRegistryPublisher {
     }
 }
 
-fn native_error(error: capture_transfer::CaptureTransferError) -> PortholeError {
+fn native_error(error: jackstay::CaptureTransferError) -> PortholeError {
     PortholeError::new(ErrorCode::InternalError, error.to_string())
 }
 
@@ -216,7 +216,7 @@ pub(super) async fn create(
             height: 0,
             stride: 0,
             pixel_format: PixelFormat::Bgra8Unorm,
-            video: capture_transfer::video::VideoSlotManager::new_reusable_pool(1),
+            video: jackstay::video::VideoSlotManager::new_reusable_pool(1),
             capture_task: None,
             startup_cancel: None,
         },

@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-use capture_transfer::{
+use jackstay::{
     control_page::VideoTrackControlPage,
     model::{ClockDomain, ColorSpace, PixelFormat},
     native::{

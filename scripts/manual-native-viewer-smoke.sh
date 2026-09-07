@@ -69,12 +69,8 @@ if ! porthole info | grep -q "system permission screen_recording: granted"; then
 fi
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    # The dylib must carry the ft_native_* symbols, so build with backend-macos.
-    cargo build -p capture-transfer --features backend-macos --locked
     cargo build -p porthole -p portholed --locked
-    cmake -S tools/capture-viewer-sdl -B target/capture-viewer-sdl \
-        -DCAPTURE_TRANSFER_LIB="$PWD/target/debug/libcapture_transfer.dylib"
-    cmake --build target/capture-viewer-sdl
+    python3 scripts/build-jackstay-viewer.py
 fi
 
 if [[ -z "$SURFACE_ID" ]]; then
@@ -83,9 +79,8 @@ fi
 
 echo "surface_id=$SURFACE_ID"
 descriptor="$(porthole capture-session surface "$SURFACE_ID" --native --json)"
-printf '%s\n' "$descriptor"
 
-mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.mach_service_name // empty')"
+mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.endpoint // empty')"
 attach_token="$(printf '%s\n' "$descriptor" | jq -r '.native.attach_token // empty')"
 
 if [[ -z "$mach_service" || -z "$attach_token" ]]; then
