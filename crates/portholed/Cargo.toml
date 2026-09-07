@@ -31,18 +31,18 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 base64 = "0.22"
-capture-transfer = { path = "../capture-transfer" }
+jackstay = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 porthole-adapter-macos = { path = "../porthole-adapter-macos" }
 # Native IOSurface/Metal capture + XPC attach server (the feature unions onto
-# the base capture-transfer dep on macOS).
-capture-transfer = { path = "../capture-transfer", features = ["backend-macos"] }
+# the base Jackstay dependency on macOS).
+jackstay = { workspace = true, features = ["backend-macos"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 porthole-adapter-kwin = { path = "../porthole-adapter-kwin" }
 # Native dmabuf/DRM/PipeWire attach path for Linux.
-capture-transfer = { path = "../capture-transfer", features = ["backend-linux"] }
+jackstay = { workspace = true, features = ["backend-linux"] }
 zbus = { workspace = true }
 
 [dev-dependencies]

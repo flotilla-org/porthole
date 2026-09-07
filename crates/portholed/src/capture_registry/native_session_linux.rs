@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use capture_transfer::{
+use jackstay::{
     model::{PixelFormat, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
     native::{
         PoolExhaustionPolicy,
@@ -288,7 +288,7 @@ fn pixel_format_from_native(pixel_format: u32) -> PixelFormat {
 mod tests {
     use std::{ffi::CString, ptr, sync::Arc};
 
-    use capture_transfer::{
+    use jackstay::{
         ffi::{FT_STATUS_EMPTY, FT_STATUS_OK, FT_STATUS_TIMEOUT},
         ffi_native::{
             FT_NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET, FT_NATIVE_HANDLE_DMABUF, FT_NATIVE_RELEASE_NOW, FT_NATIVE_SYNC_DRM_SYNCOBJ_TIMELINE,

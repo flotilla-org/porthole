@@ -332,7 +332,7 @@ impl RecordSessionClient for DaemonClient {
     }
 }
 
-impl OrderedFrame for capture_transfer::daemon::DaemonFrame {
+impl OrderedFrame for jackstay::daemon::DaemonFrame {
     fn producer_cursor(&self) -> u64 {
         self.producer_cursor
     }
@@ -367,7 +367,7 @@ pub async fn run(client: &mut DaemonClient, args: RecordArgs) -> Result<(), Clie
 struct ProductionRecorderFactory;
 
 struct DaemonOrderedFrameConsumer {
-    inner: capture_transfer::daemon::DaemonConsumer,
+    inner: jackstay::daemon::DaemonConsumer,
 }
 
 impl RecorderFactory for ProductionRecorderFactory {
@@ -376,11 +376,11 @@ impl RecorderFactory for ProductionRecorderFactory {
 
     fn connect_consumer(&mut self, session: &RecordSession) -> Result<Self::Consumer<'_>, ClientError> {
         let pixel_format = match session.pixel_format.as_str() {
-            "bgra8_unorm" => capture_transfer::model::PixelFormat::Bgra8Unorm,
-            "rgba8_unorm" => capture_transfer::model::PixelFormat::Rgba8Unorm,
-            _ => capture_transfer::model::PixelFormat::Unknown,
+            "bgra8_unorm" => jackstay::model::PixelFormat::Bgra8Unorm,
+            "rgba8_unorm" => jackstay::model::PixelFormat::Rgba8Unorm,
+            _ => jackstay::model::PixelFormat::Unknown,
         };
-        let info = capture_transfer::daemon::SessionInfo {
+        let info = jackstay::daemon::SessionInfo {
             session_id: session.session_id.clone(),
             source_id: 0,
             track_id: session.track_id,
@@ -391,7 +391,7 @@ impl RecorderFactory for ProductionRecorderFactory {
             fd_socket_path: session.fd_socket_path.clone(),
             bearer_token: session.bearer_token.clone(),
         };
-        capture_transfer::daemon::DaemonConsumer::connect(info)
+        jackstay::daemon::DaemonConsumer::connect(info)
             .map(|inner| DaemonOrderedFrameConsumer { inner })
             .map_err(|error| ClientError::Local(error.to_string()))
     }
@@ -402,20 +402,18 @@ impl RecorderFactory for ProductionRecorderFactory {
 }
 
 impl OrderedFrameConsumer for DaemonOrderedFrameConsumer {
-    type Frame = capture_transfer::daemon::DaemonFrame;
+    type Frame = jackstay::daemon::DaemonFrame;
 
     fn next_frame_after(&mut self, track_id: u64, after_producer_cursor: u64) -> Result<RecordAcquire<Self::Frame>, ClientError> {
         match self.inner.next_frame_after(track_id, after_producer_cursor) {
-            Ok(capture_transfer::daemon::DaemonFrameAcquire::Frame(frame)) => Ok(RecordAcquire::Frame(frame)),
-            Ok(capture_transfer::daemon::DaemonFrameAcquire::Unavailable(unavailable)) => {
-                Ok(RecordAcquire::Unavailable(RecordFrameUnavailable {
-                    after_producer_cursor: unavailable.after_producer_cursor,
-                    oldest_available_cursor: unavailable.oldest_available_cursor,
-                    latest_available_cursor: unavailable.latest_available_cursor,
-                    skipped_count: unavailable.skipped_count,
-                    reason: unavailable.reason.into(),
-                }))
-            }
+            Ok(jackstay::daemon::DaemonFrameAcquire::Frame(frame)) => Ok(RecordAcquire::Frame(frame)),
+            Ok(jackstay::daemon::DaemonFrameAcquire::Unavailable(unavailable)) => Ok(RecordAcquire::Unavailable(RecordFrameUnavailable {
+                after_producer_cursor: unavailable.after_producer_cursor,
+                oldest_available_cursor: unavailable.oldest_available_cursor,
+                latest_available_cursor: unavailable.latest_available_cursor,
+                skipped_count: unavailable.skipped_count,
+                reason: unavailable.reason.into(),
+            })),
             Err(error) => Err(ClientError::Local(error.to_string())),
         }
     }

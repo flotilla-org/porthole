@@ -2,7 +2,7 @@
 
 Living document. The active milestones below govern current work. The original phases remain as a delivery record; their numbering no longer implies the next task. Jackstay extraction and desktop workflow verification can interleave, subject to the explicit dependencies below.
 
-Last revised: 2026-09-05. Decisions: [ADR-0010](adr/0010-jackstay-extraction-and-desktop-workflow-milestones.md).
+Last revised: 2026-09-07. Decisions: [ADR-0010](adr/0010-jackstay-extraction-and-desktop-workflow-milestones.md).
 
 ---
 
@@ -18,7 +18,7 @@ What has shipped on GitHub `main` (through PR #110; a checkout at #109 predates 
 - macOS recording command (`porthole record surface ... --duration ... --output ...`) built on ordered capture-transfer cursors and AVFoundation `.mov` writing.
 - Agent-permissions enforcement foundation: daemon-owned identities/tokens/grants/denials/pending requests/audit store, `/events` policy publication, default-deny drive-route guard for input and pointer movement, and `porthole agents ...` operator commands.
 - KWin compositor, input and screenshot foundation (#79); Linux native PipeWire/dmabuf transport and lease-handback work (#100, #107). Live checks still require a real KWin session and capture consent.
-- Native macOS IOSurface/Metal producer and reference viewer, explicit synchronization, Linux native C ABI and ABI version guardrails. Jackstay remains the in-repo `capture-transfer` crate at 0.x.
+- Native macOS IOSurface/Metal producer and reference viewer, explicit synchronization, Linux native C ABI and ABI version guardrails. Jackstay now has a private standalone 0.1.0 repository; the pinned porthole integration is awaiting live capture verification (#114).
 - Required repository checks: `cargo build --workspace --locked`, `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo +nightly-2026-03-12 fmt --check`. GitHub also has Linux gates and Windows compile/portable-logic coverage (#110); broader Windows tests remain #111.
 
 What's known missing or rough:
@@ -40,7 +40,7 @@ through a pinned private Git dependency, with the existing macOS and Linux paths
 verified. API stability, Windows capture and direct Katzensteg integration are
 not completion requirements.
 
-- [ ] Extract to `~/dev/jackstay` and private `flotilla-org/jackstay`, preserving
+- [x] Extract to `~/dev/jackstay` and private `flotilla-org/jackstay`, preserving
   relevant history. Keep the Rust implementation, C ABI, version checks and
   reusable PipeWire mechanism. Demonstrate synthetic producer → standalone viewer
   without a porthole checkout or daemon. [#113](https://github.com/flotilla-org/porthole/issues/113).

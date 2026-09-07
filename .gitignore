@@ -10,3 +10,6 @@ __pycache__/
 # `porthole launch --json | jq` etc. during ad-hoc dogfooding.
 /*.png
 /*.json
+
+# Private dependency checkout used by CI
+/.deps/

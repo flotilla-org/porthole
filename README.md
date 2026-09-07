@@ -2,7 +2,10 @@
 
 OS-level presentation substrate for agents: launch apps and artifacts, drive them, capture them, and show them to the user — through a typed HTTP-over-UDS API.
 
-Status: v0, macOS only, pre-release. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
+Status: pre-release, with macOS/KWin desktop adapters and a Windows control plane. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
+
+Source builds currently require access to private `flotilla-org/jackstay`, pinned
+in Cargo.toml. See [private dependency setup](docs/development.md#private-jackstay-dependency).
 
 ## What is porthole?
 

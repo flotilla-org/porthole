@@ -1,0 +1,46 @@
+name: Set up private Jackstay dependency
+description: Fetch the pinned source with a read-only token and let Cargo use that local Git repository.
+inputs:
+  token:
+    description: Repository-scoped token with read-only Contents access to flotilla-org/jackstay
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Read pinned revision
+      id: pin
+      shell: bash
+      env:
+        JACKSTAY_READ_TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$JACKSTAY_READ_TOKEN" ]; then
+          echo 'Configure JACKSTAY_READ_TOKEN with read-only Contents access to flotilla-org/jackstay.' >&2
+          exit 1
+        fi
+        python - <<'PY'
+        import os, tomllib
+        with open('Cargo.toml', 'rb') as manifest:
+            dependency = tomllib.load(manifest)['workspace']['dependencies']['jackstay']
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            print('revision=' + dependency['rev'], file=output)
+        PY
+    - uses: actions/checkout@v4
+      with:
+        repository: flotilla-org/jackstay
+        ref: ${{ steps.pin.outputs.revision }}
+        token: ${{ inputs.token }}
+        persist-credentials: false
+        path: .deps/jackstay
+    - name: Use the authenticated checkout for Cargo Git fetches
+      shell: bash
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+        import subprocess
+        local_url = Path('.deps/jackstay').resolve().as_uri()
+        subprocess.run(['git', 'config', '--global', 'url.' + local_url + '.insteadOf',
+                        'https://github.com/flotilla-org/jackstay'], check=True)
+        PY

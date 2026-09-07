@@ -82,10 +82,8 @@ if ! porthole info | grep -q "system permission screen_recording: granted"; then
 fi
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-    cargo build -p capture-transfer -p porthole -p portholed --locked
-    cmake -S tools/capture-viewer-sdl -B target/capture-viewer-sdl \
-        -DCAPTURE_TRANSFER_LIB="$PWD/target/debug/libcapture_transfer.dylib"
-    cmake --build target/capture-viewer-sdl
+    cargo build -p porthole -p portholed --locked
+    python3 scripts/build-jackstay-viewer.py
 fi
 
 if [[ -z "$SURFACE_ID" ]]; then

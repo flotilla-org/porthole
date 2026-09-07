@@ -186,7 +186,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Method, Request, StatusCode},
     };
-    use capture_transfer::control_page::VideoTrackControlPage;
+    use jackstay::control_page::VideoTrackControlPage;
     use porthole_core::{
         agent_policy::{ActionClass, DurationSpec, TargetSelector},
         in_memory::InMemoryAdapter,
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(control["track_id"], created.track_id);
         assert_ne!(control["consumer_id"].as_u64().unwrap(), 0);
         assert_eq!(control["consumer_slot"], 0);
-        let control_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let control_fd = jackstay::fdpass::recv_fd(&stream).unwrap();
         let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
         assert_eq!(control_page.validate_header().unwrap().producer_cursor, 1);
 
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(pool["track_id"], created.track_id);
         assert_ne!(pool["pool_id"].as_u64().unwrap(), 0);
         assert_eq!(pool["slot_count"], 3);
-        let _pool_fd = capture_transfer::fdpass::recv_fd(&stream).unwrap();
+        let _pool_fd = jackstay::fdpass::recv_fd(&stream).unwrap();
 
         let first = read_json_line(&mut reader);
         assert_eq!(first["op"], "video_frame");
@@ -466,7 +466,7 @@ mod tests {
         stream: &mut UnixStream,
         reader: &mut BufReader<UnixStream>,
         created: &CreateCaptureSessionResponse,
-        pools: &mut BTreeMap<(u64, u64), capture_transfer::shm::SharedMemorySegment>,
+        pools: &mut BTreeMap<(u64, u64), jackstay::shm::SharedMemorySegment>,
     ) -> LatestVideoFrameResponse {
         request_latest_frame(stream, created);
 
@@ -475,16 +475,16 @@ mod tests {
             match value["op"].as_str() {
                 Some("register_video_control_page") => {
                     assert_ne!(value["consumer_id"].as_u64().unwrap(), 0);
-                    let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+                    let fd = jackstay::fdpass::recv_fd(stream).unwrap();
                     let page = VideoTrackControlPage::map_read_only(fd, value["map_len"].as_u64().unwrap() as usize).unwrap();
                     page.validate_header().unwrap();
                 }
                 Some("register_cpu_pool") => {
-                    let fd = capture_transfer::fdpass::recv_fd(stream).unwrap();
+                    let fd = jackstay::fdpass::recv_fd(stream).unwrap();
                     let key = (value["track_id"].as_u64().unwrap(), value["pool_id"].as_u64().unwrap());
                     // Pool fds are anonymous shm objects: mmap-only, no read().
                     let map_len = value["payload_map_len"].as_u64().unwrap() as usize;
-                    pools.insert(key, capture_transfer::shm::SharedMemorySegment::map_read_only(fd, map_len).unwrap());
+                    pools.insert(key, jackstay::shm::SharedMemorySegment::map_read_only(fd, map_len).unwrap());
                 }
                 Some("video_frame") => break serde_json::from_value::<LatestVideoFrameResponse>(value).unwrap(),
                 other => panic!("unexpected capture fd socket response {other:?}"),
