@@ -15,7 +15,7 @@ mechanism moved together. Capture authority stays with the host.
   proof, not a live desktop capture or cross-process native-handle claim.
 - Jackstay CI passed on macOS and Linux (including native-feature tests and the
   SDL smoke), Windows compilation, and C11/Zig public-header guards:
-  https://github.com/flotilla-org/jackstay/actions/runs/34117394704
+  https://github.com/flotilla-org/jackstay/actions/runs/34117956720
 - Porthole's workspace build, tests, clippy and pinned format check passed after
   switching to the external dependency. Its viewer helper resolved Cargo's pinned
   Git checkout and passed the standalone CTest smoke from that source.
@@ -45,6 +45,39 @@ Local evidence is under
 (native frame-count log). The daemon used Jackstay `e08db67` for these runs;
 `1d0770e` adds only the viewer's stricter success checks and documentation.
 
+## Live KWin verification
+
+Paneer was logged into KDE Wayland on 2026-09-07. Verification used porthole
+`32ff475` in `/home/robert/dev/porthole-jackstay-validation`, Jackstay `1d0770e`,
+KWin/Plasma 6.6.4, PipeWire 1.4.11 and kernel 6.19.14-108.fc42.x86_64.
+Commands ran through the existing graphical user's systemd manager and session
+bus; the user approved the ScreenCast chooser. No cleat session was needed.
+
+- The live native attach test acquired a real Konsole dmabuf frame through the
+  extracted library's C ABI, verified four buffers and released the lease.
+- The live lease test passed with a Konsole continuously printing numbers. It
+  confirmed that a held slot was not republished and became reusable after
+  release. An earlier run on the user's original Konsole did not observe reuse;
+  keep the selected source updating throughout this test.
+- A tracked test Konsole produced a screenshot through KWin ScreenShot2. The
+  resulting PNG was inspected. The test used porthole's desktop entry pointing
+  at the validation daemon and a temporary agent with approved access.
+- Recording returned `adapter_unsupported (KWin adapter does not support
+  recording yet)`. The non-macOS movie writer also explicitly rejects recording.
+  This is an existing platform limitation, not an extraction regression or a
+  passing movie-recording check.
+- All four required porthole gates passed on paneer. The extracted Jackstay
+  `backend-linux` suite passed 161 tests. Its opportunistic hardware tests can
+  return early. `/dev/dma_heap/system` denied access to the test user, so the
+  dma-heap synthetic allocation and real-image import probes skipped. The live
+  KWin tests used actual compositor-produced dmabufs and did run.
+
+Evidence on paneer: `/tmp/porthole-jackstay-native.log`,
+`/tmp/porthole-jackstay-lease-moving.log`,
+`/tmp/porthole-jackstay-desktop.log`,
+`/tmp/porthole-jackstay-library-tests.log`, and
+`/tmp/porthole-jackstay-evidence-mq9_bfvc/screenshot.png`.
+
 ## Integration state
 
 Porthole's source and lockfile pin Jackstay; the duplicate crate and viewer source
@@ -59,7 +92,7 @@ no personal login token was copied into CI. Local Git access used the existing
 GitHub CLI credential helper.
 
 Issue #113's independent extraction is complete. Issue #114 remains open pending
-private-dependency CI and real KWin capture, screenshot and recording
-verification. Paneer is at the SDDM greeter; this needs an existing logged-in
-KWin desktop. No automatic login was configured. The Windows and desktop workflow issues #115–#118
+private-dependency CI. KWin native capture, lease release and screenshots have
+live evidence; Linux movie recording remains unsupported and must not be marked
+complete under the recording acceptance criterion. The Windows and desktop workflow issues #115–#118
 have not been implemented by this extraction.

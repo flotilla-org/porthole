@@ -238,6 +238,13 @@ PORTHOLE_LIVE_KDE_NATIVE_SMOKE=1 \
     -- --ignored --nocapture
 ```
 
+Select a continuously updating window in the chooser. For the lease-release
+check, run the same command with
+`live_kde_pipewire_native_session_holds_pipewire_slot_until_lease_release`.
+It needs updates after release to observe the slot being reused; an idle source
+can fail that observation even when the held slot was protected. KDE can ask for
+sharing approval again on each invocation.
+
 This exercises the full ScreenCast portal -> PipeWire dmabuf producer -> Linux
 UDS attach -> C ABI lease/release path. It requires a session bus that can
 activate `org.freedesktop.portal.Desktop` with the `ScreenCast` interface,
