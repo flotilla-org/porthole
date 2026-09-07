@@ -1,0 +1,47 @@
+UTC: 2026-09-07T20:55:31.1032235Z; session: 1; OS: Microsoft Windows NT 10.0.26200.0
+852e55c8c953e5266117cba5ca295fb41d9386bd
+porthole info -> daemon_version: 0.0.0
+porthole launch --app C:\dev\porthole-windows-desktop\target\debug\examples\desktop_fixture.exe --json -> agent_identity_required
+porthole launch --app C:\dev\porthole-windows-desktop\target\debug\examples\desktop_fixture.exe --json -> agent_permission_needed
+porthole agents requests --json -> [
+porthole agents approve apr_04a01e32e15445a1a4e65a0b1fa26481 --duration persistent --json -> {
+porthole launch --app C:\dev\porthole-windows-desktop\target\debug\examples\desktop_fixture.exe --require-fresh-surface --json -> {
+  "surface_id": "surf_4c8114825379406a8578a81e5bc4fbf9",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "pid_tree",
+porthole focus surf_4c8114825379406a8578a81e5bc4fbf9 -> agent_permission_needed
+porthole agents requests --json -> [
+porthole agents approve apr_aa030b3c8d164e8db1c3fccbcb6e7258 --duration persistent --json -> {
+porthole focus surf_4c8114825379406a8578a81e5bc4fbf9 -> focused surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole text surf_4c8114825379406a8578a81e5bc4fbf9 Porthole #117: native Windows input -> sent 35 char(s) to surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole key surf_4c8114825379406a8578a81e5bc4fbf9 --key Enter -> sent 1 event(s) to surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole text surf_4c8114825379406a8578a81e5bc4fbf9 Named pipe + token/grant + HWND correlation + PNG -> sent 49 char(s) to surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole key surf_4c8114825379406a8578a81e5bc4fbf9 --key KeyA --mod ctrl -> sent 1 event(s) to surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole key surf_4c8114825379406a8578a81e5bc4fbf9 --key End -> sent 1 event(s) to surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole screenshot surf_4c8114825379406a8578a81e5bc4fbf9 --out C:\dev\porthole-windows-desktop\target\windows-117-evidence\visible-input.png -> agent_permission_needed
+porthole agents requests --json -> [
+porthole agents approve apr_2b0124e43d994cd5a0e0f6d158e939b3 --duration persistent --json -> {
+porthole screenshot surf_4c8114825379406a8578a81e5bc4fbf9 --out C:\dev\porthole-windows-desktop\target\windows-117-evidence\visible-input.png -> wrote C:\dev\porthole-windows-desktop\target\windows-117-evidence\visible-input.png (14265 bytes)
+porthole wait surf_4c8114825379406a8578a81e5bc4fbf9 --condition stable --timeout-ms 100 -> adapter_unsupported
+porthole focus surf_missing_117 -> surface_not_found
+porthole launch --app C:\dev\porthole-windows-desktop\target\windows-117-evidence\does-not-exist.exe --json -> launch_correlation_failed
+porthole launch --app C:\dev\porthole-windows-desktop\target\debug\examples\desktop_fixture.exe --arg=--exit-without-window --json -> launch_correlation_failed
+porthole close surf_4c8114825379406a8578a81e5bc4fbf9 -> agent_permission_needed
+porthole agents requests --json -> [
+porthole agents approve apr_1a95a51d55db4de898ebd1d8563a1a64 --duration persistent --json -> {
+porthole close surf_4c8114825379406a8578a81e5bc4fbf9 -> closed surface surf_4c8114825379406a8578a81e5bc4fbf9
+porthole focus surf_4c8114825379406a8578a81e5bc4fbf9 -> surface_dead
+porthole launch --app C:\dev\porthole-windows-desktop\target\debug\examples\desktop_fixture.exe --json -> {
+  "surface_id": "surf_038d881b5c6f4d739bdb085d0bb94cae",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "pid_tree",
+porthole focus surf_038d881b5c6f4d739bdb085d0bb94cae -> agent_permission_needed
+porthole agents requests --json -> [
+porthole agents approve apr_6b96cf9ad4a641289700fa215f1e6138 --duration persistent --json -> {
+porthole focus surf_038d881b5c6f4d739bdb085d0bb94cae -> focused surface surf_038d881b5c6f4d739bdb085d0bb94cae
+porthole key surf_038d881b5c6f4d739bdb085d0bb94cae --key F4 --mod alt -> sent 1 event(s) to surface surf_038d881b5c6f4d739bdb085d0bb94cae
+porthole focus surf_038d881b5c6f4d739bdb085d0bb94cae -> surface_dead
+PNG SHA256: BE63E1900967E913BB6217C51E64E6D1651EC0AFF197593916E5228BF5713983
+porthole agents revoke agent_7ac744eb38f74cdbbdaa8cbd3b51774e --json -> {
