@@ -393,7 +393,8 @@ mod tests {
         assert_eq!(pool["session_id"], created.session_id);
         assert_eq!(pool["track_id"], created.track_id);
         assert_ne!(pool["pool_id"].as_u64().unwrap(), 0);
-        assert_eq!(pool["slot_count"], 3);
+        // Jackstay rounds the requested capacity to the descriptor ring size.
+        assert_eq!(pool["slot_count"], 4);
         let _pool_fd = jackstay::fdpass::recv_fd(&stream).unwrap();
 
         let first = read_json_line(&mut reader);

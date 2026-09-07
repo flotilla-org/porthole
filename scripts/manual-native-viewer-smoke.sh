@@ -79,9 +79,8 @@ fi
 
 echo "surface_id=$SURFACE_ID"
 descriptor="$(porthole capture-session surface "$SURFACE_ID" --native --json)"
-printf '%s\n' "$descriptor"
 
-mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.mach_service_name // empty')"
+mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.endpoint // empty')"
 attach_token="$(printf '%s\n' "$descriptor" | jq -r '.native.attach_token // empty')"
 
 if [[ -z "$mach_service" || -z "$attach_token" ]]; then

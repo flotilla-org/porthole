@@ -148,7 +148,8 @@ These tests use whatever daemon is currently running (or spawn their own from `C
 ## Capture transfer SDL viewer
 
 The SDL reference viewer lives in the private Jackstay repository. The helper
-below resolves the exact revision from Cargo metadata, builds its library and
+requires CMake 3.24 or newer (`--fresh` clears the source-path cache on pin changes). It
+resolves the exact revision from Cargo metadata, builds its library and
 viewer, and writes the result into porthole's target directory. It works with the
 pinned Git source or an explicit local Cargo patch.
 

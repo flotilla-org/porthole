@@ -28,7 +28,8 @@ def main():
     subprocess.run(build, cwd=repo, check=True)
     library = library_target / 'debug' / ('libjackstay.dylib' if system == 'Darwin' else 'libjackstay.so')
     viewer_target = target / 'capture-viewer-sdl'
-    subprocess.run(['cmake', '-S', str(source_root / 'tools' / 'capture-viewer-sdl'),
+    # Each Git revision has a new source directory; discard the previous CMake cache.
+    subprocess.run(['cmake', '--fresh', '-S', str(source_root / 'tools' / 'capture-viewer-sdl'),
                     '-B', str(viewer_target), '-DJACKSTAY_LIB=' + str(library),
                     '-DJACKSTAY_INCLUDE_DIR=' + str(manifest.parent / 'include')], check=True)
     subprocess.run(['cmake', '--build', str(viewer_target)], check=True)
