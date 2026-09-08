@@ -2,7 +2,9 @@
 
 OS-level presentation substrate for agents: launch apps and artifacts, drive them, capture them, and show them to the user — through a typed HTTP-over-UDS API.
 
-Status: pre-release, with macOS/KWin desktop adapters and a Windows control plane. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
+Status: pre-release, with macOS/KWin desktop adapters and a Windows adapter for process launch, focus, keyboard input and one-shot screenshots. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
+
+Windows uses the same HTTP API over named pipes. See the [Windows desktop guide](docs/windows-desktop.md) for GUI-session requirements, supported operations and a reproducible live smoke test.
 
 Source builds use a pinned revision of public `flotilla-org/jackstay`. See
 [dependency setup](docs/development.md#jackstay-dependency).
@@ -513,7 +515,7 @@ Deferred to future slices:
 - **Browser / CDP** — URL artifact support, tab-as-first-class-surface, richer browser automation.
 - **Tabs** — native-app tab enumeration (iTerm2, Safari, Ghostty, Preview) with the restricted verb matrix from the v0 spec §4.1.
 - **Porthole-viewer app** — a canonical review-oriented display for agent-common content types (markdown, mermaid, dot, asciinema, videos). Slice C's `open`-based dispatch lands agents in edit-oriented apps; the viewer will be the right primitive for "show this for review."
-- **Hyprland / Linux / Windows** adapters.
+- **Hyprland and additional Linux compositor** adapters; broader Windows desktop capabilities.
 - **Cross-host routing** — same HTTP protocol over TCP; no policy yet.
 - **`focus: "preserve"`** no-focus-steal input.
 - **AX-element-reference targeting** for click/scroll.
