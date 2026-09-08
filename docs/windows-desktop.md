@@ -80,7 +80,8 @@ it does not create a new operator/agent security boundary.
 - Screenshot uses native `PrintWindow(PW_RENDERFULLCONTENT)` and a top-down
   32-bit DIB, converts BGRA to RGBA and encodes PNG. It captures the window, not
   an arbitrary screen rectangle. Metadata includes logical bounds and window DPI.
-  Minimized windows, failed capture and an entirely unrendered buffer return
+  An all-zero buffer is treated as unrendered; this can also reject genuinely
+  solid-black content. Minimized windows, failed capture and an entirely unrendered buffer return
   `adapter_unsupported`. Some GPU/protected applications do not support this
   mechanism or may render incomplete content; inspect evidence for those apps.
   No Windows Graphics Capture, DXGI, Jackstay, streaming or recording is added.

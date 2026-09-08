@@ -103,5 +103,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-test-
       - run: cargo build --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo build -p porthole-adapter-windows --example desktop_fixture --locked

@@ -49,7 +49,7 @@ fn wide(s: &str) -> Vec<u16> {
 pub struct WindowsAdapter {
     property: Vec<u16>,
     cookies: Mutex<HashMap<usize, usize>>,
-    input: Mutex<()>,
+    input: tokio::sync::Mutex<()>,
     capture_slot: Arc<tokio::sync::Semaphore>,
 }
 
@@ -63,7 +63,7 @@ impl WindowsAdapter {
         Self {
             property: wide(&format!("work.flotilla.porthole.{}", uuid::Uuid::new_v4())),
             cookies: Mutex::new(HashMap::new()),
-            input: Mutex::new(()),
+            input: tokio::sync::Mutex::new(()),
             capture_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
@@ -155,22 +155,73 @@ impl WindowsAdapter {
         Ok(hwnd)
     }
 
-    fn focus_window(&self, surface: &SurfaceInfo) -> Result<HWND> {
+    fn search_windows(&self, query: &SearchQuery, handles: impl IntoIterator<Item = usize>) -> Result<Vec<Candidate>> {
+        let regex = query
+            .title_pattern
+            .as_ref()
+            .map(|s| regex::Regex::new(s))
+            .transpose()
+            .map_err(|e| PortholeError::new(ErrorCode::InvalidArgument, e.to_string()))?;
+        let mut candidates = Vec::new();
+        for hwnd in handles {
+            let info = match self.identify(hwnd as HWND) {
+                Ok(info) => info,
+                Err(error) if matches!(error.code, ErrorCode::SurfaceDead | ErrorCode::SystemPermissionNeeded) => continue,
+                Err(error) => return Err(error),
+            };
+            let pid = info.pid.unwrap();
+            let platform_ref = info.platform_ref.unwrap();
+            if !query.pids.is_empty() && !query.pids.contains(&pid) {
+                continue;
+            }
+            if !query.platform_refs.is_empty() && !query.platform_refs.contains(&platform_ref) {
+                continue;
+            }
+            if query
+                .app_name
+                .as_ref()
+                .is_some_and(|n| !info.app_name.as_ref().is_some_and(|a| a.eq_ignore_ascii_case(n)))
+            {
+                continue;
+            }
+            if regex.as_ref().is_some_and(|r| !r.is_match(info.title.as_deref().unwrap_or(""))) {
+                continue;
+            }
+            if query
+                .frontmost
+                .is_some_and(|front| front != unsafe { GetForegroundWindow() as usize == hwnd })
+            {
+                continue;
+            }
+            candidates.push(Candidate {
+                ref_: encode_ref(pid, platform_ref.clone()),
+                app_name: info.app_name,
+                title: info.title,
+                pid,
+                platform_ref,
+            });
+        }
+        Ok(candidates)
+    }
+
+    async fn focus_window(&self, surface: &SurfaceInfo) -> Result<()> {
         self.desktop()?;
-        let hwnd = self.resolve(surface)?;
         unsafe {
+            let hwnd = self.resolve(surface)?;
             if IsIconic(hwnd) != 0 {
                 ShowWindowAsync(hwnd, SW_RESTORE);
             }
             SetForegroundWindow(hwnd);
-            // Foreground activation may be asynchronous across input queues.
-            for _ in 0..50 {
-                self.resolve(surface)?;
+        }
+        // Keep input serialized while yielding the worker during activation.
+        for _ in 0..50 {
+            unsafe {
+                let hwnd = self.resolve(surface)?;
                 if GetForegroundWindow() == hwnd {
-                    return Ok(hwnd);
+                    return Ok(());
                 }
-                std::thread::sleep(Duration::from_millis(10));
             }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Err(PortholeError::new(
             ErrorCode::SystemPermissionNeeded,
@@ -374,12 +425,12 @@ impl Adapter for WindowsAdapter {
         Ok(shot)
     }
     async fn focus(&self, surface: &SurfaceInfo) -> Result<()> {
-        let _guard = self.input.lock().unwrap();
-        self.focus_window(surface).map(|_| ())
+        let _guard = self.input.lock().await;
+        self.focus_window(surface).await.map(|_| ())
     }
     async fn text(&self, surface: &SurfaceInfo, text: &str) -> Result<()> {
-        let _guard = self.input.lock().unwrap();
-        self.focus_window(surface)?;
+        let _guard = self.input.lock().await;
+        self.focus_window(surface).await?;
         // Keep a UTF-16 surrogate pair in the same atomic SendInput batch.
         for character in text.chars() {
             let mut units = [0; 2];
@@ -403,8 +454,8 @@ impl Adapter for WindowsAdapter {
             .iter()
             .map(|event| crate::keys::virtual_key(&event.key))
             .collect::<Result<Vec<_>>>()?;
-        let _guard = self.input.lock().unwrap();
-        self.focus_window(surface)?;
+        let _guard = self.input.lock().await;
+        self.focus_window(surface).await?;
         for (event, (vk, extended)) in events.iter().zip(mapped) {
             let modifiers: Vec<_> = event
                 .modifiers
@@ -462,48 +513,7 @@ impl Adapter for WindowsAdapter {
     }
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Candidate>> {
         self.desktop()?;
-        let regex = query
-            .title_pattern
-            .as_ref()
-            .map(|s| regex::Regex::new(s))
-            .transpose()
-            .map_err(|e| PortholeError::new(ErrorCode::InvalidArgument, e.to_string()))?;
-        let mut candidates = Vec::new();
-        for hwnd in windows()? {
-            let info = self.identify(hwnd as HWND)?;
-            let pid = info.pid.unwrap();
-            let platform_ref = info.platform_ref.unwrap();
-            if !query.pids.is_empty() && !query.pids.contains(&pid) {
-                continue;
-            }
-            if !query.platform_refs.is_empty() && !query.platform_refs.contains(&platform_ref) {
-                continue;
-            }
-            if query
-                .app_name
-                .as_ref()
-                .is_some_and(|n| !info.app_name.as_ref().is_some_and(|a| a.eq_ignore_ascii_case(n)))
-            {
-                continue;
-            }
-            if regex.as_ref().is_some_and(|r| !r.is_match(info.title.as_deref().unwrap_or(""))) {
-                continue;
-            }
-            if query
-                .frontmost
-                .is_some_and(|front| front != unsafe { GetForegroundWindow() as usize == hwnd })
-            {
-                continue;
-            }
-            candidates.push(Candidate {
-                ref_: encode_ref(pid, platform_ref.clone()),
-                app_name: info.app_name,
-                title: info.title,
-                pid,
-                platform_ref,
-            });
-        }
-        Ok(candidates)
+        self.search_windows(query, windows()?)
     }
     async fn system_permissions(&self) -> Result<Vec<SystemPermissionStatus>> {
         Ok(vec![SystemPermissionStatus { name: "interactive_desktop".into(), granted: self.desktop().is_ok(), purpose: "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation".into() }])
@@ -563,14 +573,18 @@ impl Adapter for WindowsAdapter {
         deadline: Instant,
     ) -> std::result::Result<WaitOutcome, WaitTimeout> {
         let start = Instant::now();
+        let title_regex = match condition {
+            WaitCondition::TitleMatches { pattern } => regex::Regex::new(pattern).ok(),
+            _ => None,
+        };
         loop {
             let live = self.resolve(surface).ok().and_then(|hwnd| self.identify(hwnd).ok());
             let (name, satisfied, observed) = match condition {
                 WaitCondition::Exists => ("exists", live.is_some(), LastObserved::Presence { alive: live.is_some() }),
                 WaitCondition::Gone => ("gone", live.is_none(), LastObserved::Presence { alive: live.is_some() }),
-                WaitCondition::TitleMatches { pattern } => {
+                WaitCondition::TitleMatches { .. } => {
                     let title = live.and_then(|s| s.title);
-                    let matches = regex::Regex::new(pattern).is_ok_and(|r| r.is_match(title.as_deref().unwrap_or("")));
+                    let matches = title_regex.as_ref().is_some_and(|r| r.is_match(title.as_deref().unwrap_or("")));
                     ("title_matches", matches, LastObserved::Title { title })
                 }
                 _ => {
@@ -600,6 +614,7 @@ impl Adapter for WindowsAdapter {
         vec![
             "launch_process",
             "search",
+            "wait",
             "focus",
             "input_key",
             "input_text",
@@ -771,6 +786,19 @@ mod tests {
                 DestroyWindow(self.0);
             }
         }
+    }
+
+    #[test]
+    fn search_keeps_live_candidates_when_an_enumerated_window_disappears() {
+        let adapter = WindowsAdapter::new();
+        let window = Window::new();
+        let candidates = adapter.search_windows(&SearchQuery::default(), [0, window.0 as usize, 0]).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].platform_ref,
+            adapter.identify(window.0).unwrap().platform_ref.unwrap()
+        );
+        assert!(adapter.capabilities().contains(&"wait"));
     }
 
     #[test]
