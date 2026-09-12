@@ -1,8 +1,8 @@
 # macOS capture acquisition ownership
 
-Status: integration in progress. Live GPU verification remains blocked by Metal
-shared-event allocation on kiwi. This is not a completed acquisition rollout;
-live CPU acceptance also remains outstanding. The CPU host and reference clients
+Status: integration in progress. Metal shared-event allocation on kiwi recovered;
+native arena, XPC and isolated cross-process viewer tests now pass. Live desktop
+CPU/GPU acceptance remains outstanding, so this is not a completed rollout. The CPU host and reference clients
 now use the common arena; see [CPU integration](2026-09-12-cpu-acquisition-host.md).
 
 Porthole retains capture authority: source selection, Screen Recording permission
@@ -71,3 +71,8 @@ before and after a delay. `PORTHOLE_SMOKE_FRAMES` and `PORTHOLE_SMOKE_HOLD_MS`
 control its duration. It then closes the consumer and waits for producer drainage.
 This fixed-size fixture does not prove host resize, cross-process viewer behavior
 or long playback until those acceptance runs have actually been performed.
+
+
+The resumed runtime checks and their crash-quarantine limitation are recorded in
+Jackstay's `docs/design/acquisition-runtime-verification.md`. Generated test
+pixels exercise actual GPU work but do not substitute for the live capture runs.

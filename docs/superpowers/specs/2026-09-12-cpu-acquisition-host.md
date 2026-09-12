@@ -1,7 +1,7 @@
 # CPU capture acquisition integration
 
 The CPU capture host, recorder and Jackstay SDL viewer use the common arena.
-Porthole pins Jackstay `3fabbf1df40b75a04bc7c5546b6bbfae52e9c437` (C ABI 0.4).
+Porthole pins Jackstay `5f1029335ad148497108514e88344b34ed892385` (C ABI 0.5).
 This replaces per-frame socket requests, connection lease IDs and shadow-ring
 validation with setup followed by shared acquisition. A successful frame keeps
 its bytes and descriptor until release, including across history wrap, consumer
@@ -45,8 +45,8 @@ JACKSTAY_VIEWER=/path/to/jackstay/build/viewer/capture-viewer-sdl \
 
 These checks use synthetic frames and the in-memory adapter. They do not prove
 desktop capture, long playback or GPU completion. Live CPU and native acceptance
-remain outstanding. The standalone in-process Jackstay producer/consumer API
-still needs migration, and process-wide graceful daemon drainage remains open.
+remain outstanding. Jackstay's standalone CPU producer and viewer now use the
+common arena too; process-wide graceful daemon drainage remains open.
 
 Workspace build, non-ignored tests, all-target Clippy and pinned formatting pass
 on macOS and paneer Linux against the immutable Jackstay pin above. The SDL
