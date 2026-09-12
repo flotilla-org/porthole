@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the reference viewer from the exact Jackstay revision Cargo resolves."""
+import hashlib
 import json
 import platform
 from pathlib import Path
@@ -20,7 +21,11 @@ def main():
     manifest = Path(packages[0]['manifest_path'])
     source_root = manifest.parent.parent.parent
     target = Path(metadata['target_directory'])
-    library_target = target / 'jackstay'
+    # Git revisions share a package name/version and unversioned dylib name.
+    # Keep their build outputs separate so a pin change cannot reuse another
+    # revision's library while CMake compiles against the new headers.
+    package_key = hashlib.sha256(packages[0]['id'].encode()).hexdigest()[:16]
+    library_target = target / 'jackstay' / package_key
     build = ['cargo', 'build', '--manifest-path', str(manifest), '--locked',
              '--target-dir', str(library_target)]
     if system == 'Darwin':
