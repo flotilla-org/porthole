@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
-jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "19f3b40727c438338b6dcc2862e13ea07c6de0f3" }
+jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "7029ae5dca6d12332ddedf27c355b9fa91b9af9a" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"

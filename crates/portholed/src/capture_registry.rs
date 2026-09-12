@@ -71,13 +71,13 @@ impl std::fmt::Debug for CaptureRegistry {
 struct CaptureRegistryInner {
     sessions: HashMap<String, CaptureSession>,
     next_consumer_id: u64,
-    /// Runtime objects (XPC server, SCK stream, producer) for active native
-    /// sessions, keyed by session id. Dropping a hold tears down its session.
+    /// Runtime owners for native sessions, including closing macOS sessions
+    /// whose consumer mappings or GPU work have not yet drained.
     #[cfg(target_os = "macos")]
     native_holds: HashMap<String, native_session::NativeSessionHold>,
     #[cfg(target_os = "linux")]
     native_holds: HashMap<String, native_session_linux::LinuxNativeSessionHold>,
-    /// Reserved while a native session is starting, before its hold exists.
+    /// Reserved across native startup, including its cancellable awaits.
     /// Collapses the one-session check-and-reserve into a single locked step
     /// so two concurrent native creates can't both pass the limit.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -559,6 +559,14 @@ impl CaptureRegistry {
 
     fn remove_session(&self, session_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
+            #[cfg(target_os = "macos")]
+            if let Some(hold) = inner.native_holds.get_mut(session_id) {
+                hold.close();
+                if let Some(session) = inner.sessions.get_mut(session_id) {
+                    session.lifecycle = CaptureSessionLifecycle::Closed("native capture is draining".to_owned());
+                }
+                return;
+            }
             inner.sessions.remove(session_id);
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             inner.native_holds.remove(session_id);
@@ -567,6 +575,14 @@ impl CaptureRegistry {
 
     pub fn close_session(&self, session_id: &str) -> Result<(), CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        #[cfg(target_os = "macos")]
+        if let Some(hold) = inner.native_holds.get_mut(session_id) {
+            hold.close();
+            if let Some(session) = inner.sessions.get_mut(session_id) {
+                session.lifecycle = CaptureSessionLifecycle::Closed("native capture is draining".to_owned());
+            }
+            return Ok(());
+        }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         inner.native_holds.remove(session_id);
         inner
@@ -703,7 +719,7 @@ impl CaptureRegistry {
         } else {
             self.fd_socket_path()?
         };
-        Ok(CaptureSessionResponse {
+        let response = CaptureSessionResponse {
             session_id: session_id.to_string(),
             source_id: session.source_id.get(),
             track_id: session.track_id.get(),
@@ -715,7 +731,21 @@ impl CaptureRegistry {
             pixel_format: pixel_format_name(session.pixel_format).to_string(),
             fd_socket_path,
             native,
-        })
+        };
+        #[cfg(target_os = "macos")]
+        let response = if let Some(hold) = inner.native_holds.get(session_id) {
+            let snapshot = hold.snapshot();
+            CaptureSessionResponse {
+                status: snapshot.status.to_owned(),
+                status_message: snapshot.message,
+                width: snapshot.width,
+                height: snapshot.height,
+                ..response
+            }
+        } else {
+            response
+        };
+        Ok(response)
     }
 
     fn allocate_consumer_id(&self) -> Result<ConsumerId, CaptureRegistryError> {

@@ -857,7 +857,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jackstay"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=19f3b40727c438338b6dcc2862e13ea07c6de0f3#19f3b40727c438338b6dcc2862e13ea07c6de0f3"
+source = "git+https://github.com/flotilla-org/jackstay?rev=7029ae5dca6d12332ddedf27c355b9fa91b9af9a#7029ae5dca6d12332ddedf27c355b9fa91b9af9a"
 dependencies = [
  "cc",
  "libc",
