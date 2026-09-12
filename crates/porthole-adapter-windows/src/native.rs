@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     io::Cursor,
     mem::{size_of, zeroed},
+    os::windows::io::{AsHandle, AsRawHandle, FromRawHandle},
     process::{Command, Stdio},
     ptr::null_mut,
     sync::{Arc, Mutex},
@@ -26,7 +27,7 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     Storage::Xps::PrintWindow,
-    System::{RemoteDesktop::ProcessIdToSessionId, StationsAndDesktops::*, Threading::*},
+    System::{Diagnostics::ToolHelp::*, RemoteDesktop::ProcessIdToSessionId, StationsAndDesktops::*, Threading::*},
     UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
@@ -331,6 +332,158 @@ fn keyboard(vk: u16, scan: u16, flags: u32) -> INPUT {
     }
 }
 
+// Keep every verified process object alive for the entire launch observation.
+// A PID/parent-PID snapshot alone is not an identity: the parent may have exited
+// and its PID may already belong to an unrelated process.
+struct LaunchProcess {
+    handle: std::os::windows::io::OwnedHandle,
+    created: u64,
+}
+
+fn filetime(value: FILETIME) -> u64 {
+    (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime)
+}
+
+fn process_times(handle: HANDLE) -> Result<(u64, u64)> {
+    unsafe {
+        let (mut created, mut exited, mut kernel, mut user) = (zeroed(), zeroed(), zeroed(), zeroed());
+        if GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) == 0 {
+            return Err(failure(ErrorCode::LaunchCorrelationFailed, "read launch process identity"));
+        }
+        Ok((filetime(created), filetime(exited)))
+    }
+}
+
+impl LaunchProcess {
+    fn new(handle: std::os::windows::io::OwnedHandle) -> Result<Self> {
+        let created = process_times(handle.as_raw_handle())?.0;
+        Ok(Self { handle, created })
+    }
+
+    fn alive(&self) -> bool {
+        unsafe { WaitForSingleObject(self.handle.as_raw_handle(), 0) == WAIT_TIMEOUT }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProcessLink {
+    pid: u32,
+    parent: u32,
+}
+
+// The snapshot's parent link is usable only for the process incarnation that
+// existed before the snapshot started. A later OpenProcess must not resolve a
+// recycled child PID. Equal timestamps cannot prove ordering, so fail closed.
+fn valid_birth(parent_created: u64, parent_exited: u64, child_created: u64, snapshot_started: u64) -> bool {
+    parent_created < child_created && child_created < snapshot_started && (parent_exited == 0 || child_created < parent_exited)
+}
+
+fn process_links() -> Result<(u64, Vec<ProcessLink>)> {
+    unsafe {
+        let mut now = zeroed();
+        windows_sys::Win32::System::SystemInformation::GetSystemTimePreciseAsFileTime(&mut now);
+        let raw = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if raw == INVALID_HANDLE_VALUE {
+            return Err(failure(ErrorCode::LaunchCorrelationFailed, "snapshot launch descendants"));
+        }
+        let snapshot = std::os::windows::io::OwnedHandle::from_raw_handle(raw);
+        let mut entry: PROCESSENTRY32W = zeroed();
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut links = Vec::new();
+        let mut ok = Process32FirstW(snapshot.as_raw_handle(), &mut entry);
+        while ok != 0 {
+            links.push(ProcessLink {
+                pid: entry.th32ProcessID,
+                parent: entry.th32ParentProcessID,
+            });
+            ok = Process32NextW(snapshot.as_raw_handle(), &mut entry);
+        }
+        if GetLastError() != ERROR_NO_MORE_FILES {
+            return Err(failure(ErrorCode::LaunchCorrelationFailed, "enumerate launch descendants"));
+        }
+        Ok((filetime(now), links))
+    }
+}
+
+struct LaunchTree {
+    processes: HashMap<u32, LaunchProcess>,
+}
+
+impl LaunchTree {
+    fn new(child: &std::process::Child) -> Result<Self> {
+        // Clone the original spawn handle, never reopen the root by numeric PID.
+        let handle = child
+            .as_handle()
+            .try_clone_to_owned()
+            .map_err(|e| PortholeError::new(ErrorCode::LaunchCorrelationFailed, format!("retain launch process: {e}")))?;
+        Ok(Self {
+            processes: HashMap::from([(child.id(), LaunchProcess::new(handle)?)]),
+        })
+    }
+
+    fn discover(&mut self) -> Result<()> {
+        let (started, links) = process_links()?;
+        self.observe(started, &links)
+    }
+
+    fn observe(&mut self, started: u64, links: &[ProcessLink]) -> Result<()> {
+        // Repeat over one snapshot so enumeration order cannot lose grandchildren.
+        loop {
+            let mut added = false;
+            for link in links {
+                if self.processes.contains_key(&link.pid) {
+                    continue;
+                }
+                let Some(parent) = self.processes.get(&link.parent) else { continue };
+                let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, 0, link.pid) };
+                if raw.is_null() {
+                    // An inaccessible or already-reaped child cannot be proven ours.
+                    continue;
+                }
+                let handle = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(raw) };
+                let Ok(child) = LaunchProcess::new(handle) else { continue };
+                // Query after opening the child, including a parent's recorded exit.
+                let (_, exited) = process_times(parent.handle.as_raw_handle())?;
+                if valid_birth(parent.created, exited, child.created, started) {
+                    self.processes.insert(link.pid, child);
+                    added = true;
+                }
+            }
+            if !added {
+                return Ok(());
+            }
+        }
+    }
+
+    fn owns_window(&self, hwnd: usize) -> bool {
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd as HWND, &mut pid);
+        }
+        self.processes.get(&pid).is_some_and(LaunchProcess::alive)
+    }
+
+    fn unique_window(&self, handles: impl IntoIterator<Item = usize>) -> Result<Option<usize>> {
+        let mut owned = handles.into_iter().filter(|&hwnd| self.owns_window(hwnd));
+        let first = owned.next();
+        if owned.next().is_some() {
+            return Err(PortholeError::new(
+                ErrorCode::LaunchCorrelationAmbiguous,
+                "launch process tree owns multiple visible windows; refusing to choose",
+            ));
+        }
+        Ok(first)
+    }
+}
+
+fn launch_candidate(candidate: Result<SurfaceInfo>) -> Result<Option<SurfaceInfo>> {
+    match candidate {
+        Ok(surface) => Ok(Some(surface)),
+        Err(error) if error.code == ErrorCode::SurfaceDead => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn spawn_process(spec: &ProcessLaunchSpec) -> Result<std::process::Child> {
     let mut command = Command::new(&spec.app);
     command
@@ -354,48 +507,50 @@ impl Adapter for WindowsAdapter {
     }
     async fn launch_process(&self, spec: &ProcessLaunchSpec) -> Result<LaunchOutcome> {
         self.desktop()?;
-        let mut child = spawn_process(spec)?;
+        let child = spawn_process(spec)?;
         let pid = child.id();
+        let mut tree = LaunchTree::new(&child)?;
         let deadline = Instant::now() + spec.timeout;
         loop {
-            let owned: Vec<_> = windows()?
-                .into_iter()
-                .filter(|&hwnd| unsafe {
-                    let mut owner = 0;
-                    GetWindowThreadProcessId(hwnd as HWND, &mut owner);
-                    owner == pid
-                })
-                .collect();
-            if owned.len() > 1 {
-                return Err(PortholeError::new(
-                    ErrorCode::LaunchCorrelationAmbiguous,
-                    format!("process {pid} owns multiple visible windows; refusing to choose"),
-                ));
-            }
-            if let Some(hwnd) = owned.first() {
-                return Ok(LaunchOutcome {
-                    surface: self.identify(*hwnd as HWND)?,
-                    confidence: Confidence::Strong,
-                    correlation: Correlation::PidTree,
-                    surface_was_preexisting: false,
+            self.desktop()?;
+            tree.discover()?;
+            if let Some(hwnd) = tree.unique_window(windows()?)? {
+                // A startup window may disappear between enumeration, marking,
+                // and cookie validation. Retry only SurfaceDead; permission and
+                // other failures still abort. Fall through to the deadline and
+                // sleep below even when candidates repeatedly disappear.
+                let candidate = self.identify(hwnd as HWND).and_then(|surface| {
+                    self.resolve(&surface)?;
+                    Ok(surface)
                 });
+                if let Some(surface) = launch_candidate(candidate)?
+                    && tree.owns_window(hwnd)
+                    && unsafe { IsWindowVisible(hwnd as HWND) != 0 && GetWindow(hwnd as HWND, GW_OWNER).is_null() }
+                {
+                    return Ok(LaunchOutcome {
+                        surface,
+                        confidence: Confidence::Strong,
+                        correlation: Correlation::PidTree,
+                        surface_was_preexisting: false,
+                    });
+                }
             }
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|e| PortholeError::new(ErrorCode::LaunchCorrelationFailed, e.to_string()))?
-            {
-                return Err(PortholeError::new(
-                    ErrorCode::LaunchCorrelationFailed,
-                    format!("process {pid} exited ({status}) without an owned window; brokered launches are unsupported"),
-                ));
-            }
+            // An exited wrapper does not end the launch window: a verified child
+            // can still create its UI, or appear in the next process snapshot.
             if Instant::now() >= deadline {
+                let alive = tree.processes.values().any(LaunchProcess::alive);
                 return Err(PortholeError::new(
-                    ErrorCode::LaunchTimeout,
-                    format!("process {pid} has no unique visible window before deadline; process is left running"),
+                    if alive {
+                        ErrorCode::LaunchTimeout
+                    } else {
+                        ErrorCode::LaunchCorrelationFailed
+                    },
+                    format!(
+                        "process {pid} and verified descendants have no unique visible window before deadline; brokered windows are unsupported; processes are left running"
+                    ),
                 ));
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now()))).await;
         }
     }
     async fn screenshot(&self, surface: &SurfaceInfo) -> Result<Screenshot> {
@@ -875,3 +1030,7 @@ mod tests {
         assert_eq!(adapter.close(&surface).await.unwrap_err().code, ErrorCode::SurfaceDead);
     }
 }
+
+#[cfg(test)]
+#[path = "launch_tests.rs"]
+mod launch_tests;
