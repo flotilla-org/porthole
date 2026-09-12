@@ -17,6 +17,20 @@ fn creation_times_reject_recycled_parent_and_child_links() {
     assert!(!valid_birth(100, 0, 300, 300));
 }
 
+#[test]
+fn disappearing_launch_candidates_retry_but_permission_failures_abort() {
+    let adapter = WindowsAdapter::new();
+    assert!(launch_candidate(adapter.identify(null_mut())).unwrap().is_none());
+    let window = HiddenWindow::new();
+    let surface = adapter.identify(window.0).unwrap();
+    assert!(launch_candidate(Ok(surface.clone())).unwrap().is_some());
+    drop(window);
+    let stale = adapter.resolve(&surface).map(|_| surface);
+    assert!(launch_candidate(stale).unwrap().is_none());
+    let denied = PortholeError::new(ErrorCode::SystemPermissionNeeded, "permission required");
+    assert_eq!(launch_candidate(Err(denied)).unwrap_err().code, ErrorCode::SystemPermissionNeeded);
+}
+
 const ROLE: &str = "PORTHOLE_CORRELATION_FIXTURE_ROLE";
 const DIRECTORY: &str = "PORTHOLE_CORRELATION_FIXTURE_DIRECTORY";
 

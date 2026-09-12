@@ -476,6 +476,14 @@ impl LaunchTree {
     }
 }
 
+fn launch_candidate(candidate: Result<SurfaceInfo>) -> Result<Option<SurfaceInfo>> {
+    match candidate {
+        Ok(surface) => Ok(Some(surface)),
+        Err(error) if error.code == ErrorCode::SurfaceDead => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 fn spawn_process(spec: &ProcessLaunchSpec) -> Result<std::process::Child> {
     let mut command = Command::new(&spec.app);
     command
@@ -507,11 +515,18 @@ impl Adapter for WindowsAdapter {
             self.desktop()?;
             tree.discover()?;
             if let Some(hwnd) = tree.unique_window(windows()?)? {
-                let surface = self.identify(hwnd as HWND)?;
-                // Retain cookie validation and recheck ownership/visibility after
-                // identification, in case a candidate disappeared during polling.
-                self.resolve(&surface)?;
-                if tree.owns_window(hwnd) && unsafe { IsWindowVisible(hwnd as HWND) != 0 && GetWindow(hwnd as HWND, GW_OWNER).is_null() } {
+                // A startup window may disappear between enumeration, marking,
+                // and cookie validation. Retry only SurfaceDead; permission and
+                // other failures still abort. Fall through to the deadline and
+                // sleep below even when candidates repeatedly disappear.
+                let candidate = self.identify(hwnd as HWND).and_then(|surface| {
+                    self.resolve(&surface)?;
+                    Ok(surface)
+                });
+                if let Some(surface) = launch_candidate(candidate)?
+                    && tree.owns_window(hwnd)
+                    && unsafe { IsWindowVisible(hwnd as HWND) != 0 && GetWindow(hwnd as HWND, GW_OWNER).is_null() }
+                {
                     return Ok(LaunchOutcome {
                         surface,
                         confidence: Confidence::Strong,
