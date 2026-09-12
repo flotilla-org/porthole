@@ -46,8 +46,9 @@ JACKSTAY_VIEWER=/path/to/jackstay/build/viewer/capture-viewer-sdl \
 ```
 
 These checks use synthetic frames and the in-memory adapter. They do not prove
-desktop capture, long playback or GPU completion. Live CPU and native acceptance
-remain outstanding. Jackstay's standalone CPU producer and viewer now use the
+desktop capture, long playback or GPU completion. Separate live CPU and native
+long-playback and delayed-consumer checks now pass; live resize remains pending.
+See [live acceptance](../../../2026-09-12-live-acquisition-acceptance.md). Jackstay's standalone CPU producer and viewer now use the
 common arena too; process-wide graceful daemon drainage remains open.
 
 Workspace build, non-ignored tests, all-target Clippy and pinned formatting pass
