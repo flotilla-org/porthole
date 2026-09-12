@@ -1,7 +1,7 @@
 # CPU capture acquisition integration
 
 The CPU capture host, recorder and Jackstay SDL viewer use the common arena.
-Porthole pins Jackstay `5f1029335ad148497108514e88344b34ed892385` (C ABI 0.5).
+Porthole pins Jackstay `f482a5ca1c0c0a3831d3b4774dc8b7110c4581eb` (C ABI 0.5).
 This replaces per-frame socket requests, connection lease IDs and shadow-ring
 validation with setup followed by shared acquisition. A successful frame keeps
 its bytes and descriptor until release, including across history wrap, consumer
@@ -35,8 +35,10 @@ configuration replacement through the common C API.
 
 Focused tests cover authorization, history wrap, independent duplicate holds,
 restart, paused replacement, startup cancellation, failure status and recorder
-waits. `cpu_viewer_e2e` runs two child viewers, each presenting 60 synthetic frames,
-then checks host retirement. Run it after building Jackstay's viewer:
+waits. `cpu_viewer_e2e` runs a child viewer presenting 60 synthetic frames,
+then a fresh process presenting eight frames with a 250 ms hold per frame while
+the host keeps publishing. The viewer checks held bytes before and after each
+delay. The test then checks host retirement. Run it after building Jackstay's viewer:
 
 ```sh
 JACKSTAY_VIEWER=/path/to/jackstay/build/viewer/capture-viewer-sdl \
@@ -52,5 +54,6 @@ Workspace build, non-ignored tests, all-target Clippy and pinned formatting pass
 on macOS and paneer Linux against the immutable Jackstay pin above. The SDL
 end-to-end check passes on macOS. Linux's SDL check still needs its build
 dependencies; Linux Rust tests do not establish viewer playback. Local test logs
-are `/tmp/porthole-cpu-session-final-tests.log` and, on paneer,
-`/tmp/porthole-cpu-acquisition-linux-tests.log`.
+are `/tmp/porthole-delayed-acquisition-tests.log` and, on paneer,
+`/tmp/porthole-delayed-acquisition-linux-tests.log`. The delayed CPU viewer run
+is recorded in `/tmp/porthole-delayed-cpu-viewer.log`.

@@ -30,7 +30,8 @@ async fn cpu_reference_viewer_reads_host_session_and_disconnects_cleanly() {
         .unwrap();
     // Run twice: process restart must negotiate a fresh incarnation and leave
     // no old holding reservation that prevents the next viewer from starting.
-    for _ in 0..2 {
+    // The second process holds each frame while the host keeps publishing.
+    for (frames, hold_ms) in [("60", "0"), ("8", "250")] {
         let mut command = tokio::process::Command::new(&viewer);
         command
             .env("SDL_VIDEODRIVER", "dummy")
@@ -38,7 +39,7 @@ async fn cpu_reference_viewer_reads_host_session_and_disconnects_cleanly() {
             .arg(&socket)
             .arg("--session-id")
             .arg(&created.session_id)
-            .args(["--frames", "60"])
+            .args(["--frames", frames, "--hold-ms", hold_ms])
             .kill_on_drop(true);
         let output = tokio::time::timeout(Duration::from_secs(15), command.output())
             .await
@@ -49,7 +50,7 @@ async fn cpu_reference_viewer_reads_host_session_and_disconnects_cleanly() {
             "viewer failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("acquired_frames=60"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains(&format!("acquired_frames={frames}")));
     }
     client
         .delete_empty(&format!("/capture-sessions/{}", created.session_id))
