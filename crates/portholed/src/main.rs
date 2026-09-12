@@ -73,7 +73,12 @@ fn build_adapter() -> LinuxAdapterBuild {
     (Arc::new(porthole_core::in_memory::InMemoryAdapter::new()), None)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
+    Arc::new(porthole_adapter_windows::WindowsAdapter::new())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
     tracing::warn!("no native adapter for this platform; falling back to in-memory adapter");
     Arc::new(porthole_core::in_memory::InMemoryAdapter::new())

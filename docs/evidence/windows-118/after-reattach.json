@@ -1,0 +1,33 @@
+{
+  "session": {
+    "id": "agent",
+    "state": "running",
+    "vt_engine": "ghostty",
+    "vt_engine_status": "functional",
+    "functional_vt_available": true,
+    "cwd": "C:\\dev\\porthole-118-run5",
+    "cmd": "C:\\dev\\porthole-118-run5\\agent.cmd",
+    "tags": [
+      "project=porthole",
+      "purpose=agent"
+    ]
+  },
+  "terminal": {
+    "rows": 45,
+    "cols": 160
+  },
+  "process": {
+    "leader_pid": 1660,
+    "foreground_pgid": null
+  },
+  "attachments": [
+    {
+      "role": "controller"
+    }
+  ],
+  "recording": {
+    "active": true,
+    "bytes_written": 503410,
+    "markers": {}
+  }
+}

@@ -45,6 +45,9 @@ porthole-adapter-kwin = { path = "../porthole-adapter-kwin" }
 jackstay = { workspace = true, features = ["backend-linux"] }
 zbus = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+porthole-adapter-windows = { path = "../porthole-adapter-windows" }
+
 [dev-dependencies]
 tempfile = "3"
 porthole = { path = "../porthole" }

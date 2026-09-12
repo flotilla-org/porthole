@@ -2,8 +2,8 @@
 
 Porthole exposes a local HTTP API for inspecting and driving desktop windows from
 test harnesses and orchestration tools. It has macOS and KWin/Plasma Wayland
-adapters. Windows has a named-pipe control plane; real Windows desktop operations
-are an active milestone. Consumers include terminal-emulator test harnesses and
+adapters. Windows has a named-pipe control plane and native process launch,
+focus, keyboard input and one-shot screenshot operations. Consumers include terminal-emulator test harnesses and
 flotilla's desktop agent workflows.
 
 The current plan extracts Jackstay as an independent 0.x library and verifies one
@@ -46,7 +46,7 @@ _Avoid_: CGWindowID, window id, native id.
 
 **Platform adapter**:
 The crate that implements porthole's surface operations against a specific OS.
-The macOS and KWin adapters exist; Windows desktop operations are planned and
+The macOS, KWin and Windows adapters exist; broader Windows operations and
 Hyprland remains a later target. The porthole-core API defines the shared surface
 contract; adapters report unsupported operations explicitly.
 _Avoid_: backend, driver.

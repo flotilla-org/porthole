@@ -10,6 +10,17 @@ pub struct WindowRecord {
 
 #[cfg(target_os = "macos")]
 pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
+    enumerate_windows(true)
+}
+
+/// Include minimized/off-screen windows when deciding whether a launch is fresh.
+#[cfg(target_os = "macos")]
+pub(crate) fn list_all_windows() -> Result<Vec<WindowRecord>, PortholeError> {
+    enumerate_windows(false)
+}
+
+#[cfg(target_os = "macos")]
+fn enumerate_windows(on_screen_only: bool) -> Result<Vec<WindowRecord>, PortholeError> {
     use core_foundation::{
         base::{CFType, TCFType},
         dictionary::{CFDictionary, CFDictionaryRef},
@@ -21,7 +32,7 @@ pub fn list_windows() -> Result<Vec<WindowRecord>, PortholeError> {
         kCGWindowName, kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
     };
 
-    let opts = kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements;
+    let opts = kCGWindowListExcludeDesktopElements | if on_screen_only { kCGWindowListOptionOnScreenOnly } else { 0 };
     let arr = match copy_window_info(opts, kCGNullWindowID) {
         Some(a) => a,
         None => {

@@ -343,7 +343,6 @@ mod tests {
     };
     use porthole_protocol::{
         agent_permissions::{AgentPermissionNeededDetails, AgentPermissionTarget},
-        capture_sessions::CreateCaptureSessionResponse,
         error::WireError,
         input::TextResponse,
     };
@@ -610,9 +609,20 @@ mod tests {
         )
         .await;
 
-        assert_eq!(status, StatusCode::OK);
-        let created: CreateCaptureSessionResponse = serde_json::from_value(body).unwrap();
-        assert_eq!(created.track_id, 1);
+        #[cfg(unix)]
+        {
+            assert_eq!(status, StatusCode::OK);
+            let created: porthole_protocol::capture_sessions::CreateCaptureSessionResponse = serde_json::from_value(body).unwrap();
+            assert_eq!(created.track_id, 1);
+        }
+        #[cfg(windows)]
+        {
+            // Authorization succeeds, then the capture implementation reports
+            // its actual platform limitation. This must not remain a grant error.
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            let err: WireError = serde_json::from_value(body).unwrap();
+            assert_eq!(err.code, ErrorCode::AdapterUnsupported);
+        }
     }
 
     #[tokio::test]

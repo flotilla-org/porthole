@@ -148,6 +148,14 @@ resolves the exact revision from Cargo metadata, builds its library and
 viewer, and writes the result into porthole's target directory. It works with the
 pinned Git source or an explicit local Cargo patch.
 
+Library builds are cached separately under `target/jackstay/<package-key>/` for
+each resolved dependency identity. These directories can grow as pins change.
+After stopping viewers that use this target directory, remove its `jackstay/`
+subdirectory to reclaim those caches, then rerun the helper before using the
+viewer again. Substitute the configured Cargo target directory if you use
+`CARGO_TARGET_DIR`. The helper does not prune automatically because another
+viewer may still be linked to an older revision.
+
 ```sh
 cargo build -p porthole -p portholed --locked
 python3 scripts/build-jackstay-viewer.py

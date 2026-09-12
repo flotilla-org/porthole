@@ -114,6 +114,9 @@ fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
         CaptureRegistryError::Poisoned | CaptureRegistryError::Io(_) => ErrorCode::InternalError,
         CaptureRegistryError::Failed { .. } => ErrorCode::InternalError,
         CaptureRegistryError::NotReady { .. } | CaptureRegistryError::Closed { .. } => ErrorCode::InvalidArgument,
+        // Windows has no capture-transfer transport yet; a valid request is
+        // unsupported, rather than malformed.
+        CaptureRegistryError::FdSocketDisabled if cfg!(windows) => ErrorCode::AdapterUnsupported,
         CaptureRegistryError::FdSocketDisabled | CaptureRegistryError::Capture(_) => ErrorCode::InvalidArgument,
     };
     ApiError(PortholeError::new(code, error.to_string()).into())

@@ -310,6 +310,11 @@ pub trait Adapter: Send + Sync {
 
     async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
 
+    /// Reject unsupported wait conditions before entering the timeout-only polling API.
+    fn validate_wait(&self, _condition: &WaitCondition) -> Result<(), PortholeError> {
+        Ok(())
+    }
+
     /// Wait until the condition is satisfied, or `deadline` passes.
     ///
     /// Returns:

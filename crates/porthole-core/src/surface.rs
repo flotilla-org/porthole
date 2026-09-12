@@ -60,6 +60,7 @@ pub enum SurfaceState {
 pub enum PlatformSurfaceRef {
     Macos { cg_window_id: u32 },
     Kwin { window_id: String },
+    Windows { hwnd: u64, window_cookie: u64 },
 }
 
 impl PlatformSurfaceRef {
@@ -76,7 +77,7 @@ impl PlatformSurfaceRef {
     pub fn as_macos_cg_window_id(&self) -> Option<u32> {
         match self {
             Self::Macos { cg_window_id } => Some(*cg_window_id),
-            Self::Kwin { .. } => None,
+            Self::Kwin { .. } | Self::Windows { .. } => None,
         }
     }
 }
@@ -152,5 +153,23 @@ mod tests {
         let json = serde_json::to_string(&value).unwrap();
         assert!(json.contains("\"platform\":\"macos\""));
         assert_eq!(serde_json::from_str::<PlatformSurfaceRef>(&json).unwrap(), value);
+    }
+
+    #[test]
+    fn windows_ref_preserves_full_identity_through_candidate_encoding() {
+        let value = PlatformSurfaceRef::Windows {
+            hwnd: 0x123456789,
+            window_cookie: u64::MAX,
+        };
+        let encoded = crate::search::encode_ref(123, value.clone());
+        assert_eq!(crate::search::decode_ref(&encoded).unwrap(), (123, value.clone()));
+        assert_eq!(value.as_macos_cg_window_id(), None);
+        assert_ne!(
+            value,
+            PlatformSurfaceRef::Windows {
+                hwnd: 0x123456789,
+                window_cookie: 1
+            }
+        );
     }
 }

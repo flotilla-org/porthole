@@ -36,6 +36,7 @@ impl WaitPipeline {
     ) -> Result<WaitOutcome, WaitPipelineError> {
         validate_condition(condition)?;
         let info = self.handles.require_alive(surface).await.map_err(WaitPipelineError::Porthole)?;
+        self.adapter.validate_wait(condition).map_err(WaitPipelineError::Porthole)?;
 
         // Preflight: check permissions before dispatching into the adapter.
         // Stable/Dirty conditions use frame-diff; TitleMatches needs window titles

@@ -1,6 +1,6 @@
 # Launch correlation: PID-descendant fallback
 
-**Status:** Spec.
+**Status:** Partially superseded by [the macOS native launch implementation](../../2026-09-07-macos-launch-correlation.md) for #89. The environment-tag baseline below is historical. Descendant and brokered-terminal correlation in #10 remains unimplemented.
 **Closes:** #10.
 **Author:** rjwittams.
 **Date:** 2026-04-27.

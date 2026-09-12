@@ -95,7 +95,10 @@ fn swift_build_uses_package_path_and_scratch_path() {
             "--product",
             "PortholeHelper",
             "--scratch-path",
-            "target/swift/PortholeHelper",
+            &std::path::Path::new("target")
+                .join("swift")
+                .join("PortholeHelper")
+                .to_string_lossy(),
             "-c",
             "debug",
         ]
@@ -113,7 +116,10 @@ fn swift_build_release_uses_release_configuration() {
             "--product",
             "PortholeHelper",
             "--scratch-path",
-            "target/swift/PortholeHelper",
+            &std::path::Path::new("target")
+                .join("swift")
+                .join("PortholeHelper")
+                .to_string_lossy(),
             "-c",
             "release",
         ]

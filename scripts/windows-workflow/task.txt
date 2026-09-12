@@ -1,0 +1,22 @@
+You are the coding agent in this run's Porthole-launched GUI-session cleat.
+Read state.json for the CLI path. Do not read, print, or copy identity.json or
+print your environment; PORTHOLE_AGENT_TOKEN is already provisioned for you.
+
+Using the actual Porthole CLI and your existing token, launch the repository's
+built desktop_fixture.exe supplied by the operator. Require a fresh surface and
+save the JSON launch response to editor-launch.json. Do not substitute an
+existing window. If Porthole reports agent_permission_needed, report the request
+and wait for the operator to approve it, then retry that operation. Never use
+Porthole's agents create/approve/grant commands yourself.
+
+Focus the editor, type exactly "Porthole on Windows: input from the cleat agent."
+and save a screenshot to editor.png. Report the path so the operator can inspect
+it. Leave the editor open for the detach/reattach check. After the operator
+reattaches and tells you to continue, type a second line "Same agent after
+reattach." and save editor-reattached.png, then close only your recorded editor
+surface through Porthole. Report each actual result and any blocked step.
+
+Missing OS consent, foreground activation denial, sandbox issues, or an
+unavailable desktop are blockers to report. Do not change security policies,
+install tools, select another desktop, retry until a failure disappears, or
+replace this session. No other user's windows or sessions belong to this test.
