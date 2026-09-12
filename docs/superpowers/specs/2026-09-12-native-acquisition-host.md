@@ -3,7 +3,7 @@
 Status: integration in progress. Metal shared-event allocation on kiwi recovered;
 native arena, XPC and isolated cross-process viewer tests now pass. Live CPU/GPU
 long playback and delayed consumers also pass; host resize acceptance remains
-pending. See [live acceptance](../../../2026-09-12-live-acquisition-acceptance.md). The CPU host and reference clients
+pending. See [live acceptance](../../2026-09-12-live-acquisition-acceptance.md). The CPU host and reference clients
 now use the common arena; see [CPU integration](2026-09-12-cpu-acquisition-host.md).
 
 Porthole retains capture authority: source selection, Screen Recording permission
