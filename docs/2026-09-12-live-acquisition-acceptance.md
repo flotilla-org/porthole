@@ -39,9 +39,20 @@ native service reservation for this run.
 Porthole's attempt to resize Simulator from 456×972 to 380×810 returned HTTP 501,
 `capability_missing`, with `AX refused position/size write: pos=0 size=-25200`.
 The restore request returned the same error. Capture dimensions remained 456×972;
-Accessibility was still granted. This is not a successful live reconfiguration
-check. Robert has been asked to resize the window manually; the fresh capture
-sessions remain available for that check.
+Accessibility was still granted. These AX writes did not establish a live
+reconfiguration check, and Robert was asked for a manual resize.
+
+Later, both replacement sessions adopted 912×1944 pixels. A screenshot reported
+the same 456×972 logical window bounds at scale 2, compared with scale 1 initially.
+The cause of the scale change was not established. Delayed viewers subsequently
+completed another 300 frames each at the larger format: CPU in 86.47 s and native
+in 79.90 s, with 250 ms holds and empty stderr. No further format transition was
+observed while those viewers were running. The remaining live check is a format
+transition with held consumer frames; the scale change before these viewers
+attached is weaker evidence.
+
+Afterward, both replacement sessions reached `closed`, and the dedicated test
+identity was revoked. No test viewers or capture sessions were left running.
 
 Budgeted replacement, pending GPU work and crash quarantine have separate
 fixture coverage in Jackstay. They do not substitute for live host resize.
@@ -57,7 +68,9 @@ Artifacts are in `/tmp/porthole-live-acquisition-qrl79wnm/`:
 - `acceptance-results.json`: exit status, frame counts, elapsed time and stderr.
 - `session-restart-results.json`: final retirement status of the first sessions.
 - `smoke-results.json`: successful viewer admission into replacement sessions.
-- `resize-results.json`: unchanged capture dimensions after rejected AX writes.
+- `resize-results.json`: the later 300-frame delayed viewer results.
+- `live-resize-transitions.json`: the larger format observed during those runs.
+- `final-cleanup.json`: closed status after the larger-format runs.
 - `simulator-before.png`, `cpu-viewer.png`, `native-viewer.png`: observed content.
 
 The directory also contains private test credentials and native attach tokens;
