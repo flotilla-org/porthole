@@ -7,44 +7,62 @@ use std::{
 };
 #[cfg(unix)]
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::{BufRead, BufReader, Write},
-    os::{
-        fd::AsRawFd,
-        unix::net::{UnixListener, UnixStream},
-    },
+    io::{Read, Write},
+    os::unix::net::{UnixListener, UnixStream},
     thread,
 };
 
 #[cfg(unix)]
-use jackstay::{
-    fdpass,
-    transfer_channel::{CaptureTransferMessage, CaptureTransferRequest},
-};
+use jackstay::acquisition::arena::{FrameDescriptor, PublishOutcome};
 use jackstay::{
     model::{
         ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
         VideoTrackDesc,
     },
     state::SessionState,
-    video::{AcquiredVideoFrame, ConsumerId, OrderedVideoAcquire, VideoControlPageRegistration, VideoFrameDesc, VideoSlotManager},
 };
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{
         Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
-        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind, VideoCaptureTimestampClock,
+        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureTimestampClock,
     },
     agent_policy::AgentId,
     surface::SurfaceInfo,
 };
-use porthole_protocol::capture_sessions::{
-    CaptureSessionResponse, CreateCaptureSessionResponse, LatestVideoFrameRequest, LatestVideoFrameResponse,
-};
+use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
 use uuid::Uuid;
 
 use crate::agent_store::AgentPolicyStore;
 
+#[cfg(unix)]
+mod cpu_session;
+
+/// An HTTP create future can be dropped at either adapter startup or the first
+/// frame await. Keep teardown armed until ownership is handed to the caller.
+#[cfg(unix)]
+struct CpuStartup {
+    registry: CaptureRegistry,
+    session_id: Option<String>,
+}
+
+#[cfg(unix)]
+impl Drop for CpuStartup {
+    fn drop(&mut self) {
+        if let Some(id) = &self.session_id
+            && let Ok(mut inner) = self.registry.inner.lock()
+            && let Some(session) = inner.sessions.get_mut(id)
+        {
+            session.stop_capture();
+            if matches!(
+                session.lifecycle,
+                CaptureSessionLifecycle::Starting | CaptureSessionLifecycle::Ready
+            ) {
+                session.lifecycle = CaptureSessionLifecycle::Closed("capture startup cancelled".to_owned());
+            }
+        }
+    }
+}
 #[cfg(target_os = "macos")]
 mod native_session;
 #[cfg(target_os = "linux")]
@@ -70,7 +88,6 @@ impl std::fmt::Debug for CaptureRegistry {
 #[derive(Debug, Default)]
 struct CaptureRegistryInner {
     sessions: HashMap<String, CaptureSession>,
-    next_consumer_id: u64,
     /// Runtime owners for native sessions, including closing macOS sessions
     /// whose consumer mappings or GPU work have not yet drained.
     #[cfg(target_os = "macos")]
@@ -94,19 +111,29 @@ struct CaptureSession {
     height: u32,
     stride: u32,
     pixel_format: PixelFormat,
-    video: VideoSlotManager,
+    #[cfg(unix)]
+    cpu: Option<cpu_session::CpuSession>,
     capture_task: Option<tokio::task::JoinHandle<()>>,
     startup_cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-impl Drop for CaptureSession {
-    fn drop(&mut self) {
+impl CaptureSession {
+    fn stop_capture(&mut self) {
+        #[cfg(unix)]
+        if let Some(cpu) = &self.cpu {
+            cpu.stop();
+        }
         if let Some(task) = self.capture_task.take() {
             task.abort();
         }
         if let Some(cancel) = self.startup_cancel.take() {
             let _ = cancel.send(());
         }
+    }
+}
+impl Drop for CaptureSession {
+    fn drop(&mut self) {
+        self.stop_capture();
     }
 }
 
@@ -136,6 +163,7 @@ impl CaptureSessionLifecycle {
     }
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FirstFrameInfo {
     width: u32,
@@ -144,6 +172,7 @@ struct FirstFrameInfo {
     pixel_format: PixelFormat,
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct RegistryVideoFramePublisher {
     registry: CaptureRegistry,
@@ -151,6 +180,7 @@ struct RegistryVideoFramePublisher {
     first_frame_tx: Mutex<Option<tokio::sync::oneshot::Sender<FirstFrameInfo>>>,
 }
 
+#[cfg(unix)]
 impl RegistryVideoFramePublisher {
     fn new(registry: CaptureRegistry, session_id: String, first_frame_tx: tokio::sync::oneshot::Sender<FirstFrameInfo>) -> Self {
         Self {
@@ -161,6 +191,7 @@ impl RegistryVideoFramePublisher {
     }
 }
 
+#[cfg(unix)]
 impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
     fn publish_frame(&self, frame: VideoCaptureFrameView<'_>) -> Result<(), PortholeError> {
         let mut inner = self
@@ -176,8 +207,17 @@ impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
         session.height = frame.metadata.height;
         session.stride = frame.metadata.stride;
         session.pixel_format = capture_pixel_format(frame.metadata.pixel_format);
-        publish_capture_frame_view_to_video(&mut session.video, session.track_id, frame)
+        if !matches!(
+            session.lifecycle,
+            CaptureSessionLifecycle::Starting | CaptureSessionLifecycle::Ready
+        ) {
+            return Err(PortholeError::new(ErrorCode::InternalError, "capture session is terminal"));
+        }
+        let outcome = publish_capture_frame_view(session.cpu.as_ref().expect("CPU session"), frame)
             .map_err(|error| PortholeError::new(ErrorCode::InternalError, error.to_string()))?;
+        if outcome == PublishOutcome::Dropped {
+            return Ok(());
+        }
         if !matches!(session.lifecycle, CaptureSessionLifecycle::Ready) {
             session.lifecycle = CaptureSessionLifecycle::Ready;
         }
@@ -206,6 +246,21 @@ impl CaptureRegistry {
             fd_socket_path: None,
             agent_store: None,
         }
+    }
+
+    #[cfg(not(unix))]
+    pub fn create_synthetic_session(&self) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        Err(CaptureRegistryError::FdSocketDisabled)
+    }
+
+    #[cfg(not(unix))]
+    pub async fn create_surface_session(
+        &self,
+        _adapter: Arc<dyn Adapter>,
+        _surface: SurfaceInfo,
+        _owner_agent_id: AgentId,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        Err(CaptureRegistryError::FdSocketDisabled)
     }
 
     #[must_use]
@@ -252,6 +307,7 @@ impl CaptureRegistry {
         })
     }
 
+    #[cfg(unix)]
     pub fn create_synthetic_session(&self) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
         let fd_socket_path = self.fd_socket_path()?;
         let session_id = Uuid::new_v4().to_string();
@@ -278,41 +334,22 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let mut video = VideoSlotManager::new_reusable_pool(3);
-        video
-            .publish(
-                track_id,
-                VideoFrameDesc {
-                    sequence: 1,
-                    // Synthetic sessions use 0 as an explicit timestamp sentinel.
-                    timestamp_ns: 0,
-                    width: 2,
-                    height: 1,
-                    stride: 8,
-                    pixel_format: PixelFormat::Bgra8Unorm,
-                    pool_id: 0,
-                    slot_id: 0,
-                    payload_offset: 0,
-                    payload_len: 0,
-                    payload_map_len: 0,
-                    clock_domain: ClockDomain::Unknown,
-                    color_space: ColorSpace::Unknown,
-                    sync_kind: FrameSyncKind::CpuCopyComplete,
-                    damage_kind: DamageKind::FullFrame,
-                    damage_base_sequence: 1,
-                    dropped_before_publish: 0,
-                    producer_drop_count: 0,
-                    evicted_count: 0,
-                    consumer_skipped_count: 0,
-                    payload_kind: PayloadKind::CpuShm,
-                    modifier: 0,
-                    fence_id: 0,
-                    fence_value: 0,
-                    flags: 0,
-                },
-                &[0, 64, 128, 255, 255, 64, 128, 255],
-            )
-            .map_err(CaptureRegistryError::from_capture)?;
+        let cpu = cpu_session::CpuSession::new()?;
+        cpu.publish(
+            FrameDescriptor {
+                sequence: 1,
+                width: 2,
+                height: 1,
+                stride: 8,
+                pixel_format: PixelFormat::Bgra8Unorm as u32,
+                sync_kind: FrameSyncKind::CpuCopyComplete as u32,
+                damage_kind: DamageKind::FullFrame as u32,
+                damage_base_sequence: 1,
+                payload_kind: PayloadKind::CpuShm as u32,
+                ..FrameDescriptor::default()
+            },
+            &[0, 64, 128, 255, 255, 64, 128, 255],
+        )?;
 
         let session = CaptureSession {
             source_id,
@@ -323,7 +360,7 @@ impl CaptureRegistry {
             height: 1,
             stride: 8,
             pixel_format: PixelFormat::Bgra8Unorm,
-            video,
+            cpu: Some(cpu),
             capture_task: None,
             startup_cancel: None,
         };
@@ -344,6 +381,7 @@ impl CaptureRegistry {
         })
     }
 
+    #[cfg(unix)]
     pub async fn create_surface_session(
         &self,
         adapter: Arc<dyn Adapter>,
@@ -363,6 +401,7 @@ impl CaptureRegistry {
             .await
     }
 
+    #[cfg(unix)]
     async fn create_surface_session_with_publisher(
         &self,
         adapter: Arc<dyn Adapter>,
@@ -401,13 +440,17 @@ impl CaptureRegistry {
                 height: 0,
                 stride: 0,
                 pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(3),
+                cpu: Some(cpu_session::CpuSession::new()?),
                 capture_task: None,
                 startup_cancel: Some(startup_cancel_tx),
             },
         );
 
         let (first_frame_tx, first_frame_rx) = tokio::sync::oneshot::channel();
+        let mut startup = CpuStartup {
+            registry: self.clone(),
+            session_id: Some(session_id.clone()),
+        };
         let publisher = Arc::new(RegistryVideoFramePublisher::new(self.clone(), session_id.clone(), first_frame_tx));
         let capture = match adapter.start_video_capture_publisher(&surface, publisher).await {
             Ok(capture) => capture,
@@ -426,6 +469,16 @@ impl CaptureRegistry {
                     message: "capture session closed during startup".to_string(),
                 });
             };
+            if !matches!(
+                session.lifecycle,
+                CaptureSessionLifecycle::Starting | CaptureSessionLifecycle::Ready
+            ) {
+                task.abort();
+                return Err(CaptureRegistryError::Closed {
+                    session_id,
+                    message: "capture session closed during startup".to_string(),
+                });
+            }
             session.capture_task = Some(task);
         }
 
@@ -450,16 +503,30 @@ impl CaptureRegistry {
             }
         };
 
-        self.inner
-            .lock()
-            .map_err(|_| CaptureRegistryError::Poisoned)?
-            .sessions
-            .get_mut(&session_id)
-            .ok_or_else(|| CaptureRegistryError::Closed {
+        {
+            let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+            let session = inner.sessions.get_mut(&session_id).ok_or_else(|| CaptureRegistryError::Closed {
                 session_id: session_id.clone(),
                 message: "capture session closed during startup".to_string(),
-            })?
-            .startup_cancel = None;
+            })?;
+            match &session.lifecycle {
+                CaptureSessionLifecycle::Failed(message) => {
+                    return Err(CaptureRegistryError::Failed {
+                        session_id: session_id.clone(),
+                        message: message.clone(),
+                    });
+                }
+                CaptureSessionLifecycle::Closed(message) => {
+                    return Err(CaptureRegistryError::Closed {
+                        session_id: session_id.clone(),
+                        message: message.clone(),
+                    });
+                }
+                _ => {}
+            }
+            session.startup_cancel = None;
+        }
+        startup.session_id = None;
         tracing::debug!(
             session_id = %session_id,
             width = first_frame.width,
@@ -480,6 +547,7 @@ impl CaptureRegistry {
         })
     }
 
+    #[cfg(unix)]
     async fn create_surface_session_with_owned_frames(
         &self,
         adapter: Arc<dyn Adapter>,
@@ -522,8 +590,8 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let mut video = VideoSlotManager::new_reusable_pool(3);
-        publish_capture_frame_to_video(&mut video, track_id, &first_frame)?;
+        let cpu = cpu_session::CpuSession::new()?;
+        publish_capture_frame_view(&cpu, first_frame.as_view())?;
 
         let task = tokio::spawn(run_capture_session_monitor(self.clone(), session_id.clone(), capture));
 
@@ -536,7 +604,7 @@ impl CaptureRegistry {
             height: first_frame.height,
             stride: first_frame.stride,
             pixel_format,
-            video,
+            cpu: Some(cpu),
             capture_task: Some(task),
             startup_cancel: None,
         };
@@ -567,6 +635,14 @@ impl CaptureRegistry {
                 }
                 return;
             }
+            #[cfg(unix)]
+            if let Some(session) = inner.sessions.get_mut(session_id)
+                && session.cpu.is_some()
+            {
+                session.stop_capture();
+                session.lifecycle = CaptureSessionLifecycle::Closed("CPU capture is draining".to_owned());
+                return;
+            }
             inner.sessions.remove(session_id);
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             inner.native_holds.remove(session_id);
@@ -581,6 +657,14 @@ impl CaptureRegistry {
             if let Some(session) = inner.sessions.get_mut(session_id) {
                 session.lifecycle = CaptureSessionLifecycle::Closed("native capture is draining".to_owned());
             }
+            return Ok(());
+        }
+        #[cfg(unix)]
+        if let Some(session) = inner.sessions.get_mut(session_id)
+            && session.cpu.is_some()
+        {
+            session.stop_capture();
+            session.lifecycle = CaptureSessionLifecycle::Closed("CPU capture is draining".to_owned());
             return Ok(());
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -620,6 +704,10 @@ impl CaptureRegistry {
             if let Some(cancel) = session.startup_cancel.take() {
                 let _ = cancel.send(());
             }
+            #[cfg(unix)]
+            if let Some(cpu) = &session.cpu {
+                cpu.fail(message.clone());
+            }
             session.lifecycle = CaptureSessionLifecycle::Failed(message);
         }
     }
@@ -632,6 +720,10 @@ impl CaptureRegistry {
                 let _ = cancel.send(());
             }
             session.lifecycle = CaptureSessionLifecycle::Closed(message);
+            #[cfg(unix)]
+            if let Some(cpu) = &session.cpu {
+                cpu.stop();
+            }
         }
     }
 
@@ -732,6 +824,24 @@ impl CaptureRegistry {
             fd_socket_path,
             native,
         };
+        #[cfg(unix)]
+        let response = if let Some(cpu) = &session.cpu {
+            let snapshot = cpu.snapshot();
+            CaptureSessionResponse {
+                status: snapshot.status.to_owned(),
+                status_message: Some(match session.lifecycle.status_message() {
+                    Some(message) => format!("{message}; {}", snapshot.message),
+                    None => snapshot.message,
+                }),
+                width: snapshot.width,
+                height: snapshot.height,
+                stride: snapshot.stride,
+                pixel_format: pixel_format_name(snapshot.pixel_format).to_owned(),
+                ..response
+            }
+        } else {
+            response
+        };
         #[cfg(target_os = "macos")]
         let response = if let Some(hold) = inner.native_holds.get(session_id) {
             let snapshot = hold.snapshot();
@@ -748,175 +858,7 @@ impl CaptureRegistry {
         Ok(response)
     }
 
-    fn allocate_consumer_id(&self) -> Result<ConsumerId, CaptureRegistryError> {
-        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        inner.next_consumer_id = inner.next_consumer_id.saturating_add(1).max(1);
-        Ok(ConsumerId::new(inner.next_consumer_id))
-    }
-
-    #[cfg(test)]
-    fn latest_frame(&self, request: &LatestVideoFrameRequest) -> Result<LatestFrameReply, CaptureRegistryError> {
-        let consumer_id = self.allocate_consumer_id()?;
-        self.latest_frame_for_consumer(request, consumer_id, true)
-    }
-
-    fn latest_frame_for_consumer(
-        &self,
-        request: &LatestVideoFrameRequest,
-        consumer_id: ConsumerId,
-        include_control_page: bool,
-    ) -> Result<LatestFrameReply, CaptureRegistryError> {
-        self.frame_for_consumer(request, consumer_id, include_control_page, FrameAcquireMode::Latest)
-    }
-
-    fn frame_by_cursor_for_consumer(
-        &self,
-        request: &LatestVideoFrameRequest,
-        consumer_id: ConsumerId,
-        include_control_page: bool,
-        producer_cursor: u64,
-    ) -> Result<LatestFrameReply, CaptureRegistryError> {
-        self.frame_for_consumer(
-            request,
-            consumer_id,
-            include_control_page,
-            FrameAcquireMode::ProducerCursor(producer_cursor),
-        )
-    }
-
-    fn frame_for_consumer(
-        &self,
-        request: &LatestVideoFrameRequest,
-        consumer_id: ConsumerId,
-        include_control_page: bool,
-        acquire_mode: FrameAcquireMode,
-    ) -> Result<LatestFrameReply, CaptureRegistryError> {
-        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        let session = inner
-            .sessions
-            .get_mut(&request.session_id)
-            .ok_or_else(|| CaptureRegistryError::UnknownSession(request.session_id.clone()))?;
-        match &session.lifecycle {
-            CaptureSessionLifecycle::Ready => {}
-            CaptureSessionLifecycle::Starting => {
-                return Err(CaptureRegistryError::NotReady {
-                    session_id: request.session_id.clone(),
-                    status: session.lifecycle.status_name(),
-                });
-            }
-            CaptureSessionLifecycle::Failed(message) => {
-                return Err(CaptureRegistryError::Failed {
-                    session_id: request.session_id.clone(),
-                    message: message.clone(),
-                });
-            }
-            CaptureSessionLifecycle::Closed(message) => {
-                return Err(CaptureRegistryError::Closed {
-                    session_id: request.session_id.clone(),
-                    message: message.clone(),
-                });
-            }
-        }
-        let track_id = TrackId::new(request.track_id);
-        let frame = match acquire_mode {
-            FrameAcquireMode::Latest => session.video.acquire_latest(consumer_id, track_id),
-            FrameAcquireMode::ProducerCursor(producer_cursor) => session.video.acquire_cursor(consumer_id, track_id, producer_cursor),
-        }
-        .map_err(CaptureRegistryError::from_capture)?;
-        latest_reply_from_frame(request, &mut session.video, consumer_id, include_control_page, frame)
-    }
-
-    fn next_frame_for_consumer(
-        &self,
-        request: &LatestVideoFrameRequest,
-        consumer_id: ConsumerId,
-        include_control_page: bool,
-        after_producer_cursor: u64,
-    ) -> Result<OrderedFrameReply, CaptureRegistryError> {
-        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        let session = inner
-            .sessions
-            .get_mut(&request.session_id)
-            .ok_or_else(|| CaptureRegistryError::UnknownSession(request.session_id.clone()))?;
-        match &session.lifecycle {
-            CaptureSessionLifecycle::Ready => {}
-            CaptureSessionLifecycle::Starting => {
-                return Err(CaptureRegistryError::NotReady {
-                    session_id: request.session_id.clone(),
-                    status: session.lifecycle.status_name(),
-                });
-            }
-            CaptureSessionLifecycle::Failed(message) => {
-                return Err(CaptureRegistryError::Failed {
-                    session_id: request.session_id.clone(),
-                    message: message.clone(),
-                });
-            }
-            CaptureSessionLifecycle::Closed(message) => {
-                return Err(CaptureRegistryError::Closed {
-                    session_id: request.session_id.clone(),
-                    message: message.clone(),
-                });
-            }
-        }
-        let track_id = TrackId::new(request.track_id);
-        match session
-            .video
-            .acquire_next_after(consumer_id, track_id, after_producer_cursor)
-            .map_err(CaptureRegistryError::from_capture)?
-        {
-            OrderedVideoAcquire::Frame(frame) => {
-                latest_reply_from_frame(request, &mut session.video, consumer_id, include_control_page, frame)
-                    .map(|reply| OrderedFrameReply::Frame(Box::new(reply)))
-            }
-            OrderedVideoAcquire::Lapped {
-                after_producer_cursor,
-                oldest_available_cursor,
-                latest_available_cursor,
-                skipped_count,
-            } => Ok(OrderedFrameReply::Unavailable {
-                fields: OrderedUnavailableReply {
-                    session_id: request.session_id.clone(),
-                    track_id: request.track_id,
-                    after_producer_cursor,
-                    oldest_available_cursor,
-                    latest_available_cursor,
-                    skipped_count,
-                    reason: "lapped",
-                },
-            }),
-            OrderedVideoAcquire::Empty => Ok(OrderedFrameReply::Unavailable {
-                fields: OrderedUnavailableReply {
-                    session_id: request.session_id.clone(),
-                    track_id: request.track_id,
-                    after_producer_cursor,
-                    oldest_available_cursor: 0,
-                    latest_available_cursor: 0,
-                    skipped_count: 0,
-                    reason: "empty",
-                },
-            }),
-        }
-    }
-
-    fn disconnect_consumer(&self, consumer_id: ConsumerId) {
-        if let Ok(mut inner) = self.inner.lock() {
-            for session in inner.sessions.values_mut() {
-                session.video.disconnect_consumer(consumer_id);
-            }
-        }
-    }
-
-    fn release_frame(&self, session_id: &str, frame: AcquiredVideoFrame) -> Result<(), CaptureRegistryError> {
-        let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        let session = inner
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
-        session.video.release(frame);
-        Ok(())
-    }
-
+    #[cfg(unix)]
     fn publish_capture_frame(&self, session_id: &str, frame: VideoCaptureFrame) -> Result<(), CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
         let session = inner
@@ -927,7 +869,16 @@ impl CaptureRegistry {
         session.height = frame.height;
         session.stride = frame.stride;
         session.pixel_format = capture_pixel_format(frame.pixel_format);
-        publish_capture_frame_to_video(&mut session.video, session.track_id, &frame)
+        if !matches!(
+            session.lifecycle,
+            CaptureSessionLifecycle::Starting | CaptureSessionLifecycle::Ready
+        ) {
+            return Err(CaptureRegistryError::Closed {
+                session_id: session_id.to_owned(),
+                message: "capture is terminal".to_owned(),
+            });
+        }
+        publish_capture_frame_view(session.cpu.as_ref().expect("CPU session"), frame.as_view()).map(|_| ())
     }
 
     fn fd_socket_path(&self) -> Result<String, CaptureRegistryError> {
@@ -938,11 +889,15 @@ impl CaptureRegistry {
     }
 }
 
+#[cfg(unix)]
 async fn run_capture_session_monitor(registry: CaptureRegistry, task_session_id: String, mut capture: Box<dyn VideoCaptureSession>) {
     loop {
         match capture.next_frame().await {
             Ok(Some(frame)) => {
-                let _ = registry.publish_capture_frame(&task_session_id, frame);
+                if let Err(error) = registry.publish_capture_frame(&task_session_id, frame) {
+                    registry.mark_session_failed(&task_session_id, error.to_string());
+                    break;
+                }
             }
             Ok(None) => {
                 registry.mark_session_closed(&task_session_id, "capture stream ended".to_string());
@@ -955,120 +910,6 @@ async fn run_capture_session_monitor(registry: CaptureRegistry, task_session_id:
             }
         }
     }
-}
-
-struct LatestFrameReply {
-    response: LatestVideoFrameResponse,
-    #[cfg(unix)]
-    fd: Option<std::os::fd::OwnedFd>,
-    frame: AcquiredVideoFrame,
-    control_page: Option<VideoControlPageRegistration>,
-}
-
-enum OrderedFrameReply {
-    Frame(Box<LatestFrameReply>),
-    Unavailable { fields: OrderedUnavailableReply },
-}
-
-struct OrderedUnavailableReply {
-    session_id: String,
-    track_id: u64,
-    after_producer_cursor: u64,
-    oldest_available_cursor: u64,
-    latest_available_cursor: u64,
-    skipped_count: u64,
-    reason: &'static str,
-}
-
-fn latest_reply_from_frame(
-    request: &LatestVideoFrameRequest,
-    video: &mut VideoSlotManager,
-    consumer_id: ConsumerId,
-    include_control_page: bool,
-    frame: AcquiredVideoFrame,
-) -> Result<LatestFrameReply, CaptureRegistryError> {
-    #[cfg(unix)]
-    let fd = if frame.cpu_pool_registration().is_some() {
-        None
-    } else {
-        match frame.try_clone_fd() {
-            Ok(fd) => Some(fd),
-            Err(error) => {
-                video.release(frame);
-                return Err(CaptureRegistryError::from_capture(error));
-            }
-        }
-    };
-    let control_page = if include_control_page {
-        match video.control_page_registration(TrackId::new(request.track_id), consumer_id) {
-            Ok(registration) => Some(registration),
-            Err(error) => {
-                video.release(frame);
-                return Err(CaptureRegistryError::from_capture(error));
-            }
-        }
-    } else {
-        None
-    };
-    let response = LatestVideoFrameResponse {
-        session_id: request.session_id.clone(),
-        track_id: request.track_id,
-        // The capture transfer channel owns lease allocation and overwrites this before
-        // sending. Zero is deliberately reserved as "not assigned".
-        lease_id: 0,
-        producer_cursor: frame.producer_cursor(),
-        sequence: frame.desc.sequence,
-        timestamp_ns: frame.desc.timestamp_ns,
-        width: frame.desc.width,
-        height: frame.desc.height,
-        stride: frame.desc.stride,
-        pixel_format: pixel_format_name(frame.desc.pixel_format).to_string(),
-        pool_id: frame.desc.pool_id,
-        slot_id: frame.desc.slot_id,
-        payload_offset: frame.desc.payload_offset,
-        payload_len: frame.desc.payload_len,
-        payload_map_len: frame.desc.payload_map_len,
-        clock_domain: clock_domain_name(frame.desc.clock_domain).to_string(),
-        color_space: color_space_name(frame.desc.color_space).to_string(),
-        sync_kind: sync_kind_name(frame.desc.sync_kind).to_string(),
-        damage_kind: damage_kind_name(frame.desc.damage_kind).to_string(),
-        damage_base_sequence: frame.desc.damage_base_sequence,
-        dropped_before_publish: frame.desc.dropped_before_publish,
-        producer_drop_count: frame.desc.producer_drop_count,
-        evicted_count: frame.desc.evicted_count,
-        consumer_skipped_count: frame.desc.consumer_skipped_count,
-        len: frame.bytes().len() as u64,
-    };
-    Ok(LatestFrameReply {
-        response,
-        #[cfg(unix)]
-        fd,
-        frame,
-        control_page,
-    })
-}
-
-#[cfg(unix)]
-#[derive(Debug)]
-struct FdConnectionState {
-    next_lease_id: u64,
-    leases: BTreeMap<u64, (String, AcquiredVideoFrame)>,
-    registered_pools: BTreeSet<RegisteredPoolKey>,
-    registered_control_pages: BTreeSet<u64>,
-    authorized_agent_id: Option<AgentId>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrameAcquireMode {
-    Latest,
-    ProducerCursor(u64),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct RegisteredPoolKey {
-    track_id: u64,
-    // Pool ids are unique forever, so the key needs no generation.
-    pool_id: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1111,62 +952,32 @@ impl CaptureRegistryError {
     }
 }
 
-fn publish_capture_frame_to_video(
-    video: &mut VideoSlotManager,
-    track_id: TrackId,
-    frame: &VideoCaptureFrame,
-) -> Result<(), CaptureRegistryError> {
-    publish_capture_frame_view_to_video(video, track_id, frame.as_view())
-}
-
-fn publish_capture_frame_view_to_video(
-    video: &mut VideoSlotManager,
-    track_id: TrackId,
+#[cfg(unix)]
+fn publish_capture_frame_view(
+    cpu: &cpu_session::CpuSession,
     frame: VideoCaptureFrameView<'_>,
-) -> Result<(), CaptureRegistryError> {
-    let mut claim = video
-        .claim_video_slot(track_id, video_frame_desc_from_capture_metadata(frame.metadata), frame.bytes.len())
-        .map_err(CaptureRegistryError::from_capture)?;
-    claim.copy_from_slice(frame.bytes);
-    video.commit_video_slot(claim).map_err(CaptureRegistryError::from_capture)
+) -> Result<PublishOutcome, CaptureRegistryError> {
+    cpu.publish(frame_descriptor_from_capture(frame.metadata), frame.bytes)
 }
 
-#[cfg(test)]
-fn video_frame_desc_from_capture(frame: &VideoCaptureFrame) -> VideoFrameDesc {
-    video_frame_desc_from_capture_metadata(frame.metadata())
-}
-
-fn video_frame_desc_from_capture_metadata(metadata: VideoCaptureFrameMetadata) -> VideoFrameDesc {
-    VideoFrameDesc {
+#[cfg(unix)]
+fn frame_descriptor_from_capture(metadata: VideoCaptureFrameMetadata) -> FrameDescriptor {
+    FrameDescriptor {
         sequence: metadata.sequence,
         timestamp_ns: metadata.timestamp_ns,
         width: metadata.width,
         height: metadata.height,
         stride: metadata.stride,
-        pixel_format: capture_pixel_format(metadata.pixel_format),
-        pool_id: 0,
-        slot_id: 0,
-        payload_offset: 0,
-        payload_len: 0,
-        payload_map_len: 0,
-        clock_domain: capture_clock_domain(metadata.timestamp_clock),
-        color_space: capture_color_space(metadata.color_space),
-        sync_kind: capture_sync_kind(metadata.sync_kind),
-        damage_kind: capture_damage_kind(metadata.damage_kind),
+        pixel_format: capture_pixel_format(metadata.pixel_format) as u32,
+        clock_domain: capture_clock_domain(metadata.timestamp_clock) as u32,
+        color_space: capture_color_space(metadata.color_space) as u32,
+        sync_kind: FrameSyncKind::CpuCopyComplete as u32,
+        damage_kind: capture_damage_kind(metadata.damage_kind) as u32,
         damage_base_sequence: metadata.damage_base_sequence,
-        // Adapter metadata keeps a u64 counter; the descriptor's u32 gap field
-        // saturates rather than wraps on absurd values.
-        dropped_before_publish: u32::try_from(metadata.dropped_before_publish).unwrap_or(u32::MAX),
+        dropped_before_publish: metadata.dropped_before_publish.try_into().unwrap_or(u32::MAX),
         producer_drop_count: metadata.producer_drop_count,
-        evicted_count: 0,
-        consumer_skipped_count: 0,
-        // SCK delivers CPU-shm frames on this path today; native IOSurface
-        // publication is #84.
-        payload_kind: PayloadKind::CpuShm,
-        modifier: 0,
-        fence_id: 0,
-        fence_value: 0,
-        flags: 0,
+        payload_kind: PayloadKind::CpuShm as u32,
+        ..FrameDescriptor::default()
     }
 }
 
@@ -1192,15 +1003,6 @@ fn capture_color_space(color_space: VideoCaptureColorSpace) -> ColorSpace {
     }
 }
 
-fn capture_sync_kind(sync_kind: VideoCaptureSyncKind) -> FrameSyncKind {
-    match sync_kind {
-        VideoCaptureSyncKind::Unknown => FrameSyncKind::Unknown,
-        VideoCaptureSyncKind::CpuCopyComplete => FrameSyncKind::CpuCopyComplete,
-        VideoCaptureSyncKind::SckSampleReady => FrameSyncKind::SckSampleReady,
-        VideoCaptureSyncKind::NativeTimeline => FrameSyncKind::NativeTimeline,
-    }
-}
-
 fn capture_damage_kind(damage_kind: VideoCaptureDamageKind) -> DamageKind {
     match damage_kind {
         VideoCaptureDamageKind::Unknown => DamageKind::Unknown,
@@ -1222,214 +1024,92 @@ fn spawn_fd_listener(listener: UnixListener, registry: CaptureRegistry) {
 }
 
 #[cfg(unix)]
+#[derive(serde::Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum CpuOpenRequest {
+    OpenCpuAcquisition {
+        session_id: String,
+        track_id: u64,
+        bearer_token: Option<String>,
+    },
+}
+
+#[cfg(unix)]
 fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Result<(), CaptureRegistryError> {
-    let reader_stream = stream.try_clone().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-    let mut reader = BufReader::new(reader_stream);
-    let consumer_id = registry.allocate_consumer_id()?;
-    let mut connection = FdConnectionState {
-        next_lease_id: 1,
-        leases: BTreeMap::new(),
-        // TODO: evict retired pool generations once the capture transfer channel grows pool-retirement messages.
-        registered_pools: BTreeSet::new(),
-        registered_control_pages: BTreeSet::new(),
-        authorized_agent_id: None,
-    };
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+    // Do not buffer the following binary Jackstay setup message.
     let result = (|| {
+        let mut bytes = Vec::new();
         loop {
-            let mut line = String::new();
-            let bytes = reader
-                .read_line(&mut line)
+            if bytes.len() == 16 * 1024 {
+                return Err(CaptureRegistryError::Io("CPU session preface is too large".to_owned()));
+            }
+            let mut byte = [0];
+            stream
+                .read_exact(&mut byte)
                 .map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-            if bytes == 0 {
+            if byte == *b"\n" {
                 break;
             }
-            let request: CaptureTransferRequest =
-                serde_json::from_str(line.trim_end()).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-            match request {
-                CaptureTransferRequest::Authorize { session_id, bearer_token } => {
-                    if connection.authorized_agent_id.is_some() {
-                        return Err(CaptureRegistryError::Io(
-                            "capture transfer connection is already authorized".to_string(),
-                        ));
-                    }
-                    connection.authorized_agent_id = Some(registry.authorize_fd_connection(&session_id, &bearer_token)?);
-                }
-                CaptureTransferRequest::LatestVideoFrame { session_id, track_id } => {
-                    registry.require_fd_session_access(&session_id, connection.authorized_agent_id.as_ref())?;
-                    let include_control_page = !connection.registered_control_pages.contains(&track_id);
-                    let request = LatestVideoFrameRequest {
-                        session_id: session_id.clone(),
-                        track_id,
-                    };
-                    let reply = registry.latest_frame_for_consumer(&request, consumer_id, include_control_page)?;
-                    send_frame_reply(&mut stream, &request.session_id, include_control_page, reply, &mut connection)?;
-                }
-                CaptureTransferRequest::AcquireVideoFrameByCursor {
+            bytes.push(byte[0]);
+        }
+        let CpuOpenRequest::OpenCpuAcquisition {
+            session_id,
+            track_id,
+            bearer_token,
+        } = serde_json::from_slice(&bytes).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+        let authorized = bearer_token
+            .as_ref()
+            .map(|token| registry.authorize_fd_connection(&session_id, token))
+            .transpose()?;
+        registry.require_fd_session_access(&session_id, authorized.as_ref())?;
+        let inner = registry.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        let session = inner
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.clone()))?;
+        match &session.lifecycle {
+            CaptureSessionLifecycle::Starting => {
+                return Err(CaptureRegistryError::NotReady {
                     session_id,
-                    track_id,
-                    producer_cursor,
-                } => {
-                    registry.require_fd_session_access(&session_id, connection.authorized_agent_id.as_ref())?;
-                    let include_control_page = !connection.registered_control_pages.contains(&track_id);
-                    let request = LatestVideoFrameRequest {
-                        session_id: session_id.clone(),
-                        track_id,
-                    };
-                    let reply = registry.frame_by_cursor_for_consumer(&request, consumer_id, include_control_page, producer_cursor)?;
-                    send_frame_reply(&mut stream, &request.session_id, include_control_page, reply, &mut connection)?;
-                }
-                CaptureTransferRequest::AcquireNextVideoFrame {
-                    session_id,
-                    track_id,
-                    after_producer_cursor,
-                } => {
-                    registry.require_fd_session_access(&session_id, connection.authorized_agent_id.as_ref())?;
-                    let include_control_page = !connection.registered_control_pages.contains(&track_id);
-                    let request = LatestVideoFrameRequest {
-                        session_id: session_id.clone(),
-                        track_id,
-                    };
-                    match registry.next_frame_for_consumer(&request, consumer_id, include_control_page, after_producer_cursor)? {
-                        OrderedFrameReply::Frame(reply) => {
-                            send_frame_reply(&mut stream, &request.session_id, include_control_page, *reply, &mut connection)?;
-                        }
-                        OrderedFrameReply::Unavailable { fields } => send_unavailable_reply(&mut stream, &fields)?,
-                    }
-                }
-                CaptureTransferRequest::ReleaseVideoFrame { lease_id } => {
-                    if let Some((session_id, frame)) = connection.leases.remove(&lease_id) {
-                        // A lease only enters this connection-local map after an access-checked acquire.
-                        registry.release_frame(&session_id, frame)?;
-                    }
-                }
+                    status: "starting",
+                });
             }
+            CaptureSessionLifecycle::Failed(message) => {
+                return Err(CaptureRegistryError::Failed {
+                    session_id,
+                    message: message.clone(),
+                });
+            }
+            CaptureSessionLifecycle::Closed(message) => {
+                return Err(CaptureRegistryError::Closed {
+                    session_id,
+                    message: message.clone(),
+                });
+            }
+            CaptureSessionLifecycle::Ready => {}
         }
-        Ok(())
+        if session.track_id.get() != track_id {
+            return Err(CaptureRegistryError::Capture("unknown capture track".to_owned()));
+        }
+        session
+            .cpu
+            .as_ref()
+            .ok_or_else(|| CaptureRegistryError::Capture("session is not a CPU capture".to_owned()))?
+            .open_connection(&stream)
     })();
-    for (_, (session_id, frame)) in connection.leases {
-        let _ = registry.release_frame(&session_id, frame);
-    }
-    registry.disconnect_consumer(consumer_id);
-    result
-}
-
-#[cfg(unix)]
-fn send_frame_reply(
-    stream: &mut UnixStream,
-    session_id: &str,
-    include_control_page: bool,
-    reply: LatestFrameReply,
-    connection: &mut FdConnectionState,
-) -> Result<(), CaptureRegistryError> {
-    let LatestFrameReply {
-        mut response,
-        fd,
-        frame,
-        control_page,
-    } = reply;
-    let lease_id = connection.next_lease_id;
-    connection.next_lease_id = connection.next_lease_id.wrapping_add(1).max(1);
-    response.lease_id = lease_id;
-    if let Some(control_page) = control_page.as_ref() {
-        debug_assert!(include_control_page);
-        let control_track_id = control_page.track_id.get();
-        connection.registered_control_pages.insert(control_track_id);
-        write_capture_transfer_message(
-            stream,
-            &CaptureTransferMessage::RegisterVideoControlPage {
-                session_id: session_id.to_string(),
-                track_id: control_track_id,
-                map_len: control_page.map_len,
-                consumer_id: control_page.consumer_id.get(),
-                consumer_slot: control_page.consumer_slot,
-            },
-        )?;
-        stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-        fdpass::send_fd(stream, control_page.fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-    }
-    if let Some(pool) = frame.cpu_pool_registration() {
-        let pool_key = RegisteredPoolKey {
-            track_id: pool.track_id.get(),
-            pool_id: pool.pool_id,
-        };
-        if connection.registered_pools.insert(pool_key) {
-            let pool_fd = frame.try_clone_fd().map_err(CaptureRegistryError::from_capture)?;
-            write_capture_transfer_message(
-                stream,
-                &CaptureTransferMessage::RegisterCpuPool {
-                    session_id: session_id.to_string(),
-                    track_id: pool.track_id.get(),
-                    pool_id: pool.pool_id,
-                    payload_map_len: pool.payload_map_len,
-                    slot_stride: pool.slot_stride,
-                    slot_count: pool.slot_count,
-                },
-            )?;
-            stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-            fdpass::send_fd(stream, pool_fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
+    let (producer, _connection) = match result {
+        Ok(ready) => ready,
+        Err(error) => {
+            let reply = serde_json::json!({ "op": "rejected", "message": error.to_string() });
+            let _ = writeln!(stream, "{reply}");
+            return Err(error);
         }
-    }
-    connection.leases.insert(lease_id, (session_id.to_string(), frame));
-    write_capture_transfer_message(stream, &video_frame_message_from_response(&response))?;
-    stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-    if let Some(fd) = fd {
-        fdpass::send_fd(stream, fd.as_raw_fd()).map_err(CaptureRegistryError::from_capture)?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn send_unavailable_reply(stream: &mut UnixStream, fields: &OrderedUnavailableReply) -> Result<(), CaptureRegistryError> {
-    write_capture_transfer_message(
-        stream,
-        &CaptureTransferMessage::VideoFrameUnavailable {
-            session_id: fields.session_id.clone(),
-            track_id: fields.track_id,
-            after_producer_cursor: fields.after_producer_cursor,
-            oldest_available_cursor: fields.oldest_available_cursor,
-            latest_available_cursor: fields.latest_available_cursor,
-            skipped_count: fields.skipped_count,
-            reason: fields.reason.to_string(),
-        },
-    )?;
-    stream.flush().map_err(|error| CaptureRegistryError::Io(error.to_string()))
-}
-
-#[cfg(unix)]
-fn write_capture_transfer_message(stream: &mut UnixStream, message: &CaptureTransferMessage) -> Result<(), CaptureRegistryError> {
-    let line = serde_json::to_string(message).map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-    writeln!(stream, "{line}").map_err(|error| CaptureRegistryError::Io(error.to_string()))
-}
-
-#[cfg(unix)]
-fn video_frame_message_from_response(response: &LatestVideoFrameResponse) -> CaptureTransferMessage {
-    CaptureTransferMessage::VideoFrame {
-        session_id: response.session_id.clone(),
-        track_id: response.track_id,
-        lease_id: response.lease_id,
-        producer_cursor: response.producer_cursor,
-        sequence: response.sequence,
-        timestamp_ns: response.timestamp_ns,
-        width: response.width,
-        height: response.height,
-        stride: response.stride,
-        pixel_format: response.pixel_format.clone(),
-        pool_id: response.pool_id,
-        slot_id: response.slot_id,
-        payload_offset: response.payload_offset,
-        payload_len: response.payload_len,
-        payload_map_len: response.payload_map_len,
-        clock_domain: response.clock_domain.clone(),
-        color_space: response.color_space.clone(),
-        sync_kind: response.sync_kind.clone(),
-        damage_kind: response.damage_kind.clone(),
-        damage_base_sequence: response.damage_base_sequence,
-        dropped_before_publish: response.dropped_before_publish,
-        producer_drop_count: response.producer_drop_count,
-        evicted_count: response.evicted_count,
-        consumer_skipped_count: response.consumer_skipped_count,
-        len: response.len,
-    }
+    };
+    writeln!(stream, "{{\"op\":\"cpu_opened\"}}").map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
+    jackstay::acquisition::socket::serve_cpu(stream, producer).map_err(|error| CaptureRegistryError::Capture(error.to_string()))
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {
@@ -1440,1396 +1120,5 @@ fn pixel_format_name(format: PixelFormat) -> &'static str {
     }
 }
 
-fn clock_domain_name(domain: ClockDomain) -> &'static str {
-    match domain {
-        ClockDomain::Unknown => "unknown",
-        ClockDomain::UnixTime => "unix_time",
-        ClockDomain::MediaTime => "media_time",
-        ClockDomain::HostTime => "host_time",
-    }
-}
-
-fn color_space_name(color_space: ColorSpace) -> &'static str {
-    match color_space {
-        ColorSpace::Unknown => "unknown",
-        ColorSpace::Srgb => "srgb",
-    }
-}
-
-fn sync_kind_name(sync_kind: FrameSyncKind) -> &'static str {
-    match sync_kind {
-        FrameSyncKind::Unknown => "unknown",
-        FrameSyncKind::CpuCopyComplete => "cpu_copy_complete",
-        FrameSyncKind::SckSampleReady => "sck_sample_ready",
-        FrameSyncKind::NativeTimeline => "native_timeline",
-    }
-}
-
-fn damage_kind_name(damage_kind: DamageKind) -> &'static str {
-    match damage_kind {
-        DamageKind::Unknown => "unknown",
-        DamageKind::FullFrame => "full_frame",
-        DamageKind::None => "none",
-        DamageKind::InlineRects => "inline_rects",
-        DamageKind::SidecarRects => "sidecar_rects",
-    }
-}
-
 #[cfg(all(test, unix))]
-mod tests {
-    use std::{
-        collections::VecDeque,
-        io::{BufRead, BufReader, Write},
-        os::unix::net::UnixStream,
-        thread,
-    };
-
-    use async_trait::async_trait;
-    use jackstay::{
-        control_page::VideoTrackControlPage,
-        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
-        video::{ConsumerId, VideoFrameDesc, VideoSlotManager},
-    };
-    use porthole_core::{
-        ErrorCode, PortholeError,
-        adapter::{
-            VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
-            VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureSyncKind, VideoCaptureTimestampClock,
-        },
-    };
-    use porthole_protocol::capture_sessions::{LatestVideoFrameRequest, LatestVideoFrameResponse};
-
-    use crate::{
-        agent_store::AgentPolicyStore,
-        capture_registry::{
-            CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle, RegistryVideoFramePublisher,
-            handle_fd_connection, publish_capture_frame_view_to_video, run_capture_session_monitor, video_frame_desc_from_capture,
-        },
-    };
-
-    fn test_desc(sequence: u64) -> VideoFrameDesc {
-        VideoFrameDesc {
-            sequence,
-            timestamp_ns: sequence,
-            width: 1,
-            height: 1,
-            stride: 4,
-            pixel_format: PixelFormat::Bgra8Unorm,
-            pool_id: 0,
-            slot_id: 0,
-            payload_offset: 0,
-            payload_len: 0,
-            payload_map_len: 0,
-            clock_domain: ClockDomain::UnixTime,
-            color_space: ColorSpace::Unknown,
-            sync_kind: FrameSyncKind::CpuCopyComplete,
-            damage_kind: DamageKind::FullFrame,
-            damage_base_sequence: sequence,
-            dropped_before_publish: 0,
-            producer_drop_count: 0,
-            evicted_count: 0,
-            consumer_skipped_count: 0,
-            payload_kind: PayloadKind::CpuShm,
-            modifier: 0,
-            fence_id: 0,
-            fence_value: 0,
-            flags: 0,
-        }
-    }
-
-    fn pinned_frame_count(registry: &CaptureRegistry, session_id: &str) -> usize {
-        registry
-            .inner
-            .lock()
-            .unwrap()
-            .sessions
-            .get(session_id)
-            .unwrap()
-            .video
-            .pinned_frame_count()
-    }
-
-    struct ScriptedVideoCaptureSession {
-        results: VecDeque<Result<Option<VideoCaptureFrame>, PortholeError>>,
-    }
-
-    impl ScriptedVideoCaptureSession {
-        fn new(results: Vec<Result<Option<VideoCaptureFrame>, PortholeError>>) -> Self {
-            Self {
-                results: VecDeque::from(results),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl VideoCaptureSession for ScriptedVideoCaptureSession {
-        async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError> {
-            self.results.pop_front().unwrap_or(Ok(None))
-        }
-    }
-
-    #[test]
-    fn latest_frame_reply_keeps_frame_pinned_until_release() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let reply = registry
-            .latest_frame(&LatestVideoFrameRequest {
-                session_id: session_id.clone(),
-                track_id: track_id.get(),
-            })
-            .unwrap();
-
-        let pinned = registry
-            .inner
-            .lock()
-            .unwrap()
-            .sessions
-            .get(&session_id)
-            .unwrap()
-            .video
-            .pinned_frame_count();
-        assert_eq!(pinned, 1);
-
-        registry.release_frame(&session_id, reply.frame).unwrap();
-
-        let pinned = registry
-            .inner
-            .lock()
-            .unwrap()
-            .sessions
-            .get(&session_id)
-            .unwrap()
-            .video
-            .pinned_frame_count();
-        assert_eq!(pinned, 0);
-    }
-
-    #[test]
-    fn latest_frame_for_consumer_preserves_skip_accounting() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(3);
-        video.publish(track_id, test_desc(1), &[1]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-        let consumer = ConsumerId::new(77);
-
-        let first = registry
-            .latest_frame_for_consumer(
-                &LatestVideoFrameRequest {
-                    session_id: session_id.clone(),
-                    track_id: track_id.get(),
-                },
-                consumer,
-                true,
-            )
-            .unwrap();
-        assert_eq!(first.response.consumer_skipped_count, 0);
-        assert!(first.control_page.is_some());
-        registry.release_frame(&session_id, first.frame).unwrap();
-
-        {
-            let mut inner = registry.inner.lock().unwrap();
-            let session = inner.sessions.get_mut(&session_id).unwrap();
-            session.video.publish(track_id, test_desc(2), &[2]).unwrap();
-            session.video.publish(track_id, test_desc(3), &[3]).unwrap();
-        }
-
-        let second = registry
-            .latest_frame_for_consumer(
-                &LatestVideoFrameRequest {
-                    session_id: session_id.clone(),
-                    track_id: track_id.get(),
-                },
-                consumer,
-                false,
-            )
-            .unwrap();
-        assert_eq!(second.response.sequence, 3);
-        assert_eq!(second.response.consumer_skipped_count, 1);
-        assert!(second.control_page.is_none());
-    }
-
-    #[test]
-    fn fd_connection_disconnect_releases_outstanding_leases() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get()
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(control["op"], "register_video_control_page");
-        assert_eq!(control["consumer_id"], 1);
-        assert_eq!(control["consumer_slot"], 0);
-        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
-        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-        assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
-        assert_ne!(response.lease_id, 0);
-        // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
-        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
-        assert_eq!(bytes, [1, 2, 3, 4]);
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 1);
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[tokio::test]
-    async fn fd_connection_rejects_protected_session_before_authorize() {
-        let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let identity = agent_store.create_identity("agent", None, 1_000).await.unwrap();
-        let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(identity.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server));
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get()
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
-        assert!(server_thread.join().unwrap().is_err());
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[tokio::test]
-    async fn fd_connection_rejects_protected_session_with_wrong_token() {
-        let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let owner = agent_store.create_identity("owner", None, 1_000).await.unwrap();
-        let other = agent_store.create_identity("other", None, 1_001).await.unwrap();
-        let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(owner.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server));
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "authorize",
-                "session_id": session_id,
-                "bearer_token": other.token
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
-        assert!(server_thread.join().unwrap().is_err());
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[tokio::test]
-    async fn fd_connection_serves_protected_session_after_matching_authorize() {
-        let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let owner = agent_store.create_identity("owner", None, 1_000).await.unwrap();
-        let token = owner.token.clone();
-        let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(owner.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "authorize",
-                "session_id": session_id,
-                "bearer_token": token
-            })
-        )
-        .unwrap();
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get()
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(control["op"], "register_video_control_page");
-        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
-        let _control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
-        assert_ne!(response.lease_id, 0);
-        // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
-        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
-        assert_eq!(bytes, [1, 2, 3, 4]);
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "release_video_frame",
-                "lease_id": response.lease_id
-            })
-        )
-        .unwrap();
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[tokio::test]
-    async fn fd_connection_rejects_other_agent_session_after_authorize() {
-        let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let owner_a = agent_store.create_identity("owner-a", None, 1_000).await.unwrap();
-        let owner_a_token = owner_a.token.clone();
-        let owner_b = agent_store.create_identity("owner-b", None, 1_001).await.unwrap();
-        let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let session_a_id = "session-a".to_string();
-        let session_b_id = "session-b".to_string();
-
-        let mut video_a = VideoSlotManager::new_reusable_pool(1);
-        video_a.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        let mut video_b = VideoSlotManager::new_reusable_pool(1);
-        video_b.publish(track_id, test_desc(1), &[5, 6, 7, 8]).unwrap();
-        let mut inner = registry.inner.lock().unwrap();
-        inner.sessions.insert(
-            session_a_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(owner_a.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: video_a,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-        inner.sessions.insert(
-            session_b_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(owner_b.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: video_b,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-        drop(inner);
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server));
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "authorize",
-                "session_id": session_a_id,
-                "bearer_token": owner_a_token
-            })
-        )
-        .unwrap();
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": session_b_id,
-                "track_id": track_id.get()
-            })
-        )
-        .unwrap();
-
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
-        assert!(server_thread.join().unwrap().is_err());
-        assert_eq!(pinned_frame_count(&registry, "session-a"), 0);
-        assert_eq!(pinned_frame_count(&registry, "session-b"), 0);
-    }
-
-    #[tokio::test]
-    async fn fd_connection_rejects_second_authorize() {
-        let agent_store = AgentPolicyStore::open_in_memory().await.unwrap();
-        let owner = agent_store.create_identity("owner", None, 1_000).await.unwrap();
-        let token = owner.token.clone();
-        let registry = CaptureRegistry::disabled_with_agent_policy(agent_store);
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: Some(owner.agent_id),
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server));
-
-        for _ in 0..2 {
-            writeln!(
-                client,
-                "{}",
-                serde_json::json!({
-                    "op": "authorize",
-                    "session_id": session_id,
-                    "bearer_token": token
-                })
-            )
-            .unwrap();
-        }
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        assert_eq!(reader.read_line(&mut line).unwrap(), 0);
-        let error = server_thread.join().unwrap().unwrap_err();
-        assert!(error.to_string().contains("already authorized"));
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn fd_connection_serves_unowned_session_without_authorize() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(1);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get()
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(control["op"], "register_video_control_page");
-        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
-        let _control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
-        assert_ne!(response.lease_id, 0);
-        // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
-        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
-        assert_eq!(bytes, [1, 2, 3, 4]);
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "release_video_frame",
-                "lease_id": response.lease_id
-            })
-        )
-        .unwrap();
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn fd_connection_acquires_requested_producer_cursor() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(2);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "acquire_video_frame_by_cursor",
-                "session_id": session_id,
-                "track_id": track_id.get(),
-                "producer_cursor": 1
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(control["op"], "register_video_control_page");
-        assert_eq!(control["consumer_id"], 1);
-        assert_eq!(control["consumer_slot"], 0);
-        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
-        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-        assert_eq!(control_page.shadow_read_entry_for_cursor(1).unwrap().sequence, 1);
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(response.producer_cursor, 1);
-        assert_eq!(response.sequence, 1);
-        assert_ne!(response.lease_id, 0);
-        // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
-        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
-        assert_eq!(bytes, [1, 2, 3, 4]);
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "release_video_frame",
-                "lease_id": response.lease_id
-            })
-        )
-        .unwrap();
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn fd_connection_acquires_next_video_frame_in_order() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(3);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "acquire_next_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get(),
-                "after_producer_cursor": 1
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let control: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(control["op"], "register_video_control_page");
-        assert_eq!(control["consumer_id"], 1);
-        assert_eq!(control["consumer_slot"], 0);
-        let control_fd = jackstay::fdpass::recv_fd(&client).unwrap();
-        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-        assert_eq!(control_page.shadow_read_entry_for_cursor(2).unwrap().sequence, 2);
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let pool: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(pool["op"], "register_cpu_pool");
-        let fd = jackstay::fdpass::recv_fd(&client).unwrap();
-
-        line.clear();
-        reader.read_line(&mut line).unwrap();
-        let response: LatestVideoFrameResponse = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(response.producer_cursor, 2);
-        assert_eq!(response.sequence, 2);
-        assert_ne!(response.lease_id, 0);
-        // Pool fds are anonymous shm objects: mmap-only, no read().
-        let mapping = jackstay::shm::SharedMemorySegment::map_read_only(fd, response.payload_map_len as usize).unwrap();
-        let bytes = mapping.slice_at(response.payload_offset as usize, response.payload_len as usize);
-        assert_eq!(bytes, [5, 6, 7, 8]);
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "release_video_frame",
-                "lease_id": response.lease_id
-            })
-        )
-        .unwrap();
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn fd_connection_reports_lapped_ordered_video_frame() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(2);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        video.publish(track_id, test_desc(2), &[5, 6, 7, 8]).unwrap();
-        video.publish(track_id, test_desc(3), &[9, 10, 11, 12]).unwrap();
-        video.publish(track_id, test_desc(4), &[13, 14, 15, 16]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "acquire_next_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get(),
-                "after_producer_cursor": 1
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let response: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(response["op"], "video_frame_unavailable");
-        assert_eq!(response["session_id"], "session");
-        assert_eq!(response["track_id"], 1);
-        assert_eq!(response["after_producer_cursor"], 1);
-        assert_eq!(response["oldest_available_cursor"], 3);
-        assert_eq!(response["latest_available_cursor"], 4);
-        assert_eq!(response["skipped_count"], 1);
-        assert_eq!(response["reason"], "lapped");
-
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn fd_connection_reports_empty_ordered_video_frame() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let mut video = VideoSlotManager::new_reusable_pool(2);
-        video.publish(track_id, test_desc(1), &[1, 2, 3, 4]).unwrap();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video,
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let (mut client, server) = UnixStream::pair().unwrap();
-        let registry_for_server = registry.clone();
-        let server_thread = thread::spawn(move || handle_fd_connection(server, registry_for_server).unwrap());
-
-        writeln!(
-            client,
-            "{}",
-            serde_json::json!({
-                "op": "acquire_next_video_frame",
-                "session_id": session_id,
-                "track_id": track_id.get(),
-                "after_producer_cursor": 1
-            })
-        )
-        .unwrap();
-        let mut reader = BufReader::with_capacity(1, client.try_clone().unwrap());
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let response: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
-        assert_eq!(response["op"], "video_frame_unavailable");
-        assert_eq!(response["session_id"], "session");
-        assert_eq!(response["track_id"], 1);
-        assert_eq!(response["after_producer_cursor"], 1);
-        assert_eq!(response["oldest_available_cursor"], 0);
-        assert_eq!(response["latest_available_cursor"], 0);
-        assert_eq!(response["skipped_count"], 0);
-        assert_eq!(response["reason"], "empty");
-
-        drop(reader);
-        drop(client);
-        server_thread.join().unwrap();
-
-        assert_eq!(pinned_frame_count(&registry, "session"), 0);
-    }
-
-    #[test]
-    fn latest_frame_rejects_starting_session_before_track_lookup() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "starting-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Starting,
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let result = registry.latest_frame(&LatestVideoFrameRequest {
-            session_id: session_id.clone(),
-            track_id: track_id.get(),
-        });
-
-        assert!(matches!(
-            result,
-            Err(CaptureRegistryError::NotReady {
-                session_id: id,
-                status: "starting",
-            }) if id == session_id
-        ));
-    }
-
-    #[test]
-    fn latest_frame_rejects_failed_session_before_track_lookup() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "failed-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Failed("producer stopped".to_string()),
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let result = registry.latest_frame(&LatestVideoFrameRequest {
-            session_id: session_id.clone(),
-            track_id: track_id.get(),
-        });
-
-        assert!(matches!(
-            result,
-            Err(CaptureRegistryError::Failed {
-                session_id: id,
-                message,
-            }) if id == session_id && message == "producer stopped"
-        ));
-    }
-
-    #[test]
-    fn latest_frame_rejects_closed_session_before_track_lookup() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "closed-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Closed("capture stream ended".to_string()),
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        let result = registry.latest_frame(&LatestVideoFrameRequest {
-            session_id: session_id.clone(),
-            track_id: track_id.get(),
-        });
-
-        assert!(matches!(
-            result,
-            Err(CaptureRegistryError::Closed {
-                session_id: id,
-                message,
-            }) if id == session_id && message == "capture stream ended"
-        ));
-    }
-
-    #[tokio::test]
-    async fn capture_session_monitor_marks_session_closed_when_stream_ends() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "owned-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        run_capture_session_monitor(
-            registry.clone(),
-            session_id.clone(),
-            Box::new(ScriptedVideoCaptureSession::new(vec![Ok(None)])),
-        )
-        .await;
-
-        let inner = registry.inner.lock().unwrap();
-        let session = inner.sessions.get(&session_id).unwrap();
-        assert_eq!(
-            session.lifecycle,
-            CaptureSessionLifecycle::Closed("capture stream ended".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn close_session_sends_startup_cancel_signal() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "starting-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Starting,
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: Some(cancel_tx),
-            },
-        );
-
-        registry.close_session(&session_id).unwrap();
-
-        cancel_rx.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn capture_session_monitor_marks_session_failed_on_error() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "publisher-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Ready,
-                width: 1,
-                height: 1,
-                stride: 4,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-
-        run_capture_session_monitor(
-            registry.clone(),
-            session_id.clone(),
-            Box::new(ScriptedVideoCaptureSession::new(vec![Err(PortholeError::new(
-                ErrorCode::CapabilityMissing,
-                "source disappeared",
-            ))])),
-        )
-        .await;
-
-        let inner = registry.inner.lock().unwrap();
-        let session = inner.sessions.get(&session_id).unwrap();
-        assert_eq!(
-            session.lifecycle,
-            CaptureSessionLifecycle::Failed("capability_missing: source disappeared".to_string())
-        );
-    }
-
-    #[tokio::test]
-    async fn capture_session_monitor_wakes_startup_waiter_on_error() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "publisher-starting-session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Starting,
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(1),
-                capture_task: None,
-                startup_cancel: Some(cancel_tx),
-            },
-        );
-
-        run_capture_session_monitor(
-            registry.clone(),
-            session_id.clone(),
-            Box::new(ScriptedVideoCaptureSession::new(vec![Err(PortholeError::new(
-                ErrorCode::CapabilityMissing,
-                "source disappeared",
-            ))])),
-        )
-        .await;
-
-        cancel_rx.await.unwrap();
-        assert!(matches!(
-            registry.startup_terminal_error(&session_id),
-            CaptureRegistryError::Failed {
-                session_id: id,
-                message,
-            } if id == session_id && message == "capability_missing: source disappeared"
-        ));
-    }
-
-    #[test]
-    fn video_frame_desc_from_capture_preserves_capture_metadata() {
-        let frame = VideoCaptureFrame {
-            sequence: 7,
-            timestamp_ns: 123,
-            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
-            width: 2,
-            height: 1,
-            stride: 8,
-            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
-            color_space: VideoCaptureColorSpace::Srgb,
-            sync_kind: VideoCaptureSyncKind::SckSampleReady,
-            damage_kind: VideoCaptureDamageKind::FullFrame,
-            damage_base_sequence: 3,
-            dropped_before_publish: 2,
-            producer_drop_count: 5,
-            bytes: vec![0; 8],
-        };
-
-        let desc = video_frame_desc_from_capture(&frame);
-
-        assert_eq!(desc.sequence, 7);
-        assert_eq!(desc.pixel_format, PixelFormat::Bgra8Unorm);
-        assert_eq!(desc.clock_domain, ClockDomain::MediaTime);
-        assert_eq!(desc.color_space, ColorSpace::Srgb);
-        assert_eq!(desc.sync_kind, FrameSyncKind::SckSampleReady);
-        assert_eq!(desc.damage_kind, DamageKind::FullFrame);
-        assert_eq!(desc.damage_base_sequence, 3);
-        assert_eq!(desc.dropped_before_publish, 2);
-        assert_eq!(desc.producer_drop_count, 5);
-    }
-
-    #[test]
-    fn borrowed_capture_frame_view_publishes_into_video_slots() {
-        let mut video = VideoSlotManager::new_reusable_pool(2);
-        let track = jackstay::model::TrackId::new(1);
-        let pixels = [9, 8, 7, 6, 5, 4, 3, 2];
-        let metadata = VideoCaptureFrameMetadata {
-            sequence: 11,
-            timestamp_ns: 456,
-            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
-            width: 2,
-            height: 1,
-            stride: 8,
-            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
-            color_space: VideoCaptureColorSpace::Srgb,
-            sync_kind: VideoCaptureSyncKind::SckSampleReady,
-            damage_kind: VideoCaptureDamageKind::FullFrame,
-            damage_base_sequence: 10,
-            dropped_before_publish: 3,
-            producer_drop_count: 4,
-        };
-
-        publish_capture_frame_view_to_video(&mut video, track, VideoCaptureFrameView { metadata, bytes: &pixels }).unwrap();
-
-        let frame = video.acquire_latest(jackstay::video::ConsumerId::new(1), track).unwrap();
-        assert_eq!(frame.desc.sequence, 11);
-        assert_eq!(frame.desc.damage_base_sequence, 10);
-        assert_eq!(frame.bytes(), pixels);
-    }
-
-    #[test]
-    fn registry_frame_publisher_updates_session_and_signals_first_frame() {
-        let registry = CaptureRegistry::disabled();
-        let session_id = "session".to_string();
-        let source_id = jackstay::model::SourceId::new(1);
-        let track_id = jackstay::model::TrackId::new(1);
-        registry.inner.lock().unwrap().sessions.insert(
-            session_id.clone(),
-            CaptureSession {
-                source_id,
-                track_id,
-                owner_agent_id: None,
-                lifecycle: CaptureSessionLifecycle::Starting,
-                width: 0,
-                height: 0,
-                stride: 0,
-                pixel_format: PixelFormat::Bgra8Unorm,
-                video: VideoSlotManager::new_reusable_pool(2),
-                capture_task: None,
-                startup_cancel: None,
-            },
-        );
-        let (first_tx, mut first_rx) = tokio::sync::oneshot::channel();
-        let publisher = RegistryVideoFramePublisher::new(registry.clone(), session_id.clone(), first_tx);
-        let pixels = [3, 2, 1, 0];
-        let metadata = VideoCaptureFrameMetadata {
-            sequence: 1,
-            timestamp_ns: 10,
-            timestamp_clock: VideoCaptureTimestampClock::MediaTime,
-            width: 1,
-            height: 1,
-            stride: 4,
-            pixel_format: VideoCapturePixelFormat::Bgra8Unorm,
-            color_space: VideoCaptureColorSpace::Unknown,
-            sync_kind: VideoCaptureSyncKind::SckSampleReady,
-            damage_kind: VideoCaptureDamageKind::FullFrame,
-            damage_base_sequence: 1,
-            dropped_before_publish: 0,
-            producer_drop_count: 0,
-        };
-
-        publisher.publish_frame(VideoCaptureFrameView { metadata, bytes: &pixels }).unwrap();
-
-        let first = first_rx.try_recv().unwrap();
-        assert_eq!(first.width, 1);
-        assert_eq!(first.height, 1);
-        let mut inner = registry.inner.lock().unwrap();
-        let session = inner.sessions.get_mut(&session_id).unwrap();
-        assert_eq!(session.width, 1);
-        assert_eq!(session.height, 1);
-        assert_eq!(session.stride, 4);
-        assert_eq!(session.lifecycle, CaptureSessionLifecycle::Ready);
-        let frame = session.video.acquire_latest(jackstay::video::ConsumerId::new(1), track_id).unwrap();
-        assert_eq!(frame.bytes(), pixels);
-    }
-}
+mod tests;

@@ -20,7 +20,6 @@ use jackstay::{
         },
     },
     state::SessionState,
-    video::VideoSlotManager,
 };
 use porthole_adapter_kwin::{
     KWinAdapter,
@@ -116,7 +115,7 @@ pub(super) async fn create(
             height: 0,
             stride: 0,
             pixel_format: PixelFormat::Bgra8Unorm,
-            video: VideoSlotManager::new_reusable_pool(1),
+            cpu: None,
             capture_task: None,
             startup_cancel: None,
         },

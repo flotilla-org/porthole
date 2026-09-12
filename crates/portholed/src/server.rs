@@ -175,24 +175,23 @@ async fn serve_with_agent_policy_inner(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        io::{BufRead, BufReader, Write},
-        os::unix::net::UnixStream,
-        sync::Arc,
-    };
+    use std::sync::Arc;
 
     use axum::{
         body::{Body, to_bytes},
         http::{Method, Request, StatusCode},
     };
-    use jackstay::control_page::VideoTrackControlPage;
+    use jackstay::{
+        acquisition::arena::AcquireOutcome,
+        daemon::{ConnectedSession, SessionInfo},
+        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
+    };
     use porthole_core::{
         agent_policy::{ActionClass, DurationSpec, TargetSelector},
         in_memory::InMemoryAdapter,
         surface::{PlatformSurfaceRef, SurfaceInfo},
     };
-    use porthole_protocol::capture_sessions::{CreateCaptureSessionResponse, LatestVideoFrameResponse};
+    use porthole_protocol::capture_sessions::CreateCaptureSessionResponse;
     use tower::ServiceExt;
 
     use super::*;
@@ -312,198 +311,95 @@ mod tests {
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let session: porthole_protocol::capture_sessions::CaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(session.status, "ready");
-        assert_eq!(session.status_message, None);
+        assert!(session.status_message.as_deref().unwrap().contains("CPU budget="));
         assert_eq!(session.width, 2);
         assert_eq!(session.height, 1);
 
-        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::with_capacity(1, reader_stream);
-        let mut pools = BTreeMap::new();
-        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
-        assert_eq!(frame.session_id, created.session_id);
-        assert_eq!(frame.track_id, created.track_id);
-        assert_eq!(frame.width, 2);
-        assert_eq!(frame.height, 1);
-        assert_eq!(frame.clock_domain, "unknown");
-        assert_eq!(frame.color_space, "unknown");
-        assert_eq!(frame.sync_kind, "cpu_copy_complete");
-        assert_eq!(frame.damage_kind, "full_frame");
-        assert_eq!(frame.damage_base_sequence, 1);
-        assert_eq!(frame.dropped_before_publish, 0);
-        assert_eq!(frame.producer_drop_count, 0);
-        assert_eq!(frame.producer_cursor, 1);
-        assert_eq!(frame.evicted_count, 0);
-        assert_eq!(frame.consumer_skipped_count, 0);
-        assert_ne!(frame.pool_id, 0);
-        assert_eq!(frame.slot_id, 0);
-        assert_eq!(frame.payload_len, frame.len);
-        assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
-        release_frame_on_stream(&mut stream, frame.lease_id);
-    }
-
-    #[tokio::test]
-    async fn capture_fd_socket_serves_multiple_leased_frames_on_one_connection() {
-        let (router, _temp) = router_with_capture_socket().await;
-        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
-        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
-
-        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::with_capacity(1, reader_stream);
-        let mut pools = BTreeMap::new();
-
-        let first = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
-        assert_ne!(first.lease_id, 0);
-        release_frame_on_stream(&mut stream, first.lease_id);
-
-        let second = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
-        assert_ne!(second.lease_id, 0);
-        assert_ne!(second.lease_id, first.lease_id);
-        release_frame_on_stream(&mut stream, second.lease_id);
-    }
-
-    #[tokio::test]
-    async fn capture_fd_socket_registers_reusable_cpu_pool_once() {
-        let (router, _temp) = router_with_capture_socket().await;
-        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
-        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
-
-        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::with_capacity(1, reader_stream);
-
-        request_latest_frame(&mut stream, &created);
-        let control = read_json_line(&mut reader);
-        assert_eq!(control["op"], "register_video_control_page");
-        assert_eq!(control["session_id"], created.session_id);
-        assert_eq!(control["track_id"], created.track_id);
-        assert_ne!(control["consumer_id"].as_u64().unwrap(), 0);
-        assert_eq!(control["consumer_slot"], 0);
-        let control_fd = jackstay::fdpass::recv_fd(&stream).unwrap();
-        let control_page = VideoTrackControlPage::map_read_only(control_fd, control["map_len"].as_u64().unwrap() as usize).unwrap();
-        assert_eq!(control_page.validate_header().unwrap().producer_cursor, 1);
-
-        let pool = read_json_line(&mut reader);
-        assert_eq!(pool["op"], "register_cpu_pool");
-        assert_eq!(pool["session_id"], created.session_id);
-        assert_eq!(pool["track_id"], created.track_id);
-        assert_ne!(pool["pool_id"].as_u64().unwrap(), 0);
-        // Jackstay rounds the requested capacity to the descriptor ring size.
-        assert_eq!(pool["slot_count"], 4);
-        let _pool_fd = jackstay::fdpass::recv_fd(&stream).unwrap();
-
-        let first = read_json_line(&mut reader);
-        assert_eq!(first["op"], "video_frame");
-        assert_eq!(first["producer_cursor"], 1);
-        let entry = control_page.shadow_read_entry_for_cursor(1).unwrap();
-        assert_eq!(entry.sequence, first["sequence"].as_u64().unwrap());
-        assert_eq!(entry.pool_id, first["pool_id"].as_u64().unwrap());
-        assert_eq!(entry.payload_len, first["payload_len"].as_u64().unwrap());
-        let first_lease = first["lease_id"].as_u64().unwrap();
-        assert_ne!(first_lease, 0);
-        assert_eq!(first["pool_id"], pool["pool_id"]);
-        release_frame_on_stream(&mut stream, first_lease);
-
-        request_latest_frame(&mut stream, &created);
-        let second = read_json_line(&mut reader);
-        assert_eq!(second["op"], "video_frame");
-        assert_eq!(second["producer_cursor"], first["producer_cursor"]);
-        let second_lease = second["lease_id"].as_u64().unwrap();
-        assert_ne!(second_lease, 0);
-        assert_eq!(second["pool_id"], pool["pool_id"]);
-        release_frame_on_stream(&mut stream, second_lease);
-    }
-
-    fn release_frame_on_stream(stream: &mut UnixStream, lease_id: u64) {
-        writeln!(
-            stream,
-            "{}",
-            serde_json::json!({
-                "op": "release_video_frame",
-                "lease_id": lease_id
-            })
-        )
-        .unwrap();
-    }
-
-    fn request_latest_frame(stream: &mut UnixStream, created: &CreateCaptureSessionResponse) {
-        writeln!(
-            stream,
-            "{}",
-            serde_json::json!({
-                "op": "latest_video_frame",
-                "session_id": created.session_id,
-                "track_id": created.track_id
-            })
-        )
-        .unwrap();
-    }
-
-    fn authorize_capture_transfer_stream(stream: &mut UnixStream, created: &CreateCaptureSessionResponse, token: &str) {
-        writeln!(
-            stream,
-            "{}",
-            serde_json::json!({
-                "op": "authorize",
-                "session_id": created.session_id,
-                "bearer_token": token
-            })
-        )
-        .unwrap();
-    }
-
-    fn read_json_line(reader: &mut BufReader<UnixStream>) -> serde_json::Value {
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        serde_json::from_str(line.trim_end()).unwrap()
-    }
-
-    fn request_latest_frame_on_stream(
-        stream: &mut UnixStream,
-        reader: &mut BufReader<UnixStream>,
-        created: &CreateCaptureSessionResponse,
-        pools: &mut BTreeMap<(u64, u64), jackstay::shm::SharedMemorySegment>,
-    ) -> LatestVideoFrameResponse {
-        request_latest_frame(stream, created);
-
-        let frame = loop {
-            let value = read_json_line(reader);
-            match value["op"].as_str() {
-                Some("register_video_control_page") => {
-                    assert_ne!(value["consumer_id"].as_u64().unwrap(), 0);
-                    let fd = jackstay::fdpass::recv_fd(stream).unwrap();
-                    let page = VideoTrackControlPage::map_read_only(fd, value["map_len"].as_u64().unwrap() as usize).unwrap();
-                    page.validate_header().unwrap();
-                }
-                Some("register_cpu_pool") => {
-                    let fd = jackstay::fdpass::recv_fd(stream).unwrap();
-                    let key = (value["track_id"].as_u64().unwrap(), value["pool_id"].as_u64().unwrap());
-                    // Pool fds are anonymous shm objects: mmap-only, no read().
-                    let map_len = value["payload_map_len"].as_u64().unwrap() as usize;
-                    pools.insert(key, jackstay::shm::SharedMemorySegment::map_read_only(fd, map_len).unwrap());
-                }
-                Some("video_frame") => break serde_json::from_value::<LatestVideoFrameResponse>(value).unwrap(),
-                other => panic!("unexpected capture fd socket response {other:?}"),
-            }
+        let connected = connect_capture(&created, None, 1);
+        let AcquireOutcome::Frame(frame) = connected.consumer.acquire_latest(0).unwrap() else {
+            panic!("missing synthetic frame")
         };
-        assert_eq!(frame.session_id, created.session_id);
-        assert_eq!(frame.track_id, created.track_id);
-        assert_eq!(frame.payload_len, frame.len);
-
-        let key = (frame.track_id, frame.pool_id);
-        let mapping = pools.get(&key).expect("frame references registered pool");
-        let bytes = mapping.slice_at(frame.payload_offset as usize, frame.payload_len as usize);
-        assert_eq!(bytes, &[0, 64, 128, 255, 255, 64, 128, 255]);
-        frame
+        let descriptor = frame.descriptor();
+        assert_eq!(frame.cursor(), 1);
+        assert_eq!(descriptor.width, 2);
+        assert_eq!(descriptor.height, 1);
+        assert_eq!(descriptor.clock_domain, ClockDomain::Unknown as u32);
+        assert_eq!(descriptor.color_space, ColorSpace::Unknown as u32);
+        assert_eq!(descriptor.sync_kind, FrameSyncKind::CpuCopyComplete as u32);
+        assert_eq!(descriptor.damage_kind, DamageKind::FullFrame as u32);
+        assert_eq!(descriptor.damage_base_sequence, 1);
+        assert_eq!(frame.bytes(), &[0, 64, 128, 255, 255, 64, 128, 255]);
     }
 
     #[tokio::test]
-    async fn delete_capture_session_removes_it() {
+    async fn capture_socket_reserves_independent_holds_for_duplicate_acquisitions() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        let connected = connect_capture(&created, None, 2);
+        let AcquireOutcome::Frame(first) = connected.consumer.acquire_latest(0).unwrap() else {
+            panic!("no first frame")
+        };
+        let AcquireOutcome::Frame(second) = connected.consumer.acquire_latest(0).unwrap() else {
+            panic!("no duplicate")
+        };
+        assert_eq!(first.cursor(), second.cursor());
+        assert_eq!(first.bytes(), second.bytes());
+        assert!(matches!(
+            connected.consumer.acquire_latest(0).unwrap(),
+            AcquireOutcome::HoldingLimit
+        ));
+        drop(first);
+        assert!(matches!(connected.consumer.acquire_latest(0).unwrap(), AcquireOutcome::Frame(_)));
+        drop(connected);
+        assert_eq!(second.bytes(), &[0, 64, 128, 255, 255, 64, 128, 255]);
+    }
+
+    #[tokio::test]
+    async fn capture_socket_consumer_restart_uses_a_new_incarnation() {
+        let (router, _temp) = router_with_capture_socket().await;
+        let res = post(router, "/capture-sessions/synthetic", serde_json::json!({})).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let created: CreateCaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        let connected = connect_capture(&created, None, 1);
+        let original = connected.consumer.incarnation();
+        let AcquireOutcome::Frame(held) = connected.consumer.acquire_latest(0).unwrap() else {
+            panic!("no first frame")
+        };
+        drop(connected);
+        let restarted = connect_capture(&created, None, 1);
+        assert_ne!(restarted.consumer.incarnation(), original);
+        assert!(matches!(restarted.consumer.acquire_latest(0).unwrap(), AcquireOutcome::Frame(_)));
+        assert_eq!(held.bytes(), &[0, 64, 128, 255, 255, 64, 128, 255]);
+    }
+
+    fn connect_capture(created: &CreateCaptureSessionResponse, token: Option<&str>, holding: u32) -> ConnectedSession {
+        // SAFETY: the in-memory test host is a conforming sole producer. This
+        // process does not fork or forward the process-bound setup mappings.
+        unsafe {
+            ConnectedSession::connect(
+                SessionInfo {
+                    session_id: created.session_id.clone(),
+                    source_id: created.source_id,
+                    track_id: created.track_id,
+                    width: 2,
+                    height: 1,
+                    stride: 8,
+                    pixel_format: PixelFormat::Bgra8Unorm,
+                    fd_socket_path: created.fd_socket_path.clone(),
+                    bearer_token: token.map(ToOwned::to_owned),
+                },
+                holding,
+            )
+        }
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn delete_capture_session_keeps_retirement_status_visible() {
         let (router, _temp) = router_with_capture_socket().await;
         let res = post(router.clone(), "/capture-sessions/synthetic", serde_json::json!({})).await;
         assert_eq!(res.status(), StatusCode::OK);
@@ -524,7 +420,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let res = router.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        let session: porthole_protocol::capture_sessions::CaptureSessionResponse = serde_json::from_slice(&body).unwrap();
+        assert!(matches!(session.status.as_str(), "draining" | "closed"));
     }
 
     #[tokio::test]
@@ -553,27 +452,20 @@ mod tests {
         assert_eq!(created.status, "ready");
         assert_eq!(created.status_message, None);
 
-        let mut stream = UnixStream::connect(&created.fd_socket_path).unwrap();
-        let reader_stream = stream.try_clone().unwrap();
-        let mut reader = BufReader::with_capacity(1, reader_stream);
-        let mut pools = BTreeMap::new();
-        authorize_capture_transfer_stream(&mut stream, &created, &token);
-        let frame = request_latest_frame_on_stream(&mut stream, &mut reader, &created, &mut pools);
-        assert_eq!(frame.session_id, created.session_id);
-        assert_eq!(frame.track_id, created.track_id);
-        assert_eq!(frame.timestamp_ns, 123_456_789);
-        assert_eq!(frame.width, 2);
-        assert_eq!(frame.height, 1);
-        assert_eq!(frame.clock_domain, "unix_time");
-        assert_eq!(frame.color_space, "unknown");
-        assert_eq!(frame.sync_kind, "cpu_copy_complete");
-        assert_eq!(frame.damage_kind, "full_frame");
-        assert_eq!(frame.damage_base_sequence, 1);
-        assert_ne!(frame.pool_id, 0);
-        assert_eq!(frame.slot_id, 0);
-        assert_eq!(frame.payload_len, frame.len);
-        assert!(frame.payload_offset + frame.payload_len <= frame.payload_map_len);
-        release_frame_on_stream(&mut stream, frame.lease_id);
+        let connected = connect_capture(&created, Some(&token), 1);
+        let AcquireOutcome::Frame(frame) = connected.consumer.acquire_latest(0).unwrap() else {
+            panic!("missing authorized frame")
+        };
+        let descriptor = frame.descriptor();
+        assert_eq!(descriptor.timestamp_ns, 123_456_789);
+        assert_eq!(descriptor.width, 2);
+        assert_eq!(descriptor.height, 1);
+        assert_eq!(descriptor.clock_domain, ClockDomain::UnixTime as u32);
+        assert_eq!(descriptor.color_space, ColorSpace::Unknown as u32);
+        assert_eq!(descriptor.sync_kind, FrameSyncKind::CpuCopyComplete as u32);
+        assert_eq!(descriptor.damage_kind, DamageKind::FullFrame as u32);
+        assert_eq!(descriptor.damage_base_sequence, 1);
+        assert_eq!(frame.bytes(), &[0, 64, 128, 255, 255, 64, 128, 255]);
     }
 
     #[tokio::test]

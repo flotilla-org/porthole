@@ -431,7 +431,7 @@ pub(super) async fn create(
             height: 0,
             stride: 0,
             pixel_format: PixelFormat::Bgra8Unorm,
-            video: jackstay::video::VideoSlotManager::new_reusable_pool(1),
+            cpu: None,
             capture_task: None,
             startup_cancel: None,
         },

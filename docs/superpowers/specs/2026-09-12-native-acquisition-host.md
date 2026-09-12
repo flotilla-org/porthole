@@ -2,7 +2,8 @@
 
 Status: integration in progress. Live GPU verification remains blocked by Metal
 shared-event allocation on kiwi. This is not a completed acquisition rollout;
-the CPU session path still uses the older transport.
+live CPU acceptance also remains outstanding. The CPU host and reference clients
+now use the common arena; see [CPU integration](2026-09-12-cpu-acquisition-host.md).
 
 Porthole retains capture authority: source selection, Screen Recording permission
 and per-session authorization. Jackstay owns storage admission, acquisition,
@@ -59,9 +60,9 @@ and native allocation preflight; actual gated-GPU shutdown still needs execution
 Porthole's workspace build, non-ignored tests, all-target Clippy and pinned
 formatting pass against Jackstay revision `7029ae5dca6d12332ddedf27c355b9fa91b9af9a`.
 The updated acquisition tests and Linux Clippy also pass on paneer. Jackstay's
-local full suite still contains the failing shadow-ring regression for its older
-CPU daemon path. Neither the native migration nor these checks resolve that
-remaining CPU work.
+full suite subsequently passed after the old CPU daemon path was removed and
+replaced with common session acquisition in `3fabbf1`. That synthetic coverage
+does not replace the live native acceptance described below.
 
 The ignored adapter smoke test
 `sck_iosurface_stays_immutable_through_xpc_acquisition_and_delayed_release` captures
