@@ -25,9 +25,10 @@ publication. Incoming frames are dropped while the host retries the pending
 transition. A proposal that cannot fit even after all old storage retires is
 rejected and reported as a session failure.
 
-A 100 ms host maintenance task retries allocation and polls idle cleanup.
-Consumer waits remain event-driven in Jackstay. The task shares no registry
-reference with the SCK callback, avoiding a registry/callback reference cycle.
+A 100 ms host maintenance worker retries allocation and polls idle cleanup.
+Consumer waits remain event-driven in Jackstay. The worker owns the runtime
+independently of the session registry and Tokio runtime, and exits only after
+retirement. It shares no registry reference with the SCK callback.
 
 Session queries report installed dimensions and distinguish `starting`, `ready`,
 `paused`, `failed`, `draining`, `recovery_required` and `closed`. Their message
@@ -53,16 +54,21 @@ The daemon's process-wide shutdown does not yet provide a graceful drain API.
 
 ## Verification
 
-Unit tests cover startup-error propagation and cancellation retaining an owner
-until idle maintenance completes. Jackstay tests cover CPU mapping/frame drainage
-and native allocation preflight; actual gated-GPU shutdown still needs execution.
+Unit tests cover startup-error propagation, cancellation and cleanup after both
+the session and its async runtime are dropped. An isolated Metal test submits a
+producer write behind a GPU gate, drops the session, runtime and consumer, then
+checks that the producer remains owned until the gate opens and cleanup finishes.
+It passed on 2026-09-12; log: `/tmp/porthole-native-owner-retirement-metal.log`.
+This tests retained cleanup within a live process. It does not establish GPU
+completion after daemon process death or provide a graceful process exit API.
 
-Porthole's workspace build, non-ignored tests, all-target Clippy and pinned
-formatting pass against Jackstay revision `7029ae5dca6d12332ddedf27c355b9fa91b9af9a`.
-The updated acquisition tests and Linux Clippy also pass on paneer. Jackstay's
-full suite subsequently passed after the old CPU daemon path was removed and
-replaced with common session acquisition in `3fabbf1`. That synthetic coverage
-does not replace the live native acceptance described below.
+Porthole pins Jackstay `f482a5ca1c0c0a3831d3b4774dc8b7110c4581eb` (C ABI 0.5).
+Workspace build, non-ignored tests, all-target Clippy and pinned formatting pass
+on macOS and Linux. Logs for this cleanup-owner change are
+`/tmp/porthole-native-owner-tests.log` and, on paneer,
+`/tmp/porthole-native-owner-linux-tests.log`. Jackstay's native allocation,
+replacement and GPU-readiness/completion tests also passed; see its runtime
+verification record below. Generated fixtures do not establish live capture.
 
 The ignored adapter smoke test
 `sck_iosurface_stays_immutable_through_xpc_acquisition_and_delayed_release` captures

@@ -50,7 +50,6 @@ pub(super) struct NativeSessionHold {
     server: Option<XpcArenaServer>,
     stream: Option<NativeSckCaptureStream>,
     publisher: Arc<NativeRegistryPublisher>,
-    maintenance: tokio::task::JoinHandle<()>,
 }
 
 impl std::fmt::Debug for NativeSessionHold {
@@ -62,6 +61,18 @@ impl std::fmt::Debug for NativeSessionHold {
 }
 
 impl NativeSessionHold {
+    fn new(native_info: NativeCaptureInfo, publisher: Arc<NativeRegistryPublisher>) -> Result<Self, CaptureRegistryError> {
+        publisher
+            .maintenance()
+            .map_err(|error| CaptureRegistryError::Capture(format!("start native retirement worker: {error}")))?;
+        Ok(Self {
+            native_info,
+            server: None,
+            stream: None,
+            publisher,
+        })
+    }
+
     pub(super) fn close(&mut self) {
         {
             let mut state = self.publisher.state.lock().expect("native runtime poisoned");
@@ -90,7 +101,6 @@ impl NativeSessionHold {
 impl Drop for NativeSessionHold {
     fn drop(&mut self) {
         self.close();
-        self.maintenance.abort();
     }
 }
 
@@ -230,20 +240,25 @@ impl NativeRegistryPublisher {
         }
     }
 
-    fn maintenance(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    fn maintenance(self: &Arc<Self>) -> std::io::Result<()> {
         let publisher = Arc::clone(self);
-        tokio::spawn(async move {
-            loop {
-                // Consumer wakeups use Jackstay's efficient event observers.
-                // This coarse host tick handles idle allocation retry and status.
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let mut state = publisher.state.lock().expect("native runtime poisoned");
-                state.maintain();
-                if state.drained {
-                    break;
+        // Own retirement independently of the registry and async runtime. A
+        // dropped session closes acquisition but cannot abort unresolved GPU use.
+        std::thread::Builder::new()
+            .name("native-capture-retirement".to_owned())
+            .spawn(move || {
+                loop {
+                    // Consumer wakeups use Jackstay's event observers. This
+                    // coarse host tick handles idle allocation retry and status.
+                    std::thread::sleep(Duration::from_millis(100));
+                    let mut state = publisher.state.lock().expect("native runtime poisoned");
+                    state.maintain();
+                    if state.drained {
+                        break;
+                    }
                 }
-            }
-        })
+            })
+            .map(|_| ())
     }
 }
 
@@ -437,6 +452,7 @@ pub(super) async fn create(
         },
     );
 
+    reservation.session_id = Some(session_id.clone());
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let publisher = Arc::new(NativeRegistryPublisher::new(ready_tx));
     // Install the teardown owner before the first await. Cancellation and
@@ -453,15 +469,8 @@ pub(super) async fn create(
         .native_holds
         .insert(
             session_id.clone(),
-            NativeSessionHold {
-                native_info: native_info.clone(),
-                server: None,
-                stream: None,
-                maintenance: publisher.maintenance(),
-                publisher: Arc::clone(&publisher),
-            },
+            NativeSessionHold::new(native_info.clone(), Arc::clone(&publisher))?,
         );
-    reservation.session_id = Some(session_id.clone());
     let adapter = MacOsAdapter::new();
     let stream = match start_native_window_capture(&adapter, &surface, publisher.clone()).await {
         Ok(stream) => stream,
@@ -556,6 +565,106 @@ pub(super) async fn create(
 mod tests {
     use super::*;
 
+    fn test_hold(publisher: Arc<NativeRegistryPublisher>) -> NativeSessionHold {
+        NativeSessionHold::new(
+            NativeCaptureInfo {
+                transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+                endpoint: MACOS_NATIVE_ATTACH_MACH_SERVICE.to_owned(),
+                attach_token: "test-only".to_owned(),
+            },
+            publisher,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn session_teardown_finishes_after_async_runtime_is_gone() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let publisher = Arc::new(NativeRegistryPublisher::new(tx));
+        runtime.block_on(async {
+            let hold = test_hold(Arc::clone(&publisher));
+            drop(hold);
+        });
+        drop(runtime);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !publisher.state.lock().unwrap().drained {
+            assert!(Instant::now() < deadline, "session teardown lost its cleanup owner");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires a Metal device; submits an isolated GPU write behind a test gate"]
+    fn dropped_session_retains_gpu_owner_until_write_completion() {
+        use jackstay::{
+            acquisition::arena::AcquireOutcome,
+            model::{ClockDomain, ColorSpace},
+            native::macos::{ConsumerFence, IoSurface},
+        };
+
+        let backend = MacosFrameBackend::new().unwrap();
+        let gate = ConsumerFence::new(backend.metal()).unwrap();
+        struct OpenOnDrop<'a>(&'a ConsumerFence);
+        impl Drop for OpenOnDrop<'_> {
+            fn drop(&mut self) {
+                self.0.signal_cpu(1);
+            }
+        }
+        let _open_on_unwind = OpenOnDrop(&gate);
+        backend.metal().enqueue_wait(&gate, 1).unwrap();
+        let params = NativeStreamParams {
+            width: 16,
+            height: 16,
+            pixel_format: PixelFormat::Bgra8Unorm,
+            color_space: ColorSpace::Srgb,
+            clock_domain: ClockDomain::HostTime,
+            modifier: 0,
+        };
+        let mut producer = NativeArenaProducer::new(backend, params.clone(), arena_config()).unwrap();
+        let consumer = producer.attach(1).unwrap().into_consumer().unwrap();
+        let surface = IoSurface::allocate(16, 16, PixelFormat::Bgra8Unorm).unwrap();
+        surface.write_pixels(&vec![37; 16 * 16 * 4]).unwrap();
+        let source = MacosCapturedFrame { surface };
+        assert!(matches!(producer.publish(&source, 1).unwrap(), PublishOutcome::Published { .. }));
+        let AcquireOutcome::Frame(held) = consumer.acquire_latest(0).unwrap() else {
+            panic!("missing frame")
+        };
+        let producer = Arc::new(Mutex::new(producer));
+        let retained = Arc::downgrade(&producer);
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        let publisher = Arc::new(NativeRegistryPublisher::new(tx));
+        {
+            let mut state = publisher.state.lock().unwrap();
+            state.producer = Some(producer);
+            state.params = Some(params);
+        }
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async { drop(test_hold(Arc::clone(&publisher))) });
+        drop(runtime);
+        assert!(matches!(consumer.acquire_latest(0).unwrap(), AcquireOutcome::Closed));
+        // No consumer GPU use was submitted. Releasing these owners does not
+        // establish completion of the producer's gated write.
+        drop(held);
+        drop(consumer);
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            retained.upgrade().is_some(),
+            "teardown discarded the producer before GPU completion"
+        );
+        assert!(!publisher.state.lock().unwrap().drained);
+        gate.signal_cpu(1);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !publisher.state.lock().unwrap().drained {
+            assert!(
+                Instant::now() < deadline,
+                "completed GPU write did not drain after runtime teardown"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(retained.upgrade().is_none(), "drain retained the producer owner");
+    }
+
     #[tokio::test]
     async fn capture_failure_reaches_the_startup_caller_without_waiting_for_a_frame() {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -575,20 +684,7 @@ mod tests {
         {
             let mut inner = registry.inner.lock().unwrap();
             inner.native_session_starting = true;
-            inner.native_holds.insert(
-                id.clone(),
-                NativeSessionHold {
-                    native_info: NativeCaptureInfo {
-                        transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
-                        endpoint: MACOS_NATIVE_ATTACH_MACH_SERVICE.to_owned(),
-                        attach_token: "test-only".to_owned(),
-                    },
-                    server: None,
-                    stream: None,
-                    maintenance: publisher.maintenance(),
-                    publisher: Arc::clone(&publisher),
-                },
-            );
+            inner.native_holds.insert(id.clone(), test_hold(Arc::clone(&publisher)));
         }
         drop(StartReservation {
             registry: &registry,
