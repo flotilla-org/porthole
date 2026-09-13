@@ -12,32 +12,40 @@ use std::{
     thread,
 };
 
+use jackstay::model::{ClockDomain, ColorSpace, DamageKind, PixelFormat, SourceId, TrackId};
 #[cfg(unix)]
-use jackstay::acquisition::arena::{FrameDescriptor, PublishOutcome};
 use jackstay::{
-    model::{
-        ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat, SourceDesc, SourceId, SourceKind, TrackDesc, TrackId,
-        VideoTrackDesc,
-    },
+    acquisition::arena::{FrameDescriptor, PublishOutcome},
+    model::{FrameSyncKind, PayloadKind, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
     state::SessionState,
+};
+#[cfg(unix)]
+use porthole_core::adapter::{
+    VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher, VideoCaptureFrameView, VideoCaptureSession,
 };
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{
-        Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
-        VideoCaptureFrameView, VideoCaptureOutputControl, VideoCaptureOutputSize, VideoCapturePixelFormat, VideoCaptureSession,
-        VideoCaptureTimestampClock,
+        Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureOutputControl, VideoCaptureOutputSize,
+        VideoCapturePixelFormat, VideoCaptureTimestampClock,
     },
     agent_policy::AgentId,
     surface::SurfaceInfo,
 };
 use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
+#[cfg(unix)]
 use uuid::Uuid;
 
 use crate::agent_store::AgentPolicyStore;
 
 #[cfg(unix)]
 mod cpu_session;
+
+// Shared host policy for CPU/macOS native pools and output-request preflight.
+const CAPTURE_MEMORY_BUDGET: u64 = 512 * 1024 * 1024;
+const CAPTURE_RESOURCE_CAPACITY: u32 = 8;
+#[cfg(unix)]
+const RETIRED_CPU_SESSION_LIMIT: usize = 64;
 
 /// An HTTP create future can be dropped at either adapter startup or the first
 /// frame await. Keep teardown armed until ownership is handed to the caller.
@@ -89,6 +97,9 @@ impl std::fmt::Debug for CaptureRegistry {
 #[derive(Debug, Default)]
 struct CaptureRegistryInner {
     sessions: HashMap<String, CaptureSession>,
+    /// Bounded status history, ordered by actual CPU retirement completion.
+    #[cfg(unix)]
+    retired_cpu_sessions: std::collections::VecDeque<String>,
     /// Runtime owners for native sessions, including closing macOS sessions
     /// whose consumer mappings or GPU work have not yet drained.
     #[cfg(target_os = "macos")]
@@ -241,6 +252,26 @@ impl VideoCaptureFramePublisher for RegistryVideoFramePublisher {
 }
 
 impl CaptureRegistry {
+    #[cfg(unix)]
+    fn new_cpu_session(&self, session_id: &str) -> Result<cpu_session::CpuSession, CaptureRegistryError> {
+        let registry = Arc::downgrade(&self.inner);
+        let session_id = session_id.to_owned();
+        cpu_session::CpuSession::with_retirement_callback(move || {
+            // The CPU worker has released its runtime lock before notifying us.
+            // A weak reference avoids keeping the registry alive during drain.
+            if let Some(registry) = registry.upgrade()
+                && let Ok(mut inner) = registry.lock()
+                && inner.sessions.contains_key(&session_id)
+            {
+                inner.retired_cpu_sessions.push_back(session_id);
+                while inner.retired_cpu_sessions.len() > RETIRED_CPU_SESSION_LIMIT {
+                    let id = inner.retired_cpu_sessions.pop_front().expect("retired history is nonempty");
+                    inner.sessions.remove(&id);
+                }
+            }
+        })
+    }
+
     #[must_use]
     pub fn disabled() -> Self {
         Self {
@@ -336,7 +367,7 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let cpu = cpu_session::CpuSession::new()?;
+        let cpu = self.new_cpu_session(&session_id)?;
         cpu.publish(
             FrameDescriptor {
                 sequence: 1,
@@ -443,7 +474,7 @@ impl CaptureRegistry {
                 height: 0,
                 stride: 0,
                 pixel_format: PixelFormat::Bgra8Unorm,
-                cpu: Some(cpu_session::CpuSession::new()?),
+                cpu: Some(self.new_cpu_session(&session_id)?),
                 capture_task: None,
                 startup_cancel: Some(startup_cancel_tx),
                 output_control: None,
@@ -596,7 +627,7 @@ impl CaptureRegistry {
         // TODO: retain or replay these events once daemon consumers subscribe
         // to generic session setup instead of synthesizing attach events.
 
-        let cpu = cpu_session::CpuSession::new()?;
+        let cpu = self.new_cpu_session(&session_id)?;
         publish_capture_frame_view(&cpu, first_frame.as_view())?;
 
         let output_control = capture.output_control();
@@ -842,7 +873,10 @@ impl CaptureRegistry {
         // old leases still count and can delay replacement within Jackstay.
         let row = u64::from(size.width) * 4;
         let frame_bytes = (row.div_ceil(256) * 256).checked_mul(u64::from(size.height));
-        if size.width == 0 || size.height == 0 || frame_bytes.is_none_or(|bytes| bytes > (512 * 1024 * 1024 - 1024 * 1024) / 8) {
+        if size.width == 0
+            || size.height == 0
+            || frame_bytes.is_none_or(|bytes| bytes > (CAPTURE_MEMORY_BUDGET - 1024 * 1024) / u64::from(CAPTURE_RESOURCE_CAPACITY))
+        {
             return Err(CaptureRegistryError::from_porthole(PortholeError::new(
                 ErrorCode::InvalidArgument,
                 "capture output must have positive pixel dimensions and fit the session pool budget",

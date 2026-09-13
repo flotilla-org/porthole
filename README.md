@@ -548,3 +548,8 @@ does not undo an update already submitted to the backend.
 Backends without output-size control return `adapter_unsupported`. Richer capture
 capabilities and requests remain future work; see the
 [sizing decision](docs/2026-09-13-capture-output-sizing.md).
+
+
+CPU session status remains available while resources drain. The daemon keeps the
+most recent 64 fully retired CPU session records; older completed IDs return an
+unknown-session error. Active sessions and unresolved drainage are retained.

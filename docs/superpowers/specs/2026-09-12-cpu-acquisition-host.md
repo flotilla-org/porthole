@@ -58,3 +58,17 @@ dependencies; Linux Rust tests do not establish viewer playback. Local test logs
 are `/tmp/porthole-delayed-acquisition-tests.log` and, on paneer,
 `/tmp/porthole-delayed-acquisition-linux-tests.log`. The delayed CPU viewer run
 is recorded in `/tmp/porthole-delayed-cpu-viewer.log`.
+
+
+## Completed session status retention
+
+The registry retains status for the most recent 64 CPU sessions whose resources
+have fully retired, in retirement-completion order. Older completed records are
+evicted and their IDs subsequently return unknown-session errors. Active and
+still-draining sessions, including unresolved cleanup failures, are not evicted
+by this history limit.
+
+The existing CPU retirement worker notifies the registry exactly once after
+actual drainage, outside the CPU runtime lock, using a weak registry reference.
+It then exits. This bounds completed records without another polling worker and
+without tying safe resource release to a status-cache eviction.

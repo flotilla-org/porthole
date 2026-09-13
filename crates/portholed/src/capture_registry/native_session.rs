@@ -27,19 +27,20 @@ use porthole_protocol::capture_sessions::{
 };
 use uuid::Uuid;
 
-use super::{CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle};
+use super::{
+    CAPTURE_MEMORY_BUDGET, CAPTURE_RESOURCE_CAPACITY, CaptureRegistry, CaptureRegistryError, CaptureSession, CaptureSessionLifecycle,
+};
 
 type SharedProducer = Arc<Mutex<NativeArenaProducer<MacosFrameBackend>>>;
-const MEMORY_BUDGET: u64 = 512 * 1024 * 1024;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn arena_config() -> ArenaConfig {
     ArenaConfig {
-        resource_capacity: 8,
+        resource_capacity: CAPTURE_RESOURCE_CAPACITY,
         retained_history: 2,
         producer_reserve: 1,
         payload_capacity: 0,
-        memory_budget: MEMORY_BUDGET,
+        memory_budget: CAPTURE_MEMORY_BUDGET,
         max_incarnations: 4,
         drain_timeout: DRAIN_TIMEOUT,
     }
@@ -146,7 +147,7 @@ impl NativeRuntime {
             ("starting", None)
         };
         let counters = format!(
-            "native budget={MEMORY_BUDGET} bytes, published={}, dropped={}",
+            "native budget={CAPTURE_MEMORY_BUDGET} bytes, published={}, dropped={}",
             self.published, self.dropped
         );
         NativeSnapshot {

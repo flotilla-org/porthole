@@ -552,3 +552,61 @@ async fn output_request_without_backend_control_is_explicitly_unsupported() {
         .unwrap_err();
     assert!(matches!(error, CaptureRegistryError::Porthole(e) if e.code == ErrorCode::AdapterUnsupported));
 }
+
+#[test]
+fn retired_cpu_records_are_bounded_without_reaping_live_or_draining_sessions() {
+    let registry = CaptureRegistry {
+        fd_socket_path: Some("/unused-paired-test-socket".into()),
+        ..CaptureRegistry::disabled()
+    };
+    let active = registry.create_synthetic_session().unwrap().session_id;
+    let draining = registry.create_synthetic_session().unwrap().session_id;
+    let (stream, _, task) = open(&registry, &draining, 1, None);
+    let mut setup = connect(stream);
+    let consumer = setup.attach(1).unwrap();
+    let AcquireOutcome::Frame(held) = consumer.acquire_latest(0).unwrap() else {
+        panic!("missing frame")
+    };
+    registry.close_session(&draining).unwrap();
+    let mut completed = Vec::new();
+    for i in 0..68 {
+        let id = registry.create_synthetic_session().unwrap().session_id;
+        if i % 2 == 0 {
+            registry.close_session(&id).unwrap();
+        } else {
+            registry.mark_session_failed(&id, "test source ended".into());
+        }
+        completed.push(id);
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        if registry.inner.lock().unwrap().sessions.len() == 66 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "completed CPU records did not settle at 64 plus active/draining sessions"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(registry.get_session(&active).unwrap().status, "ready");
+    assert_eq!(registry.get_session(&draining).unwrap().status, "draining");
+    assert_eq!(held.bytes(), &[0, 64, 128, 255, 255, 64, 128, 255]);
+    let mut cached = 0;
+    for id in completed {
+        match registry.get_session(&id) {
+            Ok(session) => {
+                assert!(matches!(session.status.as_str(), "closed" | "failed"));
+                cached += 1;
+            }
+            Err(CaptureRegistryError::UnknownSession(_)) => {}
+            other => panic!("unexpected completed record: {other:?}"),
+        }
+    }
+    assert_eq!(cached, 64);
+    drop(held);
+    drop(consumer);
+    drop(setup);
+    let _ = task.join().unwrap();
+    registry.close_session(&active).unwrap();
+}

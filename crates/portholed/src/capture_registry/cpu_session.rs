@@ -11,9 +11,7 @@ use std::{
 
 use jackstay::acquisition::arena::{ArenaConfig, ArenaProducer, FrameDescriptor, PublishOutcome, ReconfigurationStatus};
 
-use super::CaptureRegistryError;
-
-const MEMORY_BUDGET: u64 = 512 * 1024 * 1024;
+use super::{CAPTURE_MEMORY_BUDGET, CAPTURE_RESOURCE_CAPACITY, CaptureRegistryError};
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CONNECTIONS: usize = 4;
 pub(super) type Producer = Arc<Mutex<ArenaProducer>>;
@@ -81,11 +79,21 @@ pub(super) struct Snapshot {
 }
 
 impl CpuSession {
+    #[cfg(test)]
     pub fn new() -> Result<Self, CaptureRegistryError> {
-        Self::with_budget(MEMORY_BUDGET)
+        Self::with_retirement_callback(|| {})
     }
 
+    pub fn with_retirement_callback(on_retired: impl FnOnce() + Send + 'static) -> Result<Self, CaptureRegistryError> {
+        Self::with_budget_and_retirement(CAPTURE_MEMORY_BUDGET, on_retired)
+    }
+
+    #[cfg(test)]
     fn with_budget(memory_budget: u64) -> Result<Self, CaptureRegistryError> {
+        Self::with_budget_and_retirement(memory_budget, || {})
+    }
+
+    fn with_budget_and_retirement(memory_budget: u64, on_retired: impl FnOnce() + Send + 'static) -> Result<Self, CaptureRegistryError> {
         let state = Arc::new(Mutex::new(Runtime {
             memory_budget,
             ..Runtime::default()
@@ -101,6 +109,8 @@ impl CpuSession {
                     let mut state = worker.lock().expect("CPU capture runtime poisoned");
                     state.maintain();
                     if state.drained {
+                        drop(state);
+                        on_retired();
                         break;
                     }
                 }
@@ -204,7 +214,7 @@ impl Runtime {
         let format = Format::from_frame(&descriptor, bytes)?;
         if self.producer.is_none() {
             let producer = ArenaProducer::new(ArenaConfig {
-                resource_capacity: 8,
+                resource_capacity: CAPTURE_RESOURCE_CAPACITY,
                 retained_history: 2,
                 producer_reserve: 1,
                 payload_capacity: bytes.len(),
