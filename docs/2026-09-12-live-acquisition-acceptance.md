@@ -36,6 +36,11 @@ native service reservation for this run.
 
 ## Remaining resize evidence
 
+The [2026-09-13 TextEdit investigation](2026-09-13-capture-output-sizing.md)
+shows that resizing a window does not resize the configured capture buffers.
+The next check needs an actual output configuration change, not further manual
+window resizing alone.
+
 Porthole's attempt to resize Simulator from 456×972 to 380×810 returned HTTP 501,
 `capability_missing`, with `AX refused position/size write: pos=0 size=-25200`.
 The restore request returned the same error. Capture dimensions remained 456×972;
