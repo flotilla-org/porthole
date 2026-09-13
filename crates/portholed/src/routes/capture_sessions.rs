@@ -4,7 +4,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use porthole_core::{ErrorCode, PortholeError, agent_policy::ActionClass};
-use porthole_protocol::capture_sessions::{CaptureSessionResponse, CreateCaptureSessionResponse};
+use porthole_protocol::capture_sessions::{
+    CaptureOutputRequest, CaptureOutputResponse, CaptureSessionResponse, CreateCaptureSessionResponse,
+};
 use serde::Deserialize;
 
 /// Query for `POST /capture-sessions/surfaces/{id}`. `native=true` requests
@@ -18,7 +20,7 @@ pub struct CaptureKindQuery {
 use crate::{
     capture_registry::CaptureRegistryError,
     routes::{
-        agent_guard::{authorize_surface_actions, complete_route_execution},
+        agent_guard::{authenticated_agent_id, authorize_surface_actions, complete_route_execution},
         errors::ApiError,
     },
     state::AppState,
@@ -64,6 +66,34 @@ pub async fn post_surface(
 
 pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<CaptureSessionResponse>, ApiError> {
     state.capture.get_session(&id).map(Json).map_err(capture_error_to_api)
+}
+
+pub async fn post_output(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<CaptureOutputRequest>,
+) -> Result<(StatusCode, Json<CaptureOutputResponse>), ApiError> {
+    let agent_id = authenticated_agent_id(&state, &headers).await?;
+    state
+        .capture
+        .set_output_size(
+            &id,
+            &agent_id,
+            porthole_core::adapter::VideoCaptureOutputSize {
+                width: request.width,
+                height: request.height,
+            },
+        )
+        .await
+        .map_err(capture_error_to_api)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CaptureOutputResponse {
+            session_id: id,
+            requested: request,
+        }),
+    ))
 }
 
 pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {

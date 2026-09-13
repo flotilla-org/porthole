@@ -2,8 +2,8 @@
 # Manual smoke test for the macOS native (IOSurface/Metal) capture viewer (#85).
 #
 # Exercises the full native chain: SCK live capture -> IOSurface staged into
-# the producer pool -> ring publication -> XPC attach over portholed's named
-# mach service -> the viewer presents zero-copy with a GPU fence wait.
+# the acquisition pool -> XPC attach over portholed's named mach service ->
+# the viewer waits for readiness and retains each frame through GPU completion.
 #
 # Requires:
 # - portholed running from Porthole.app under launchd, so it owns the
@@ -16,8 +16,8 @@
 # - porthole, jq, cargo, cmake, and SDL build dependencies.
 #
 # Watch for: live frames updating as you interact with the window; no tearing
-# while dragging/resizing it (GPU fence wait); kill portholed mid-run and the
-# viewer should hold a placeholder rather than crash.
+# while dragging/resizing it; terminal capture closure should end the viewer
+# after its submitted GPU work drains. This script closes its own session.
 
 set -euo pipefail
 
@@ -79,6 +79,17 @@ fi
 
 echo "surface_id=$SURFACE_ID"
 descriptor="$(porthole capture-session surface "$SURFACE_ID" --native --json)"
+session_id="$(printf '%s\n' "$descriptor" | jq -er '.session_id')"
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if ! porthole capture-session close "$session_id"; then
+        echo "could not close smoke capture session $session_id" >&2
+        [[ "$status" -ne 0 ]] || status=1
+    fi
+    exit "$status"
+}
+trap cleanup EXIT
 
 mach_service="$(printf '%s\n' "$descriptor" | jq -r '.native.endpoint // empty')"
 attach_token="$(printf '%s\n' "$descriptor" | jq -r '.native.attach_token // empty')"

@@ -200,6 +200,19 @@ Historical product slices; the active milestones above govern current ordering:
 
 Later directions: Hyprland, X11, overlay/annotation, MCP, remote multi-machine presentation and record/replay integration. Windows desktop operations are now an active milestone; Windows continuous capture remains deferred.
 
+A future macOS display controlled by Porthole could host real application windows
+with known resolution, scale and placement. Robert proposed this during live
+capture verification on 2026-09-13. Platform feasibility, display lifetime and
+cleanup need investigation before scheduling implementation. This remains a
+future direction; it is not a prerequisite for the acquisition work.
+
+For apps intended only for Porthole/Jackstay consumption, Linux may use a small
+purpose-built or repurposed compositor. A future capture capability/request
+model should expose backend differences and report what was actually obtained;
+it should neither imply universal support nor reduce every platform to the same
+minimum. For now, use fixed capture output with explicit resizing where supported
+([sizing decision](2026-09-13-capture-output-sizing.md)).
+
 ---
 
 ## Bundle architecture

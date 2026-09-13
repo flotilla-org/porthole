@@ -258,8 +258,27 @@ mod video_capture_tests {
     }
 }
 
+/// An explicit output request, in pixels; source window geometry is independent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoCaptureOutputSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Optional backend control. Success means the backend accepted the request;
+/// published frames remain the authority for the installed format. Dropping a
+/// request future need not undo a submitted backend operation.
+#[async_trait]
+pub trait VideoCaptureOutputControl: Send + Sync + std::fmt::Debug {
+    async fn set_output_size(&self, size: VideoCaptureOutputSize) -> Result<(), PortholeError>;
+}
+
 #[async_trait]
 pub trait VideoCaptureSession: Send {
+    fn output_control(&self) -> Option<Arc<dyn VideoCaptureOutputControl>> {
+        None
+    }
+
     async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError>;
 }
 

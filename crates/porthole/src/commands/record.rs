@@ -119,11 +119,13 @@ pub trait OrderedFrame {
     fn bytes(&self) -> &[u8];
 }
 
+#[async_trait::async_trait(?Send)]
 pub trait OrderedFrameConsumer {
     type Frame: OrderedFrame;
 
     fn next_frame_after(&mut self, track_id: u64, after_producer_cursor: u64) -> Result<RecordAcquire<Self::Frame>, ClientError>;
     fn release_frame(&mut self, frame: Self::Frame) -> Result<(), ClientError>;
+    async fn wait_ready(&mut self, timeout: Duration) -> Result<(), ClientError>;
 }
 
 pub trait MovieWriter {
@@ -281,7 +283,7 @@ where
                         "recording produced no video frames before the deadline".to_string(),
                     ));
                 }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                consumer.wait_ready(deadline.saturating_duration_since(Instant::now())).await?;
             }
             RecordAcquire::Unavailable(unavailable) => {
                 return Err(ClientError::Local(format!("video frame unavailable: {}", unavailable.reason)));
@@ -332,13 +334,14 @@ impl RecordSessionClient for DaemonClient {
     }
 }
 
-impl OrderedFrame for jackstay::daemon::DaemonFrame {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl OrderedFrame for jackstay::acquisition::arena::FrameLease {
     fn producer_cursor(&self) -> u64 {
-        self.producer_cursor
+        self.cursor()
     }
 
     fn timestamp_ns(&self) -> u64 {
-        self.desc.timestamp_ns
+        self.descriptor().timestamp_ns
     }
 
     fn bytes(&self) -> &[u8] {
@@ -367,7 +370,12 @@ pub async fn run(client: &mut DaemonClient, args: RecordArgs) -> Result<(), Clie
 struct ProductionRecorderFactory;
 
 struct DaemonOrderedFrameConsumer {
-    inner: jackstay::daemon::DaemonConsumer,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    inner: jackstay::daemon::ConnectedSession,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    observed: jackstay::acquisition::arena::WaitEvents,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    cancel: jackstay::acquisition::arena::Cancellation,
 }
 
 impl RecorderFactory for ProductionRecorderFactory {
@@ -375,25 +383,39 @@ impl RecorderFactory for ProductionRecorderFactory {
     type Writer = AvMovieWriter;
 
     fn connect_consumer(&mut self, session: &RecordSession) -> Result<Self::Consumer<'_>, ClientError> {
-        let pixel_format = match session.pixel_format.as_str() {
-            "bgra8_unorm" => jackstay::model::PixelFormat::Bgra8Unorm,
-            "rgba8_unorm" => jackstay::model::PixelFormat::Rgba8Unorm,
-            _ => jackstay::model::PixelFormat::Unknown,
-        };
-        let info = jackstay::daemon::SessionInfo {
-            session_id: session.session_id.clone(),
-            source_id: 0,
-            track_id: session.track_id,
-            width: session.width,
-            height: session.height,
-            stride: session.stride,
-            pixel_format,
-            fd_socket_path: session.fd_socket_path.clone(),
-            bearer_token: session.bearer_token.clone(),
-        };
-        jackstay::daemon::DaemonConsumer::connect(info)
-            .map(|inner| DaemonOrderedFrameConsumer { inner })
-            .map_err(|error| ClientError::Local(error.to_string()))
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = session;
+            Err(ClientError::Local(
+                "CPU acquisition transport is unavailable on this platform".into(),
+            ))
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let pixel_format = match session.pixel_format.as_str() {
+                "bgra8_unorm" => jackstay::model::PixelFormat::Bgra8Unorm,
+                "rgba8_unorm" => jackstay::model::PixelFormat::Rgba8Unorm,
+                _ => jackstay::model::PixelFormat::Unknown,
+            };
+            let info = jackstay::daemon::SessionInfo {
+                session_id: session.session_id.clone(),
+                source_id: 0,
+                track_id: session.track_id,
+                width: session.width,
+                height: session.height,
+                stride: session.stride,
+                pixel_format,
+                fd_socket_path: session.fd_socket_path.clone(),
+                bearer_token: session.bearer_token.clone(),
+            };
+            // SAFETY: the local authorized Porthole host is the sole conforming
+            // producer. The recorder never forks or forwards its process-bound maps.
+            let inner =
+                unsafe { jackstay::daemon::ConnectedSession::connect(info, 1) }.map_err(|error| ClientError::Local(error.to_string()))?;
+            let observed = inner.consumer.events();
+            let cancel = jackstay::acquisition::arena::Cancellation::new().map_err(|error| ClientError::Local(error.to_string()))?;
+            Ok(DaemonOrderedFrameConsumer { inner, observed, cancel })
+        }
     }
 
     fn open_writer(&mut self, settings: &MovieWriterSettings) -> Result<Self::Writer, ClientError> {
@@ -401,27 +423,124 @@ impl RecorderFactory for ProductionRecorderFactory {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[async_trait::async_trait(?Send)]
 impl OrderedFrameConsumer for DaemonOrderedFrameConsumer {
-    type Frame = jackstay::daemon::DaemonFrame;
+    type Frame = jackstay::acquisition::arena::FrameLease;
 
-    fn next_frame_after(&mut self, track_id: u64, after_producer_cursor: u64) -> Result<RecordAcquire<Self::Frame>, ClientError> {
-        match self.inner.next_frame_after(track_id, after_producer_cursor) {
-            Ok(jackstay::daemon::DaemonFrameAcquire::Frame(frame)) => Ok(RecordAcquire::Frame(frame)),
-            Ok(jackstay::daemon::DaemonFrameAcquire::Unavailable(unavailable)) => Ok(RecordAcquire::Unavailable(RecordFrameUnavailable {
-                after_producer_cursor: unavailable.after_producer_cursor,
-                oldest_available_cursor: unavailable.oldest_available_cursor,
-                latest_available_cursor: unavailable.latest_available_cursor,
-                skipped_count: unavailable.skipped_count,
-                reason: unavailable.reason.into(),
+    fn next_frame_after(&mut self, track_id: u64, after: u64) -> Result<RecordAcquire<Self::Frame>, ClientError> {
+        use jackstay::acquisition::arena::AcquireOutcome;
+        if track_id != self.inner.info.track_id {
+            return Err(ClientError::Local("recording requested an unknown track".into()));
+        }
+        // Snapshot before selection, so publication between Empty and wait is
+        // observed without relying on another frame to wake the recorder.
+        self.observed = self.inner.consumer.events();
+        let result = self
+            .inner
+            .consumer
+            .acquire_next(after)
+            .map_err(|error| ClientError::Local(error.to_string()))?;
+        match result {
+            AcquireOutcome::Frame(frame) => {
+                let descriptor = frame.descriptor();
+                let info = &self.inner.info;
+                if descriptor.width != info.width
+                    || descriptor.height != info.height
+                    || descriptor.stride != info.stride
+                    || descriptor.pixel_format != info.pixel_format as u32
+                    || frame.bytes().len()
+                        != (info.stride as usize)
+                            .checked_mul(info.height as usize)
+                            .ok_or_else(|| ClientError::Local("recording frame size overflow".into()))?
+                {
+                    return Err(ClientError::Local(
+                        "capture format changed; start a new recording for the new format".into(),
+                    ));
+                }
+                Ok(RecordAcquire::Frame(frame))
+            }
+            AcquireOutcome::Empty => Ok(RecordAcquire::Unavailable(RecordFrameUnavailable {
+                after_producer_cursor: after,
+                oldest_available_cursor: 0,
+                latest_available_cursor: self.observed.data_cursor,
+                skipped_count: 0,
+                reason: FrameUnavailableReason::Empty,
             })),
-            Err(error) => Err(ClientError::Local(error.to_string())),
+            AcquireOutcome::Gap { first, last } => Ok(RecordAcquire::Unavailable(RecordFrameUnavailable {
+                after_producer_cursor: after,
+                oldest_available_cursor: last.saturating_add(1),
+                latest_available_cursor: self.inner.consumer.events().data_cursor,
+                skipped_count: last - first + 1,
+                reason: FrameUnavailableReason::Lapped,
+            })),
+            AcquireOutcome::Reconfiguration => Err(ClientError::Local(
+                "capture configuration changed; start a new recording for the new configuration".into(),
+            )),
+            AcquireOutcome::Closed => Err(ClientError::Local("capture session closed during recording".into())),
+            AcquireOutcome::HoldingLimit => Err(ClientError::Local("recorder still holds its previous frame".into())),
+            AcquireOutcome::Miss { .. } => Err(ClientError::Local(
+                "ordered acquisition unexpectedly returned an exact-frame miss".into(),
+            )),
         }
     }
 
     fn release_frame(&mut self, frame: Self::Frame) -> Result<(), ClientError> {
-        self.inner
-            .release_frame(frame)
-            .map_err(|error| ClientError::Local(error.to_string()))
+        drop(frame);
+        Ok(())
+    }
+
+    async fn wait_ready(&mut self, timeout: Duration) -> Result<(), ClientError> {
+        use jackstay::acquisition::arena::{WaitInterest, WaitOutcome};
+        // Bound each blocking interval to let async cancellation drop the
+        // connection and consumer promptly at the yield below. The arena poll
+        // wakes immediately on data, reconfiguration or session closure.
+        let result = tokio::task::block_in_place(|| {
+            self.inner.consumer.wait(
+                self.observed,
+                WaitInterest::DATA,
+                &self.cancel,
+                Some(timeout.min(Duration::from_millis(100))),
+            )
+        })
+        .map_err(|error| ClientError::Local(error.to_string()))?;
+        tokio::task::yield_now().await;
+        if result == WaitOutcome::Cancelled {
+            return Err(ClientError::Local("recording wait cancelled".into()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl OrderedFrame for std::convert::Infallible {
+    fn producer_cursor(&self) -> u64 {
+        match *self {}
+    }
+    fn timestamp_ns(&self) -> u64 {
+        match *self {}
+    }
+    fn bytes(&self) -> &[u8] {
+        match *self {}
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[async_trait::async_trait(?Send)]
+impl OrderedFrameConsumer for DaemonOrderedFrameConsumer {
+    type Frame = std::convert::Infallible;
+    fn next_frame_after(&mut self, _: u64, _: u64) -> Result<RecordAcquire<Self::Frame>, ClientError> {
+        Err(ClientError::Local(
+            "CPU acquisition transport is unavailable on this platform".into(),
+        ))
+    }
+    fn release_frame(&mut self, frame: Self::Frame) -> Result<(), ClientError> {
+        match frame {}
+    }
+    async fn wait_ready(&mut self, _: Duration) -> Result<(), ClientError> {
+        Err(ClientError::Local(
+            "CPU acquisition transport is unavailable on this platform".into(),
+        ))
     }
 }
 
@@ -432,5 +551,154 @@ impl MovieWriter for AvMovieWriter {
 
     fn finish(&mut self) -> Result<(), ClientError> {
         tokio::task::block_in_place(|| self.finish())
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod acquisition_tests {
+    use std::{
+        os::unix::net::UnixStream,
+        sync::{Arc, Mutex},
+    };
+
+    use jackstay::acquisition::{
+        arena::{ArenaConfig, ArenaProducer, Cancellation, FrameDescriptor},
+        socket::{CpuSetupClient, serve_cpu},
+    };
+
+    use super::*;
+
+    fn connected() -> (DaemonOrderedFrameConsumer, Arc<Mutex<ArenaProducer>>, std::thread::JoinHandle<()>) {
+        let producer = Arc::new(Mutex::new(
+            ArenaProducer::new(ArenaConfig {
+                resource_capacity: 5,
+                retained_history: 2,
+                producer_reserve: 1,
+                payload_capacity: 4,
+                memory_budget: 1024 * 1024,
+                max_incarnations: 1,
+                drain_timeout: Duration::from_secs(5),
+            })
+            .unwrap(),
+        ));
+        let (server, stream) = UnixStream::pair().unwrap();
+        let served = producer.clone();
+        let task = std::thread::spawn(move || serve_cpu(server, served).unwrap());
+        // SAFETY: this is our conforming producer and these mappings never
+        // leave the intended recipient process or cross a fork.
+        let mut setup = unsafe { CpuSetupClient::from_stream(stream) };
+        let consumer = setup.attach(1).unwrap();
+        let observed = consumer.events();
+        let inner = jackstay::daemon::ConnectedSession {
+            setup,
+            consumer,
+            info: jackstay::daemon::SessionInfo {
+                session_id: "test".into(),
+                source_id: 1,
+                track_id: 1,
+                width: 1,
+                height: 1,
+                stride: 4,
+                pixel_format: jackstay::model::PixelFormat::Bgra8Unorm,
+                fd_socket_path: String::new(),
+                bearer_token: None,
+            },
+        };
+        (
+            DaemonOrderedFrameConsumer {
+                inner,
+                observed,
+                cancel: Cancellation::new().unwrap(),
+            },
+            producer,
+            task,
+        )
+    }
+
+    fn publish(producer: &Mutex<ArenaProducer>, timestamp_ns: u64) {
+        producer
+            .lock()
+            .unwrap()
+            .publish(
+                FrameDescriptor {
+                    width: 1,
+                    height: 1,
+                    stride: 4,
+                    pixel_format: jackstay::model::PixelFormat::Bgra8Unorm as u32,
+                    timestamp_ns,
+                    ..Default::default()
+                },
+                b"held",
+            )
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recorder_wakes_for_publication_between_empty_and_wait_and_releases_credit() {
+        let (mut consumer, producer, task) = connected();
+        assert!(matches!(consumer.next_frame_after(1, 0).unwrap(), RecordAcquire::Unavailable(_)));
+        publish(&producer, 42);
+        consumer.wait_ready(Duration::from_secs(1)).await.unwrap();
+        let RecordAcquire::Frame(frame) = consumer.next_frame_after(1, 0).unwrap() else {
+            panic!("missing frame")
+        };
+        assert_eq!(frame.timestamp_ns(), 42);
+        assert_eq!(frame.bytes(), b"held");
+        assert!(consumer.next_frame_after(1, 0).unwrap_err().to_string().contains("still holds"));
+        consumer.release_frame(frame).unwrap();
+        assert!(matches!(consumer.next_frame_after(1, 1).unwrap(), RecordAcquire::Unavailable(_)));
+        producer.lock().unwrap().stop();
+        consumer.wait_ready(Duration::from_secs(1)).await.unwrap();
+        assert!(consumer.next_frame_after(1, 1).unwrap_err().to_string().contains("closed"));
+        drop(consumer);
+        task.join().unwrap();
+        assert!(producer.lock().unwrap().poll_shutdown_ready().unwrap());
+    }
+
+    #[test]
+    fn recorder_reports_ordered_gaps_and_rejects_configuration_changes() {
+        let (mut consumer, producer, task) = connected();
+        for timestamp in 1..=5 {
+            publish(&producer, timestamp);
+        }
+        let RecordAcquire::Unavailable(gap) = consumer.next_frame_after(1, 1).unwrap() else {
+            panic!("missing gap")
+        };
+        assert_eq!(gap.reason, FrameUnavailableReason::Lapped);
+        assert_eq!(gap.oldest_available_cursor, 4);
+        assert_eq!(gap.skipped_count, 2);
+        let RecordAcquire::Frame(frame) = consumer.next_frame_after(1, 3).unwrap() else {
+            panic!("missing retained frame")
+        };
+        assert_eq!(frame.producer_cursor(), 4);
+        consumer.release_frame(frame).unwrap();
+        producer.lock().unwrap().reconfigure_cpu(8).unwrap();
+        assert!(
+            consumer
+                .next_frame_after(1, 4)
+                .unwrap_err()
+                .to_string()
+                .contains("configuration changed")
+        );
+        drop(consumer);
+        task.join().unwrap();
+        producer.lock().unwrap().stop();
+        assert!(producer.lock().unwrap().poll_shutdown_ready().unwrap());
+    }
+
+    #[test]
+    fn format_mismatch_drops_the_lease_before_reporting_an_error() {
+        let (mut consumer, producer, task) = connected();
+        producer.lock().unwrap().publish(FrameDescriptor::default(), b"oops").unwrap();
+        assert!(consumer.next_frame_after(1, 0).unwrap_err().to_string().contains("format changed"));
+        publish(&producer, 2);
+        let RecordAcquire::Frame(frame) = consumer.next_frame_after(1, 1).unwrap() else {
+            panic!("rejected frame leaked holding credit")
+        };
+        consumer.release_frame(frame).unwrap();
+        drop(consumer);
+        task.join().unwrap();
+        producer.lock().unwrap().stop();
+        assert!(producer.lock().unwrap().poll_shutdown_ready().unwrap());
     }
 }

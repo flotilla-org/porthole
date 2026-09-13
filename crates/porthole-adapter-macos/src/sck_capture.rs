@@ -44,7 +44,6 @@ unsafe extern "C" {
         ctx: *mut c_void,
         out_handle: *mut *mut c_void,
     ) -> *mut c_char;
-    fn porthole_sck_stop(handle: *mut c_void);
     fn porthole_sck_free_error(message: *mut c_char);
     fn porthole_sck_screenshot_window(
         cg_window_id: u32,
@@ -229,7 +228,7 @@ fn start_video_capture_blocking(cg_window_id: u32) -> Result<MacVideoCaptureSess
         ));
     }
     Ok(MacVideoCaptureSession {
-        raw_handle,
+        control: unsafe { crate::sck_control::SckControl::new(raw_handle) },
         state: state_ptr,
         rx,
     })
@@ -286,7 +285,7 @@ fn start_video_capture_publisher_blocking(
         ));
     }
     Ok(MacPublishedVideoCaptureSession {
-        raw_handle,
+        control: unsafe { crate::sck_control::SckControl::new(raw_handle) },
         state: state_ptr,
         rx: error_rx,
     })
@@ -394,13 +393,13 @@ fn frame_metadata(
 }
 
 struct MacVideoCaptureSession {
-    raw_handle: *mut c_void,
+    control: Arc<crate::sck_control::SckControl>,
     state: *mut CallbackState,
     rx: mpsc::Receiver<Result<VideoCaptureFrame, String>>,
 }
 
 struct MacPublishedVideoCaptureSession {
-    raw_handle: *mut c_void,
+    control: Arc<crate::sck_control::SckControl>,
     state: *mut PublisherCallbackState,
     rx: mpsc::Receiver<Result<(), String>>,
 }
@@ -416,6 +415,10 @@ unsafe impl Send for MacPublishedVideoCaptureSession {}
 
 #[async_trait]
 impl VideoCaptureSession for MacVideoCaptureSession {
+    fn output_control(&self) -> Option<Arc<dyn porthole_core::adapter::VideoCaptureOutputControl>> {
+        Some(self.control.clone())
+    }
+
     async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError> {
         match self.rx.recv().await {
             Some(Ok(frame)) => Ok(Some(frame)),
@@ -427,6 +430,10 @@ impl VideoCaptureSession for MacVideoCaptureSession {
 
 #[async_trait]
 impl VideoCaptureSession for MacPublishedVideoCaptureSession {
+    fn output_control(&self) -> Option<Arc<dyn porthole_core::adapter::VideoCaptureOutputControl>> {
+        Some(self.control.clone())
+    }
+
     async fn next_frame(&mut self) -> Result<Option<VideoCaptureFrame>, PortholeError> {
         match self.rx.recv().await {
             Some(Err(message)) => Err(PortholeError::new(ErrorCode::CapabilityMissing, message)),
@@ -439,7 +446,7 @@ impl VideoCaptureSession for MacPublishedVideoCaptureSession {
 impl Drop for MacVideoCaptureSession {
     fn drop(&mut self) {
         unsafe {
-            porthole_sck_stop(self.raw_handle);
+            self.control.stop();
             drop(Box::from_raw(self.state));
         }
     }
@@ -448,7 +455,7 @@ impl Drop for MacVideoCaptureSession {
 impl Drop for MacPublishedVideoCaptureSession {
     fn drop(&mut self) {
         unsafe {
-            porthole_sck_stop(self.raw_handle);
+            self.control.stop();
             drop(Box::from_raw(self.state));
         }
     }

@@ -352,6 +352,7 @@ struct FakeConsumer<'a> {
     released_cursors: &'a mut Vec<u64>,
 }
 
+#[async_trait::async_trait(?Send)]
 impl OrderedFrameConsumer for FakeConsumer<'_> {
     type Frame = FakeFrame;
 
@@ -366,6 +367,11 @@ impl OrderedFrameConsumer for FakeConsumer<'_> {
             }));
         }
         Ok(self.acquires.remove(0))
+    }
+
+    async fn wait_ready(&mut self, timeout: Duration) -> Result<(), ClientError> {
+        tokio::time::sleep(timeout).await;
+        Ok(())
     }
 
     fn release_frame(&mut self, frame: Self::Frame) -> Result<(), ClientError> {

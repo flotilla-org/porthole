@@ -286,7 +286,7 @@ async fn permission_needed(
     }))
 }
 
-async fn authenticated_agent_id(state: &AppState, headers: &HeaderMap) -> Result<AgentId, ApiError> {
+pub(crate) async fn authenticated_agent_id(state: &AppState, headers: &HeaderMap) -> Result<AgentId, ApiError> {
     let token = bearer_token(headers)?;
     state
         .agent_store
