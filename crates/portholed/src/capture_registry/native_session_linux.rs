@@ -118,6 +118,7 @@ pub(super) async fn create(
             cpu: None,
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         },
     );
 

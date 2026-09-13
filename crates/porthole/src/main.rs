@@ -595,6 +595,16 @@ enum CaptureSessionCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Request fixed output dimensions in pixels (when supported by the backend).
+    Configure {
+        session_id: String,
+        #[arg(long)]
+        width: u32,
+        #[arg(long)]
+        height: u32,
+        #[arg(long)]
+        json: bool,
+    },
     /// Close a capture session and stop its producer.
     Close { session_id: String },
 }
@@ -1084,6 +1094,12 @@ async fn async_main() -> std::process::ExitCode {
                 )
                 .await
             }
+            CaptureSessionCommand::Configure {
+                session_id,
+                width,
+                height,
+                json,
+            } => porthole::commands::capture_session::configure(&client, &session_id, width, height, json).await,
             CaptureSessionCommand::Close { session_id } => porthole::commands::capture_session::close(&client, &session_id).await,
         },
         Command::Record { command } => match command {

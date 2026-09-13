@@ -86,6 +86,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/system-permissions/request", post(system_permissions_route::post_request))
         .route("/capture-sessions/synthetic", post(capture_sessions_route::post_synthetic))
         .route("/capture-sessions/surfaces/{id}", post(capture_sessions_route::post_surface))
+        .route("/capture-sessions/{id}/output", post(capture_sessions_route::post_output))
         .route(
             "/capture-sessions/{id}",
             get(capture_sessions_route::get_session).delete(capture_sessions_route::delete_session),
@@ -424,6 +425,24 @@ mod tests {
         let body = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
         let session: porthole_protocol::capture_sessions::CaptureSessionResponse = serde_json::from_slice(&body).unwrap();
         assert!(matches!(session.status.as_str(), "draining" | "closed"));
+    }
+
+    #[tokio::test]
+    async fn output_route_requires_identity_and_reports_unsupported_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::new_with_capture_socket(Arc::new(InMemoryAdapter::new()), temp.path().join("capture-transfer.sock")).unwrap();
+        let identity = state.agent_store.create_identity("output", None, 1_000).await.unwrap();
+        let created = state.capture.create_synthetic_session().unwrap();
+        let router = build_router(state);
+        let path = format!("/capture-sessions/{}/output", created.session_id);
+        let body = serde_json::json!({"width": 1920, "height": 1080});
+        let response = post(router.clone(), &path, body.clone()).await;
+        assert!(response.status().is_client_error());
+        let error: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(error["code"], "agent_identity_required");
+        let response = post_with_token(router, &path, &identity.token, body).await;
+        let error: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(error["code"], "adapter_unsupported");
     }
 
     #[tokio::test]

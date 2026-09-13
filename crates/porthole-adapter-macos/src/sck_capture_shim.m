@@ -163,6 +163,38 @@ static char *porthole_sck_copy_nserror(NSError *error, NSString *context) {
   return porthole_sck_copy_error(full);
 }
 
+// Both initial setup and explicit resizing use this complete configuration.
+static SCStreamConfiguration *porthole_sck_window_config(size_t width, size_t height) API_AVAILABLE(macos(12.3)) {
+  SCStreamConfiguration *config = [SCStreamConfiguration new];
+  config.width = width;
+  config.height = height;
+  config.pixelFormat = kCVPixelFormatType_32BGRA;
+  config.queueDepth = 3;
+  config.showsCursor = YES;
+  config.capturesAudio = NO;
+  return config;
+}
+
+// Called under the Rust handle lock; completion never touches the raw handle
+// or the frame callback context. It must consume the request context exactly once.
+void porthole_sck_set_output_size(void *rawHandle, uint32_t width, uint32_t height,
+                                  void (*completion)(void *, const char *), void *ctx) {
+  if (@available(macOS 12.3, *)) {
+    PortholeSckHandle *handle = (__bridge PortholeSckHandle *)rawHandle;
+    SCStream *stream = handle.stream;
+    [stream updateConfiguration:porthole_sck_window_config(width, height)
+             completionHandler:^(NSError *error) {
+               // Keep the stream alive until completion, including concurrent stop.
+               (void)stream;
+               char *message = error == nil ? NULL : porthole_sck_copy_nserror(error, @"SCStream output update failed");
+               completion(ctx, message);
+               free(message);
+             }];
+  } else {
+    completion(ctx, "ScreenCaptureKit requires macOS 12.3 or newer");
+  }
+}
+
 // Shared stream setup for the CPU-copy and native (IOSurface) delivery
 // paths; `output` arrives with the wanted callback already set.
 static char *porthole_sck_start_window_common(uint32_t cgWindowId, PortholeSckOutput *output, void **outHandle) {
@@ -219,13 +251,7 @@ static char *porthole_sck_start_window_common(uint32_t cgWindowId, PortholeSckOu
     size_t width = (size_t)MAX(1.0, ceil(rect.size.width * scale));
     size_t height = (size_t)MAX(1.0, ceil(rect.size.height * scale));
 
-    SCStreamConfiguration *config = [SCStreamConfiguration new];
-    config.width = width;
-    config.height = height;
-    config.pixelFormat = kCVPixelFormatType_32BGRA;
-    config.queueDepth = 3;
-    config.showsCursor = YES;
-    config.capturesAudio = NO;
+    SCStreamConfiguration *config = porthole_sck_window_config(width, height);
 
     SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:output];
     dispatch_queue_t queue = dispatch_queue_create("work.flotilla.porthole.sck-capture", DISPATCH_QUEUE_SERIAL);

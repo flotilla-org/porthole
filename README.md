@@ -525,3 +525,26 @@ See each slice's spec for what's in vs. deferred.
 ## License
 
 Dual-licensed under Apache 2.0 or MIT at your option.
+
+### Capture output sizing
+
+macOS CPU and native capture sessions keep a fixed output size, initially chosen
+from the source. Changing window geometry does not change that output size. The
+session's authenticated owner can request new dimensions in pixels:
+
+```sh
+porthole capture-session configure "$SESSION_ID" --width 1920 --height 1080 --json
+```
+
+This calls `POST /capture-sessions/{id}/output` with
+`{"width":1920,"height":1080}`. A `202` response reports the accepted request;
+`GET /capture-sessions/{id}` continues reporting the actual published dimensions.
+Existing frame leases survive the change. Held resources can delay pool admission,
+which is visible in the session status. Requests must fit the current eight-slot,
+512 MiB pool budget (with space reserved for metadata); a concurrent update is
+rejected until the backend completes the previous one. Cancelling the request
+does not undo an update already submitted to the backend.
+
+Backends without output-size control return `adapter_unsupported`. Richer capture
+capabilities and requests remain future work; see the
+[sizing decision](docs/2026-09-13-capture-output-sizing.md).

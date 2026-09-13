@@ -25,7 +25,8 @@ use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{
         Adapter, VideoCaptureColorSpace, VideoCaptureDamageKind, VideoCaptureFrame, VideoCaptureFrameMetadata, VideoCaptureFramePublisher,
-        VideoCaptureFrameView, VideoCapturePixelFormat, VideoCaptureSession, VideoCaptureTimestampClock,
+        VideoCaptureFrameView, VideoCaptureOutputControl, VideoCaptureOutputSize, VideoCapturePixelFormat, VideoCaptureSession,
+        VideoCaptureTimestampClock,
     },
     agent_policy::AgentId,
     surface::SurfaceInfo,
@@ -115,6 +116,7 @@ struct CaptureSession {
     cpu: Option<cpu_session::CpuSession>,
     capture_task: Option<tokio::task::JoinHandle<()>>,
     startup_cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    output_control: Option<Arc<dyn VideoCaptureOutputControl>>,
 }
 
 impl CaptureSession {
@@ -363,6 +365,7 @@ impl CaptureRegistry {
             cpu: Some(cpu),
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         };
         self.inner
             .lock()
@@ -443,6 +446,7 @@ impl CaptureRegistry {
                 cpu: Some(cpu_session::CpuSession::new()?),
                 capture_task: None,
                 startup_cancel: Some(startup_cancel_tx),
+                output_control: None,
             },
         );
 
@@ -459,6 +463,7 @@ impl CaptureRegistry {
                 return Err(CaptureRegistryError::from_porthole(error));
             }
         };
+        let output_control = capture.output_control();
         let task = tokio::spawn(run_capture_session_monitor(self.clone(), session_id.clone(), capture));
         {
             let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
@@ -480,6 +485,7 @@ impl CaptureRegistry {
                 });
             }
             session.capture_task = Some(task);
+            session.output_control = output_control;
         }
 
         let first_frame = tokio::select! {
@@ -593,6 +599,7 @@ impl CaptureRegistry {
         let cpu = cpu_session::CpuSession::new()?;
         publish_capture_frame_view(&cpu, first_frame.as_view())?;
 
+        let output_control = capture.output_control();
         let task = tokio::spawn(run_capture_session_monitor(self.clone(), session_id.clone(), capture));
 
         let session = CaptureSession {
@@ -607,6 +614,7 @@ impl CaptureRegistry {
             cpu: Some(cpu),
             capture_task: Some(task),
             startup_cancel: None,
+            output_control,
         };
         self.inner
             .lock()
@@ -792,6 +800,55 @@ impl CaptureRegistry {
                 "capture transfer connection is not authorized for this session",
             ))),
         }
+    }
+
+    /// Controls are reserved to the authenticated creator of the session.
+    /// Never hold the registry mutex across a backend call: capture callbacks
+    /// publish through this same registry while the update is in progress.
+    pub async fn set_output_size(
+        &self,
+        session_id: &str,
+        agent_id: &AgentId,
+        size: VideoCaptureOutputSize,
+    ) -> Result<(), CaptureRegistryError> {
+        let control = {
+            let inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+            let session = inner
+                .sessions
+                .get(session_id)
+                .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_owned()))?;
+            if session.owner_agent_id.as_ref().is_some_and(|owner| owner != agent_id) {
+                return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+                    ErrorCode::AgentPermissionDenied,
+                    "only the capture session owner may change its output",
+                )));
+            }
+            if session.lifecycle != CaptureSessionLifecycle::Ready {
+                return Err(CaptureRegistryError::NotReady {
+                    session_id: session_id.to_owned(),
+                    status: session.lifecycle.status_name(),
+                });
+            }
+            session.output_control.clone().ok_or_else(|| {
+                CaptureRegistryError::from_porthole(PortholeError::new(
+                    ErrorCode::AdapterUnsupported,
+                    "this capture session does not support output size requests",
+                ))
+            })?
+        };
+        // Current BGRA host pools have eight resources and a 512 MiB budget.
+        // Reserve 1 MiB for pool metadata and conservatively align rows to 256
+        // bytes. This is a request ceiling, not a promise of immediate admission:
+        // old leases still count and can delay replacement within Jackstay.
+        let row = u64::from(size.width) * 4;
+        let frame_bytes = (row.div_ceil(256) * 256).checked_mul(u64::from(size.height));
+        if size.width == 0 || size.height == 0 || frame_bytes.is_none_or(|bytes| bytes > (512 * 1024 * 1024 - 1024 * 1024) / 8) {
+            return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                "capture output must have positive pixel dimensions and fit the session pool budget",
+            )));
+        }
+        control.set_output_size(size).await.map_err(CaptureRegistryError::from_porthole)
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<CaptureSessionResponse, CaptureRegistryError> {

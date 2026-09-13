@@ -26,6 +26,28 @@ pub async fn surface(client: &DaemonClient, surface_id: &str, native: bool, args
     print_session_response("surface", client, args, &res)
 }
 
+pub async fn configure(client: &DaemonClient, session_id: &str, width: u32, height: u32, json: bool) -> Result<(), ClientError> {
+    use porthole_protocol::capture_sessions::{CaptureOutputRequest, CaptureOutputResponse};
+    let res: CaptureOutputResponse = client
+        .post_json(
+            &format!("/capture-sessions/{session_id}/output"),
+            &CaptureOutputRequest { width, height },
+        )
+        .await?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&res).map_err(|error| ClientError::Local(format!("json encode: {error}")))?
+        );
+    } else {
+        println!(
+            "capture session {} accepted output request {}×{} pixels; published dimensions are available from GET /capture-sessions/{}",
+            res.session_id, res.requested.width, res.requested.height, res.session_id
+        );
+    }
+    Ok(())
+}
+
 pub async fn close(client: &DaemonClient, session_id: &str) -> Result<(), ClientError> {
     client.delete_empty(&format!("/capture-sessions/{session_id}")).await?;
     println!("closed capture session {session_id}");

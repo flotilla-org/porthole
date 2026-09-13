@@ -1,8 +1,8 @@
 # Capture output sizing and live reconfiguration
 
-Status: sizing policy under discussion. This records why the live resize check
-has not yet exercised Jackstay pool replacement. It does not change the agreed
-acquisition lifetime contract.
+Status: fixed output with explicit reconfiguration agreed on 2026-09-13.
+This does not change the agreed acquisition lifetime contract. The live evidence
+below predates the explicit output control.
 
 On 2026-09-13, Porthole's installed `67fa206` build captured a dedicated TextEdit
 window through both CPU and native ScreenCaptureKit paths. Accessibility and
@@ -37,15 +37,26 @@ with content rectangle and scale metadata describing the result. It also warns
 that frequent output-size changes allocate additional storage. This matches the
 live observations. See [Take ScreenCaptureKit to the next level, WWDC22](https://developer.apple.com/videos/play/wwdc2022/10155/).
 
-## Decision needed
+## Agreed policy
 
-Window size and capture-buffer size are separate controls. The current
-recommendation is to retain a fixed output size and add an explicit host request
-to reconfigure the output. An alternative is to make output dimensions follow
-the source window automatically. Neither policy has been newly agreed by this
-investigation. Source selection and output policy belong to Porthole; Jackstay
-owns the admitted storage and lease-safe transition when the producer changes
-format.
+Window size and capture-buffer size are separate controls. Keep a fixed output
+size, initially chosen from the source, and let the session owner explicitly
+request new pixel dimensions. Source selection and output policy belong to
+Porthole; Jackstay owns the admitted storage and lease-safe transition when the
+producer changes format. A successful backend request is not evidence that a
+new pool or frame has already been published. Report actual dimensions from
+published frames throughout the transition.
+
+Support is backend-specific. A backend that cannot honor output size requests
+must return unsupported. A later capability/request model should distinguish
+what a source/backend offers, what the caller requests and what was obtained,
+without silently weakening requirements or imposing a lowest common denominator.
+That model remains future work.
+
+For applications intended only for Porthole/Jackstay consumption, Linux may
+eventually use a small purpose-built or repurposed compositor. macOS and Windows
+will have different constraints. Controlled displays and compositor integration
+are future directions, not requirements for this output control.
 
 Manual window resizing alone is therefore insufficient for the missing live
 pool-replacement check. The next test needs an actual output configuration

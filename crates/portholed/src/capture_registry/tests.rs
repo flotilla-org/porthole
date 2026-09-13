@@ -45,6 +45,7 @@ fn insert_session(registry: &CaptureRegistry, id: &str, owner: Option<AgentId>, 
             cpu: Some(cpu),
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         },
     );
 }
@@ -361,6 +362,7 @@ async fn capture_session_monitor_marks_session_closed_when_stream_ends() {
             cpu: Some(cpu_session::CpuSession::new().unwrap()),
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         },
     );
 
@@ -400,6 +402,7 @@ async fn close_session_sends_startup_cancel_signal() {
             cpu: Some(cpu_session::CpuSession::new().unwrap()),
             capture_task: None,
             startup_cancel: Some(cancel_tx),
+            output_control: None,
         },
     );
 
@@ -428,6 +431,7 @@ async fn capture_session_monitor_marks_session_failed_on_error() {
             cpu: Some(cpu_session::CpuSession::new().unwrap()),
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         },
     );
 
@@ -470,6 +474,7 @@ async fn capture_session_monitor_wakes_startup_waiter_on_error() {
             cpu: Some(cpu_session::CpuSession::new().unwrap()),
             capture_task: None,
             startup_cancel: Some(cancel_tx),
+            output_control: None,
         },
     );
 
@@ -491,4 +496,59 @@ async fn capture_session_monitor_wakes_startup_waiter_on_error() {
             message,
         } if id == session_id && message == "capability_missing: source disappeared"
     ));
+}
+
+#[derive(Debug, Default)]
+struct OutputControl {
+    requests: Mutex<Vec<VideoCaptureOutputSize>>,
+}
+
+#[async_trait]
+impl VideoCaptureOutputControl for OutputControl {
+    async fn set_output_size(&self, size: VideoCaptureOutputSize) -> Result<(), PortholeError> {
+        self.requests.lock().unwrap().push(size);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn output_request_checks_owner_bounds_and_lifecycle_before_backend() {
+    let registry = CaptureRegistry::disabled();
+    let owner = AgentId::from("owner");
+    insert_session(&registry, "output", Some(owner.clone()), CaptureSessionLifecycle::Ready);
+    let control = Arc::new(OutputControl::default());
+    registry.inner.lock().unwrap().sessions.get_mut("output").unwrap().output_control = Some(control.clone());
+    let size = VideoCaptureOutputSize { width: 1920, height: 1080 };
+    let error = registry.set_output_size("output", &AgentId::from("other"), size).await.unwrap_err();
+    assert!(matches!(error, CaptureRegistryError::Porthole(e) if e.code == ErrorCode::AgentPermissionDenied));
+    for invalid in [
+        VideoCaptureOutputSize { width: 0, ..size },
+        VideoCaptureOutputSize {
+            width: u32::MAX,
+            height: u32::MAX,
+        },
+    ] {
+        let error = registry.set_output_size("output", &owner, invalid).await.unwrap_err();
+        assert!(matches!(error, CaptureRegistryError::Porthole(e) if e.code == ErrorCode::InvalidArgument));
+    }
+    assert!(control.requests.lock().unwrap().is_empty());
+    registry.set_output_size("output", &owner, size).await.unwrap();
+    assert_eq!(*control.requests.lock().unwrap(), [size]);
+    // Backend acceptance cannot manufacture published dimensions.
+    assert_eq!(registry.inner.lock().unwrap().sessions["output"].width, 1);
+    registry.close_session("output").unwrap();
+    assert!(registry.set_output_size("output", &owner, size).await.is_err());
+    assert_eq!(control.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn output_request_without_backend_control_is_explicitly_unsupported() {
+    let registry = CaptureRegistry::disabled();
+    let owner = AgentId::from("owner");
+    insert_session(&registry, "fixed", Some(owner.clone()), CaptureSessionLifecycle::Ready);
+    let error = registry
+        .set_output_size("fixed", &owner, VideoCaptureOutputSize { width: 1920, height: 1080 })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CaptureRegistryError::Porthole(e) if e.code == ErrorCode::AdapterUnsupported));
 }

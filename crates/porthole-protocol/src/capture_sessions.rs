@@ -51,6 +51,21 @@ pub struct CaptureSessionResponse {
     pub native: Option<NativeCaptureInfo>,
 }
 
+/// Request output dimensions in pixels, independently of source geometry.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureOutputRequest {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Backend acceptance does not assert that a new frame/pool is published yet.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CaptureOutputResponse {
+    pub session_id: String,
+    pub requested: CaptureOutputRequest,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CreateCaptureSessionResponse, NativeCaptureInfo};

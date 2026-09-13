@@ -449,6 +449,7 @@ pub(super) async fn create(
             cpu: None,
             capture_task: None,
             startup_cancel: None,
+            output_control: None,
         },
     );
 
@@ -479,6 +480,7 @@ pub(super) async fn create(
             return Err(CaptureRegistryError::from_porthole(error));
         }
     };
+    let output_control = stream.output_control();
     {
         let mut inner = registry.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
         let hold = inner.native_holds.get_mut(&session_id).expect("startup hold remains reserved");
@@ -536,6 +538,7 @@ pub(super) async fn create(
             });
         }
         session.lifecycle = CaptureSessionLifecycle::Ready;
+        session.output_control = Some(output_control);
         session.width = ready.width;
         session.height = ready.height;
         session.pixel_format = PixelFormat::Bgra8Unorm;

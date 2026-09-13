@@ -43,7 +43,6 @@ unsafe extern "C" {
         ctx: *mut c_void,
         out_handle: *mut *mut c_void,
     ) -> *mut c_char;
-    fn porthole_sck_stop(handle: *mut c_void);
     fn porthole_sck_free_error(message: *mut c_char);
 }
 
@@ -77,7 +76,7 @@ struct NativeCallbackState {
 /// A running native capture stream. Dropping it stops the SCK stream and
 /// tears down the callback state.
 pub struct NativeSckCaptureStream {
-    raw_handle: *mut c_void,
+    control: Arc<crate::sck_control::SckControl>,
     state: *mut NativeCallbackState,
 }
 
@@ -86,10 +85,16 @@ pub struct NativeSckCaptureStream {
 // sample queue) before freeing state.
 unsafe impl Send for NativeSckCaptureStream {}
 
+impl NativeSckCaptureStream {
+    pub fn output_control(&self) -> Arc<dyn porthole_core::adapter::VideoCaptureOutputControl> {
+        self.control.clone()
+    }
+}
+
 impl Drop for NativeSckCaptureStream {
     fn drop(&mut self) {
         unsafe {
-            porthole_sck_stop(self.raw_handle);
+            self.control.stop();
             drop(Box::from_raw(self.state));
         }
     }
@@ -153,7 +158,7 @@ fn start_native_window_capture_blocking(
         ));
     }
     Ok(NativeSckCaptureStream {
-        raw_handle,
+        control: unsafe { crate::sck_control::SckControl::new(raw_handle) },
         state: state_ptr,
     })
 }
