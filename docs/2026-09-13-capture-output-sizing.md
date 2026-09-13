@@ -2,7 +2,9 @@
 
 Status: fixed output with explicit reconfiguration agreed on 2026-09-13.
 This does not change the agreed acquisition lifetime contract. The live evidence
-below predates the explicit output control.
+below predates the explicit output control. The subsequent
+[output reconfiguration acceptance](2026-09-13-live-output-reconfiguration.md)
+passed both transitions with old CPU/native frames held.
 
 On 2026-09-13, Porthole's installed `67fa206` build captured a dedicated TextEdit
 window through both CPU and native ScreenCaptureKit paths. Accessibility and
@@ -58,10 +60,10 @@ eventually use a small purpose-built or repurposed compositor. macOS and Windows
 will have different constraints. Controlled displays and compositor integration
 are future directions, not requirements for this output control.
 
-Manual window resizing alone is therefore insufficient for the missing live
-pool-replacement check. The next test needs an actual output configuration
-change while the probe retains its old frames. The existing bounded CPU/native
-replacement tests remain relevant, but do not replace that live evidence.
+Manual window resizing alone was therefore insufficient for the live
+pool-replacement check. The subsequent test used actual output configuration
+changes while retaining old frames and passed. The existing bounded CPU/native
+replacement tests remain separate coverage for admission under pressure.
 
 Local evidence and the probe are in `/tmp/porthole-live-resize-wqbxm8zv/`:
 `probe.log`, `probe/src/main.rs`, `resize-results.json`, `final-evidence.json`,

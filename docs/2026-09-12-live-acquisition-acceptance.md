@@ -34,12 +34,13 @@ CPU and native sessions then started, and new viewer processes completed eight
 frames each. This verifies successful session retirement and reuse of the named
 native service reservation for this run.
 
-## Remaining resize evidence
+## Resize evidence available at this run
 
 The [2026-09-13 TextEdit investigation](2026-09-13-capture-output-sizing.md)
 shows that resizing a window does not resize the configured capture buffers.
-The next check needs an actual output configuration change, not further manual
-window resizing alone.
+The subsequent [explicit output test](2026-09-13-live-output-reconfiguration.md)
+passed two actual format transitions with old CPU/native frames held. The
+observations below record why source resizing alone was insufficient.
 
 Porthole's attempt to resize Simulator from 456×972 to 380×810 returned HTTP 501,
 `capability_missing`, with `AX refused position/size write: pos=0 size=-25200`.
@@ -52,9 +53,9 @@ the same 456×972 logical window bounds at scale 2, compared with scale 1 initia
 The cause of the scale change was not established. Delayed viewers subsequently
 completed another 300 frames each at the larger format: CPU in 86.47 s and native
 in 79.90 s, with 250 ms holds and empty stderr. No further format transition was
-observed while those viewers were running. The remaining live check is a format
-transition with held consumer frames; the scale change before these viewers
-attached is weaker evidence.
+observed while those viewers were running. At that point, a format transition with held consumer
+frames was still unverified; the scale change before these viewers attached was
+weaker evidence. The subsequent output test supplies that missing check.
 
 Afterward, both replacement sessions reached `closed`, and the dedicated test
 identity was revoked. No test viewers or capture sessions were left running.
