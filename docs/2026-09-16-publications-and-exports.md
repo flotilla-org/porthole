@@ -72,6 +72,15 @@ export; no launchd job on kiwi and no egress process on comte remained, and
 comte's capture session showed the usual soft close with native resources
 retired.
 
+With `--cpu`, later the same day: the republication also served
+`r/<12 hex>/s` under the runtime directory, the SDL viewer acquired 45 frames
+over `--cpu-socket`, and katzensteg's jackstay consumer (a jackstay-enabled
+build, `katzensteg-jackstay <socket>`) attached to the same socket; the ingress
+report counted 240 CPU frames with no drops. Robert then ran that consumer in
+ghostty against a held attach and confirmed it presented the remote simulator,
+which closes the first katzensteg-presents-a-republication milestone.
+Interrupting the attach removed the socket directory with the republication.
+
 ## Findings on the way
 
 - Unix socket paths are limited to 104 bytes on macOS. Export sockets under the
