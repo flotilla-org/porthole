@@ -27,6 +27,14 @@ republication. Capture sessions now record the surface they capture, so a
 publication carries two identities: the source (a surface id) and the running
 publication (the session id), kept apart as the registry note asks.
 
+A republication is native by default. With `cpu` set on the request
+(`republish --cpu`, `attach --cpu`) the ingress half also serves it over a
+generic CPU setup socket under the runtime directory (`r/<12 hex>/s`), which
+katzensteg's `jackstay-source` and the SDL viewer's `--cpu-socket` attach to
+without any porthole preface; the publication reports the path as
+`cpu_socket` and the CLI prints both commands. The directory goes when the
+republication closes.
+
 CLI: `porthole publications list | export | export-status | export-close |
 republish | close | attach`. `attach --host HOST` runs the whole sequence over
 `ssh -N -L` with the AES-GCM cipher: forward the remote daemon's control

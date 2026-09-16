@@ -21,7 +21,7 @@ repository = "https://github.com/flotilla-org/porthole"
 [workspace.dependencies]
 jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "f482a5ca1c0c0a3831d3b4774dc8b7110c4581eb" }
 # Graph-manager vocabulary and bridge spawning.
-jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "7773e57302215511e541efcb410b2579f111dcb0" }
+jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "7144be1" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"

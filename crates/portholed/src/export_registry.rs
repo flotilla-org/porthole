@@ -27,7 +27,7 @@ use porthole_core::agent_policy::AgentId;
 use porthole_protocol::{capture_sessions::NATIVE_ATTACH_TRANSPORT_MACOS_XPC, publications::PUBLICATION_KIND_REPUBLISHED};
 use porthole_protocol::{
     capture_sessions::NativeCaptureInfo,
-    publications::{ExportResponse, PublicationResponse, RepublishResponse},
+    publications::{ExportResponse, PublicationResponse, RepublishRequest, RepublishResponse},
 };
 use uuid::Uuid;
 
@@ -70,6 +70,8 @@ struct RepublishRecord {
     owner: AgentId,
     identities: Identities,
     native: NativeCaptureInfo,
+    /// The CPU setup socket the half serves, when one was requested.
+    cpu_socket: Option<PathBuf>,
     job: jackstay_graph::export::IngressJob,
 }
 
@@ -246,26 +248,37 @@ impl ExportRegistry {
     /// Runs an ingress half as a launchd job for the forwarded sockets and
     /// reports the resulting native publication.
     #[cfg(target_os = "macos")]
-    pub fn republish(
-        &self,
-        owner: AgentId,
-        identities: Identities,
-        media_socket: &Path,
-        control_socket: &Path,
-        link_token: String,
-        chroma: ChromaPolicy,
-    ) -> Result<RepublishResponse, ExportError> {
+    /// Runs an ingress half for the forwarded export described by `request`.
+    pub fn republish(&self, owner: AgentId, request: RepublishRequest) -> Result<RepublishResponse, ExportError> {
+        let RepublishRequest {
+            media_socket,
+            control_socket,
+            link_token,
+            identities,
+            chroma,
+            cpu,
+        } = request;
         let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
         let publication_id = format!("rep_{}", Uuid::new_v4().simple());
         let service = format!("work.flotilla.porthole.republish.{}", &publication_id[4..20]);
         let dir = self.runtime_dir()?.join("republications").join(&publication_id);
+        // Short, like export sockets: Unix socket paths are limited to 104 bytes.
+        let cpu_socket = cpu
+            .then(|| self.runtime_dir().map(|r| r.join("r").join(&publication_id[4..16]).join("s")))
+            .transpose()?;
+        if let Some(path) = &cpu_socket {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(ExportError::Io)?;
+            }
+        }
         let spec = IngressSpec {
-            media_socket: media_socket.to_path_buf(),
-            control_socket: control_socket.to_path_buf(),
+            media_socket: PathBuf::from(media_socket),
+            control_socket: PathBuf::from(control_socket),
             service: service.clone(),
             viewer_token: Some(format!("ptas_{}", Uuid::new_v4().simple())),
             link_token,
             chroma,
+            cpu_socket: cpu_socket.clone(),
         };
         let mut job =
             jackstay_graph::export::IngressJob::spawn(&bridge, &spec, &dir).map_err(|e| ExportError::RepublishFailed(e.to_string()))?;
@@ -281,6 +294,9 @@ impl ExportRegistry {
                 })
                 .unwrap_or_else(|| "no publication within 20 s".to_owned());
             let _ = job.stop();
+            if let Some(parent) = cpu_socket.as_ref().and_then(|p| p.parent()) {
+                let _ = std::fs::remove_dir_all(parent);
+            }
             return Err(ExportError::RepublishFailed(detail));
         }
         let native = NativeCaptureInfo {
@@ -292,6 +308,7 @@ impl ExportRegistry {
             owner,
             identities: identities.clone(),
             native: native.clone(),
+            cpu_socket: status.cpu_socket.as_deref().map(PathBuf::from).or(cpu_socket),
             job,
         };
         let response = RepublishResponse {
@@ -307,15 +324,7 @@ impl ExportRegistry {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn republish(
-        &self,
-        _owner: AgentId,
-        _identities: Identities,
-        _media_socket: &Path,
-        _control_socket: &Path,
-        _link_token: String,
-        _chroma: ChromaPolicy,
-    ) -> Result<RepublishResponse, ExportError> {
+    pub fn republish(&self, _owner: AgentId, _request: RepublishRequest) -> Result<RepublishResponse, ExportError> {
         Err(ExportError::Unsupported)
     }
 
@@ -371,6 +380,9 @@ impl ExportRegistry {
             }
             let mut record = inner.republications.remove(publication_id).expect("checked above");
             let _ = record.job.stop();
+            if let Some(parent) = record.cpu_socket.as_ref().and_then(|p| p.parent()) {
+                let _ = std::fs::remove_dir_all(parent);
+            }
             Ok(())
         }
         #[cfg(not(target_os = "macos"))]
@@ -421,6 +433,7 @@ fn republish_publication(publication_id: &str, record: &RepublishRecord, status:
         width,
         height,
         native: Some(record.native.clone()),
+        cpu_socket: record.cpu_socket.as_ref().map(|p| p.to_string_lossy().into_owned()),
     }
 }
 

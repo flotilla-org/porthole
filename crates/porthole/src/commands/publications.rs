@@ -17,12 +17,19 @@ use tokio::process::{Child, Command};
 
 use crate::client::{ClientError, DaemonClient};
 
-fn viewer_hint(publication: &PublicationResponse) -> Option<String> {
-    let native = publication.native.as_ref()?;
-    Some(format!(
-        "viewer: capture-viewer-sdl --native --mach-service {} --token {}",
-        native.endpoint, native.attach_token
-    ))
+fn viewer_hints(publication: &PublicationResponse) -> Vec<String> {
+    let mut hints = Vec::new();
+    if let Some(native) = &publication.native {
+        hints.push(format!(
+            "viewer: capture-viewer-sdl --native --mach-service {} --token {}",
+            native.endpoint, native.attach_token
+        ));
+    }
+    if let Some(socket) = &publication.cpu_socket {
+        hints.push(format!("cpu viewer: capture-viewer-sdl --cpu-socket {socket}"));
+        hints.push(format!("katzensteg: katzensteg jackstay-source {socket}"));
+    }
+    hints
 }
 
 fn print_publication(publication: &PublicationResponse) {
@@ -46,7 +53,7 @@ pub async fn list(client: &DaemonClient, json: bool) -> Result<(), ClientError> 
     }
     for publication in &response.publications {
         print_publication(publication);
-        if let Some(hint) = viewer_hint(publication) {
+        for hint in viewer_hints(publication) {
             println!("  {hint}");
         }
     }
@@ -122,7 +129,7 @@ pub async fn republish(client: &DaemonClient, request: &RepublishRequest, json: 
         if let Some(d) = &response.decision {
             println!("decision: {:?} {:?} hardware={} ({})", d.codec, d.chroma, d.hardware, d.reason);
         }
-        if let Some(hint) = viewer_hint(&response.publication) {
+        for hint in viewer_hints(&response.publication) {
             println!("{hint}");
         }
     }
@@ -148,6 +155,8 @@ pub struct AttachArgs {
     pub title_pattern: Option<String>,
     pub chroma: ChromaPolicy,
     pub bitrate_bps: Option<u32>,
+    /// Also serve the republication over a generic CPU setup socket.
+    pub cpu: bool,
     pub json: bool,
     /// Keep the forwards and the republication alive until interrupted.
     pub hold: bool,
@@ -407,6 +416,7 @@ async fn attach_inner(
                 publication: format!("{}:{}", args.host, export.identities.publication),
             },
             chroma: args.chroma,
+            cpu: args.cpu,
         },
         args.json,
     )

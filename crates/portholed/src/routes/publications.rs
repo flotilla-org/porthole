@@ -52,6 +52,7 @@ fn capture_publication(session: &porthole_protocol::capture_sessions::CaptureSes
         width: session.width,
         height: session.height,
         native: session.native.clone(),
+        cpu_socket: None,
     }
 }
 
@@ -147,19 +148,10 @@ pub async fn post_republish(
 ) -> Result<(StatusCode, Json<RepublishResponse>), ApiError> {
     let agent_id = authenticated_agent_id(&state, &headers).await?;
     let exports = state.exports.clone();
-    let response = tokio::task::spawn_blocking(move || {
-        exports.republish(
-            agent_id,
-            request.identities,
-            std::path::Path::new(&request.media_socket),
-            std::path::Path::new(&request.control_socket),
-            request.link_token,
-            request.chroma,
-        )
-    })
-    .await
-    .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("republish task: {e}")).into()))?
-    .map_err(export_error_to_api)?;
+    let response = tokio::task::spawn_blocking(move || exports.republish(agent_id, request))
+        .await
+        .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("republish task: {e}")).into()))?
+        .map_err(export_error_to_api)?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 

@@ -29,6 +29,10 @@ pub struct PublicationResponse {
     /// How a native consumer attaches, when the publication is native.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeCaptureInfo>,
+    /// A generic CPU setup socket the publication is also served on, for
+    /// consumers without a native attach path (katzensteg's `jackstay-source`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_socket: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,6 +80,9 @@ pub struct RepublishRequest {
     pub identities: Identities,
     #[serde(default)]
     pub chroma: ChromaPolicy,
+    /// Also serve the republication over a generic CPU setup socket.
+    #[serde(default)]
+    pub cpu: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -107,8 +114,14 @@ mod tests {
                 publication: "sess_1".into(),
             },
             chroma: ChromaPolicy::Any,
+            cpu: true,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<RepublishRequest>(&json).unwrap(), r);
+        let without: RepublishRequest = serde_json::from_str(
+            r#"{"media_socket":"/m","control_socket":"/c","link_token":"L","identities":{"source":"s","publication":"p"}}"#,
+        )
+        .unwrap();
+        assert!(!without.cpu);
     }
 }
