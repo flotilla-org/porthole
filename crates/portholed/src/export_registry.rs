@@ -312,7 +312,9 @@ impl ExportRegistry {
             owner,
             identities: identities.clone(),
             native: native.clone(),
-            cpu_socket: status.cpu_socket.as_deref().map(PathBuf::from).or(cpu_socket),
+            // The path portholed asked for and whose directory it owns; the half
+            // reports the same one, and the directory cleanup keys off this.
+            cpu_socket,
             job,
         };
         let response = RepublishResponse {
