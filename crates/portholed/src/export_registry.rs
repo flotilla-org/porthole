@@ -192,11 +192,14 @@ impl ExportRegistry {
         Ok(response)
     }
 
-    pub fn export_status(&self, export_id: &str, agent: &AgentId) -> Result<ExportResponse, ExportError> {
+    /// An export is addressed under its publication; one named under another
+    /// publication is unknown, not merely misfiled.
+    pub fn export_status(&self, publication_id: &str, export_id: &str, agent: &AgentId) -> Result<ExportResponse, ExportError> {
         let mut inner = self.inner.lock().map_err(|_| ExportError::Poisoned)?;
         let record = inner
             .exports
             .get_mut(export_id)
+            .filter(|record| record.publication_id == publication_id)
             .ok_or_else(|| ExportError::UnknownExport(export_id.to_owned()))?;
         if &record.owner != agent {
             return Err(ExportError::NotOwner);
@@ -206,11 +209,12 @@ impl ExportRegistry {
     }
 
     /// Stops the egress half and forgets the export.
-    pub fn close_export(&self, export_id: &str, agent: &AgentId) -> Result<ExportResponse, ExportError> {
+    pub fn close_export(&self, publication_id: &str, export_id: &str, agent: &AgentId) -> Result<ExportResponse, ExportError> {
         let mut inner = self.inner.lock().map_err(|_| ExportError::Poisoned)?;
         let record = inner
             .exports
             .get(export_id)
+            .filter(|record| record.publication_id == publication_id)
             .ok_or_else(|| ExportError::UnknownExport(export_id.to_owned()))?;
         if &record.owner != agent {
             return Err(ExportError::NotOwner);

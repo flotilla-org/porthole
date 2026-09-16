@@ -115,22 +115,28 @@ pub async fn post_export(
 pub async fn get_export(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_id, export_id)): Path<(String, String)>,
+    Path((id, export_id)): Path<(String, String)>,
 ) -> Result<Json<ExportResponse>, ApiError> {
     let agent_id = authenticated_agent_id(&state, &headers).await?;
     Ok(Json(
-        state.exports.export_status(&export_id, &agent_id).map_err(export_error_to_api)?,
+        state
+            .exports
+            .export_status(&id, &export_id, &agent_id)
+            .map_err(export_error_to_api)?,
     ))
 }
 
 pub async fn delete_export(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path((_id, export_id)): Path<(String, String)>,
+    Path((id, export_id)): Path<(String, String)>,
 ) -> Result<Json<ExportResponse>, ApiError> {
     let agent_id = authenticated_agent_id(&state, &headers).await?;
     Ok(Json(
-        state.exports.close_export(&export_id, &agent_id).map_err(export_error_to_api)?,
+        state
+            .exports
+            .close_export(&id, &export_id, &agent_id)
+            .map_err(export_error_to_api)?,
     ))
 }
 
@@ -207,6 +213,8 @@ mod tests {
                 attach_token: "ptas_test".to_owned(),
             }),
         );
+        // A CPU session is served over the fd socket, which Windows lacks.
+        #[cfg(unix)]
         capture.insert_test_session("sess_cpu", None, None, None);
         let state = AppState::new_with_agent_policy_and_capture(Arc::new(InMemoryAdapter::new()), capture, store, EventBus::new())
             .with_exports(ExportRegistry::new(Some(temp.path().to_path_buf())));
@@ -251,18 +259,21 @@ mod tests {
         let (status, json) = call(h.router.clone(), Method::GET, "/publications", Some(&h.owner_token), None).await;
         assert_eq!(status, StatusCode::OK, "{json}");
         let publications = json["publications"].as_array().unwrap();
-        assert_eq!(publications.len(), 2);
+        assert_eq!(publications.len(), if cfg!(unix) { 2 } else { 1 });
         let native = publications.iter().find(|p| p["publication_id"] == "sess_native").unwrap();
         assert_eq!(native["kind"], "capture");
         assert_eq!(native["identities"]["source"], "surf_1");
         assert_eq!(native["identities"]["publication"], "sess_native");
         assert_eq!(native["native"]["endpoint"], "work.flotilla.porthole.attach");
-        let cpu = publications.iter().find(|p| p["publication_id"] == "sess_cpu").unwrap();
-        assert_eq!(
-            cpu["identities"]["source"], "sess_cpu",
-            "a session without a surface is its own source"
-        );
-        assert!(cpu.get("native").is_none());
+        #[cfg(unix)]
+        {
+            let cpu = publications.iter().find(|p| p["publication_id"] == "sess_cpu").unwrap();
+            assert_eq!(
+                cpu["identities"]["source"], "sess_cpu",
+                "a session without a surface is its own source"
+            );
+            assert!(cpu.get("native").is_none());
+        }
     }
 
     #[tokio::test]
@@ -292,15 +303,18 @@ mod tests {
             status == StatusCode::CREATED || error_code(&json) == Some(ErrorCode::AdapterUnsupported),
             "{status} {json}"
         );
-        let (_, json) = call(
-            h.router.clone(),
-            Method::POST,
-            "/publications/sess_cpu/exports",
-            Some(&h.owner_token),
-            Some(serde_json::json!({})),
-        )
-        .await;
-        assert_eq!(error_code(&json), Some(ErrorCode::InvalidArgument), "{json}");
+        #[cfg(unix)]
+        {
+            let (_, json) = call(
+                h.router.clone(),
+                Method::POST,
+                "/publications/sess_cpu/exports",
+                Some(&h.owner_token),
+                Some(serde_json::json!({})),
+            )
+            .await;
+            assert_eq!(error_code(&json), Some(ErrorCode::InvalidArgument), "{json}");
+        }
     }
 
     #[tokio::test]
