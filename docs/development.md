@@ -31,7 +31,7 @@ Porthole's macOS adapter needs **Accessibility** and **Screen Recording** system
 git clone <repo>
 cd porthole
 cargo build --workspace --release
-./scripts/dev-bundle.sh --release
+./scripts/dev-bundle.sh --release      # JACKSTAY_BRIDGE_BIN=... to bundle the bridge for exports
 open -R target/release/Porthole.app    # reveal in Finder
 ./target/release/Porthole.app/Contents/MacOS/porthole install --user --force
 porthole onboard

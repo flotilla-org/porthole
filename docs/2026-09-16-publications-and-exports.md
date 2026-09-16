@@ -38,7 +38,11 @@ request from `porthole agents requests`. Tender will replace the SSH forwarding;
 nothing in the daemon depends on how the sockets got there.
 
 The bridge executable is located from `JACKSTAY_BRIDGE_BIN`, then as a sibling
-of the daemon binary, then on the PATH.
+of the daemon binary, then on the PATH. The bundle builder copies it in as that
+sibling when `JACKSTAY_BRIDGE_BIN` is set at bundle time or a `jackstay-bridge`
+sits in the target profile, so an installed daemon needs no environment: a
+launchd-managed daemon only sees launchd's environment, and `launchctl setenv`
+from an SSH session lands in the wrong domain.
 
 ## Evidence
 
