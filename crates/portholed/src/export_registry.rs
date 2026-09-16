@@ -422,6 +422,8 @@ fn republish_publication(publication_id: &str, record: &RepublishRecord, status:
 
 #[cfg(test)]
 mod tests {
+    use porthole_protocol::capture_sessions::NATIVE_ATTACH_TRANSPORT_MACOS_XPC;
+
     use super::*;
 
     #[test]
