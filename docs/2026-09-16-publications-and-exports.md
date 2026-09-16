@@ -27,6 +27,14 @@ republication. Capture sessions now record the surface they capture, so a
 publication carries two identities: the source (a surface id) and the running
 publication (the session id), kept apart as the registry note asks.
 
+A republication is native by default. With `cpu` set on the request
+(`republish --cpu`, `attach --cpu`) the ingress half also serves it over a
+generic CPU setup socket under the runtime directory (`r/<12 hex>/s`), which
+katzensteg's `jackstay-source` and the SDL viewer's `--cpu-socket` attach to
+without any porthole preface; the publication reports the path as
+`cpu_socket` and the CLI prints both commands. The directory goes when the
+republication closes.
+
 CLI: `porthole publications list | export | export-status | export-close |
 republish | close | attach`. `attach --host HOST` runs the whole sequence over
 `ssh -N -L` with the AES-GCM cipher: forward the remote daemon's control
@@ -63,6 +71,15 @@ republication. Interrupting the command closed the republication and the
 export; no launchd job on kiwi and no egress process on comte remained, and
 comte's capture session showed the usual soft close with native resources
 retired.
+
+With `--cpu`, later the same day: the republication also served
+`r/<12 hex>/s` under the runtime directory, the SDL viewer acquired 45 frames
+over `--cpu-socket`, and katzensteg's jackstay consumer (a jackstay-enabled
+build, `katzensteg-jackstay <socket>`) attached to the same socket; the ingress
+report counted 240 CPU frames with no drops. Robert then ran that consumer in
+ghostty against a held attach and confirmed it presented the remote simulator,
+which closes the first katzensteg-presents-a-republication milestone.
+Interrupting the attach removed the socket directory with the republication.
 
 ## Findings on the way
 

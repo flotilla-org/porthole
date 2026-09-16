@@ -640,6 +640,10 @@ enum PublicationsCommand {
         publication: String,
         #[arg(long, value_enum, default_value = "prefer444")]
         chroma: ChromaArg,
+        /// Also serve the republication over a generic CPU setup socket
+        /// (katzensteg's `jackstay-source`, the SDL viewer's `--cpu-socket`).
+        #[arg(long)]
+        cpu: bool,
         #[arg(long)]
         json: bool,
     },
@@ -666,6 +670,9 @@ enum PublicationsCommand {
         chroma: ChromaArg,
         #[arg(long)]
         bitrate_bps: Option<u32>,
+        /// Also serve the republication over a generic CPU setup socket.
+        #[arg(long)]
+        cpu: bool,
         /// Keep the SSH forwards up until interrupted, then tear everything down.
         #[arg(long)]
         hold: bool,
@@ -1226,6 +1233,7 @@ async fn async_main() -> std::process::ExitCode {
                     source,
                     publication,
                     chroma,
+                    cpu,
                     json,
                 } => pubs::republish(
                     &client,
@@ -1235,6 +1243,7 @@ async fn async_main() -> std::process::ExitCode {
                         link_token,
                         identities: porthole_protocol::publications::Identities { source, publication },
                         chroma: chroma.into(),
+                        cpu,
                     },
                     json,
                 )
@@ -1249,6 +1258,7 @@ async fn async_main() -> std::process::ExitCode {
                     title_pattern,
                     chroma,
                     bitrate_bps,
+                    cpu,
                     hold,
                     json,
                 } => {
@@ -1262,6 +1272,7 @@ async fn async_main() -> std::process::ExitCode {
                             title_pattern,
                             chroma: chroma.into(),
                             bitrate_bps,
+                            cpu,
                             json,
                             hold,
                         },
