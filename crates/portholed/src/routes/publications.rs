@@ -32,7 +32,9 @@ fn export_error_to_api(error: ExportError) -> ApiError {
         ExportError::UnknownExport(_) | ExportError::UnknownRepublication(_) => ErrorCode::SurfaceNotFound,
         ExportError::NotOwner => ErrorCode::AgentPermissionDenied,
         ExportError::BridgeMissing | ExportError::Unsupported => ErrorCode::AdapterUnsupported,
-        ExportError::Io(_) | ExportError::Poisoned | ExportError::RepublishFailed(_) => ErrorCode::InternalError,
+        ExportError::Io(_) | ExportError::Token(_) | ExportError::Spawn(_) | ExportError::Poisoned | ExportError::RepublishFailed(_) => {
+            ErrorCode::InternalError
+        }
     };
     ApiError(PortholeError::new(code, error.to_string()).into())
 }
@@ -163,4 +165,173 @@ pub async fn delete_republication(
     let agent_id = authenticated_agent_id(&state, &headers).await?;
     state.exports.close_republication(&id, &agent_id).map_err(export_error_to_api)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Method, Request, StatusCode},
+    };
+    use porthole_core::{ErrorCode, in_memory::InMemoryAdapter};
+    use porthole_protocol::{capture_sessions::NativeCaptureInfo, error::WireError};
+    use tower::ServiceExt;
+
+    use crate::{
+        agent_store::AgentPolicyStore, capture_registry::CaptureRegistry, events::EventBus, export_registry::ExportRegistry,
+        server::build_router, state::AppState,
+    };
+
+    struct Harness {
+        router: axum::Router,
+        owner_token: String,
+        other_token: String,
+        _temp: tempfile::TempDir,
+    }
+
+    async fn harness() -> Harness {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let capture = CaptureRegistry::with_fd_socket(temp.path().join("capture-transfer.sock")).unwrap();
+        let owner = store.create_identity("owner", None, 1_000).await.unwrap();
+        let other = store.create_identity("other", None, 1_000).await.unwrap();
+        capture.insert_test_session(
+            "sess_native",
+            Some(owner.agent_id.clone()),
+            Some("surf_1".to_owned()),
+            Some(NativeCaptureInfo {
+                transport_kind: 1,
+                endpoint: "work.flotilla.porthole.attach".to_owned(),
+                attach_token: "ptas_test".to_owned(),
+            }),
+        );
+        capture.insert_test_session("sess_cpu", None, None, None);
+        let state = AppState::new_with_agent_policy_and_capture(Arc::new(InMemoryAdapter::new()), capture, store, EventBus::new())
+            .with_exports(ExportRegistry::new(Some(temp.path().to_path_buf())));
+        Harness {
+            router: build_router(state),
+            owner_token: owner.token,
+            other_token: other.token,
+            _temp: temp,
+        }
+    }
+
+    async fn call(
+        router: axum::Router,
+        method: Method,
+        uri: &str,
+        token: Option<&str>,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
+        let res = router.oneshot(builder.body(body).unwrap()).await.unwrap();
+        let status = res.status();
+        let bytes = to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or_else(|_| serde_json::json!({})))
+    }
+
+    fn error_code(json: &serde_json::Value) -> Option<ErrorCode> {
+        serde_json::from_value::<WireError>(json.clone()).ok().map(|e| e.code)
+    }
+
+    #[tokio::test]
+    async fn listing_requires_an_agent_and_merges_captures() {
+        let h = harness().await;
+        let (status, _) = call(h.router.clone(), Method::GET, "/publications", None, None).await;
+        assert_ne!(status, StatusCode::OK);
+        let (status, json) = call(h.router.clone(), Method::GET, "/publications", Some(&h.owner_token), None).await;
+        assert_eq!(status, StatusCode::OK, "{json}");
+        let publications = json["publications"].as_array().unwrap();
+        assert_eq!(publications.len(), 2);
+        let native = publications.iter().find(|p| p["publication_id"] == "sess_native").unwrap();
+        assert_eq!(native["kind"], "capture");
+        assert_eq!(native["identities"]["source"], "surf_1");
+        assert_eq!(native["identities"]["publication"], "sess_native");
+        assert_eq!(native["native"]["endpoint"], "work.flotilla.porthole.attach");
+        let cpu = publications.iter().find(|p| p["publication_id"] == "sess_cpu").unwrap();
+        assert_eq!(
+            cpu["identities"]["source"], "sess_cpu",
+            "a session without a surface is its own source"
+        );
+        assert!(cpu.get("native").is_none());
+    }
+
+    #[tokio::test]
+    async fn only_the_owner_may_export_and_only_native_sessions_qualify() {
+        let h = harness().await;
+        let (status, json) = call(
+            h.router.clone(),
+            Method::POST,
+            "/publications/sess_native/exports",
+            Some(&h.other_token),
+            Some(serde_json::json!({})),
+        )
+        .await;
+        assert_eq!(error_code(&json), Some(ErrorCode::AgentPermissionDenied), "{status} {json}");
+        // The owner passes the ownership check; without a bridge binary the
+        // registry then reports it unsupported, and with one it would spawn.
+        let (status, json) = call(
+            h.router.clone(),
+            Method::POST,
+            "/publications/sess_native/exports",
+            Some(&h.owner_token),
+            Some(serde_json::json!({})),
+        )
+        .await;
+        assert_ne!(error_code(&json), Some(ErrorCode::AgentPermissionDenied), "{status} {json}");
+        assert!(
+            status == StatusCode::CREATED || error_code(&json) == Some(ErrorCode::AdapterUnsupported),
+            "{status} {json}"
+        );
+        let (_, json) = call(
+            h.router.clone(),
+            Method::POST,
+            "/publications/sess_cpu/exports",
+            Some(&h.owner_token),
+            Some(serde_json::json!({})),
+        )
+        .await;
+        assert_eq!(error_code(&json), Some(ErrorCode::InvalidArgument), "{json}");
+    }
+
+    #[tokio::test]
+    async fn unknown_exports_and_republications_are_not_found() {
+        let h = harness().await;
+        let (_, json) = call(
+            h.router.clone(),
+            Method::GET,
+            "/publications/sess_native/exports/exp_missing",
+            Some(&h.owner_token),
+            None,
+        )
+        .await;
+        assert_eq!(error_code(&json), Some(ErrorCode::SurfaceNotFound), "{json}");
+        let (_, json) = call(
+            h.router.clone(),
+            Method::DELETE,
+            "/publications/rep_missing",
+            Some(&h.owner_token),
+            None,
+        )
+        .await;
+        assert_eq!(error_code(&json), Some(ErrorCode::SurfaceNotFound), "{json}");
+        let (_, json) = call(
+            h.router.clone(),
+            Method::GET,
+            "/publications/sess_missing",
+            Some(&h.owner_token),
+            None,
+        )
+        .await;
+        assert_eq!(error_code(&json), Some(ErrorCode::SurfaceNotFound), "{json}");
+    }
 }

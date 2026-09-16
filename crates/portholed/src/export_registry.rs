@@ -38,7 +38,11 @@ pub enum ExportError {
     #[error("jackstay-bridge executable not found; set JACKSTAY_BRIDGE_BIN or install it beside portholed")]
     BridgeMissing,
     #[error("export runtime directory: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+    #[error("minting the link token: {0}")]
+    Token(std::io::Error),
+    #[error("spawning the bridge half: {0}")]
+    Spawn(std::io::Error),
     #[error("registry poisoned")]
     Poisoned,
     #[error("republication did not come up: {0}")]
@@ -153,17 +157,17 @@ impl ExportRegistry {
         // directory under the per-user temp dir is already long, so keep the
         // export's directory and socket names short.
         let dir = self.runtime_dir()?.join("x").join(&export_id[4..16]);
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(ExportError::Io)?;
         let spec = EgressSpec {
             source_service: native.endpoint.clone(),
             source_token: Some(native.attach_token.clone()),
             media_socket: dir.join("m"),
             control_socket: dir.join("c"),
-            link_token: jackstay_graph::mint_token()?,
+            link_token: jackstay_graph::mint_token().map_err(ExportError::Token)?,
             chroma,
             bitrate_bps,
         };
-        let handle = jackstay_graph::export::spawn_egress(&bridge, &spec)?;
+        let handle = jackstay_graph::export::spawn_egress(&bridge, &spec).map_err(ExportError::Spawn)?;
         let mut record = ExportRecord {
             publication_id: publication_id.to_owned(),
             owner,
@@ -448,6 +452,6 @@ mod tests {
                 None,
             )
             .unwrap_err();
-        assert!(matches!(err, ExportError::Io(_) | ExportError::BridgeMissing));
+        assert!(matches!(err, ExportError::Io(_) | ExportError::BridgeMissing), "{err}");
     }
 }

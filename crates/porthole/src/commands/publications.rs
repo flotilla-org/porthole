@@ -245,9 +245,18 @@ async fn remote_runtime_dir(host: &str) -> Result<String, ClientError> {
 }
 
 pub async fn attach(local: &DaemonClient, args: AttachArgs) -> Result<(), ClientError> {
-    // Short names throughout: Unix socket paths are limited to 104 bytes.
-    let work = std::env::temp_dir().join(format!("pa{}", std::process::id()));
-    std::fs::create_dir_all(&work).map_err(|e| ClientError::Local(format!("work dir: {e}")))?;
+    // Short names throughout: Unix socket paths are limited to 104 bytes. The
+    // directory is private to this user and unpredictable, so another local
+    // user cannot pre-create it under the forwarded sockets.
+    let suffix = jackstay_graph::mint_token().map_err(|e| ClientError::Local(format!("work dir: {e}")))?;
+    let work = std::env::temp_dir().join(format!("pa{}", &suffix[..8]));
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&work)
+            .map_err(|e| ClientError::Local(format!("work dir: {e}")))?;
+    }
     let remote_dir = match &args.remote_runtime_dir {
         Some(dir) => dir.trim_end_matches('/').to_owned(),
         None => remote_runtime_dir(&args.host).await?,
@@ -309,12 +318,58 @@ pub async fn attach(local: &DaemonClient, args: AttachArgs) -> Result<(), Client
         candidate.title.as_deref().unwrap_or("")
     );
 
+    // Everything created on the remote from here on is torn down if a later
+    // step fails; on success `--hold` decides when it ends.
+    let mut remote_state = RemoteState::default();
+    let outcome = attach_inner(local, &args, &remote, &tracked, &work, &mut remote_state).await;
+    if outcome.is_err() {
+        eprintln!("attach failed after remote resources were created; closing them");
+        remote_state.close(&remote).await;
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    outcome
+}
+
+/// What `attach` has created on the remote so far.
+#[derive(Default)]
+struct RemoteState {
+    session_id: Option<String>,
+    export_id: Option<String>,
+}
+
+impl RemoteState {
+    async fn close(&self, remote: &DaemonClient) {
+        if let (Some(session), Some(export)) = (&self.session_id, &self.export_id) {
+            if let Err(e) = remote
+                .delete_json::<ExportResponse>(&format!("/publications/{session}/exports/{export}"))
+                .await
+            {
+                eprintln!("could not close remote export {export}: {e}");
+            }
+        }
+        if let Some(session) = &self.session_id {
+            if let Err(e) = remote.delete_empty(&format!("/capture-sessions/{session}")).await {
+                eprintln!("could not close remote capture session {session}: {e}");
+            }
+        }
+    }
+}
+
+async fn attach_inner(
+    local: &DaemonClient,
+    args: &AttachArgs,
+    remote: &DaemonClient,
+    tracked: &TrackResponse,
+    work: &std::path::Path,
+    remote_state: &mut RemoteState,
+) -> Result<(), ClientError> {
     // 2. native capture session and export on the remote
     let capture_path = format!("/capture-sessions/surfaces/{}?native=true", tracked.surface_id);
     let empty = serde_json::json!({});
     let session: CreateCaptureSessionResponse =
         with_remote_approval(&args.host, "capturing the surface", || remote.post_json(&capture_path, &empty)).await?;
     eprintln!("remote capture session {} ({})", session.session_id, session.status);
+    remote_state.session_id = Some(session.session_id.clone());
     let export: ExportResponse = remote
         .post_json(
             &format!("/publications/{}/exports", session.session_id),
@@ -325,6 +380,7 @@ pub async fn attach(local: &DaemonClient, args: AttachArgs) -> Result<(), Client
         )
         .await?;
     eprintln!("remote export {} ({})", export.export_id, export.status);
+    remote_state.export_id = Some(export.export_id.clone());
 
     // 3. forward the export's sockets, then republish locally
     let media_local = work.join("m");
@@ -359,13 +415,14 @@ pub async fn attach(local: &DaemonClient, args: AttachArgs) -> Result<(), Client
             .await
             .map_err(|e| ClientError::Local(format!("signal: {e}")))?;
         let _ = close_republication(local, &republished.publication.publication_id).await;
-        let _ = export_close(&remote, &session.session_id, &export.export_id).await;
+        let _ = export_close(remote, &session.session_id, &export.export_id).await;
         let _ = remote.delete_empty(&format!("/capture-sessions/{}", session.session_id)).await;
     } else {
         eprintln!(
             "the forwards end with this command; rerun with --hold to keep the republication up, or manage the export and republication by id"
         );
     }
-    let _ = std::fs::remove_dir_all(&work);
+    // Reaching here means the remote resources are either closed or deliberately left for manual management.
+    *remote_state = RemoteState::default();
     Ok(())
 }

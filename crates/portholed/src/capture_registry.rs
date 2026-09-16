@@ -111,6 +111,8 @@ struct CaptureRegistryInner {
     /// so two concurrent native creates can't both pass the limit.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     native_session_starting: bool,
+    #[cfg(all(target_os = "macos", test))]
+    test_native_info: HashMap<String, porthole_protocol::capture_sessions::NativeCaptureInfo>,
 }
 
 #[derive(Debug)]
@@ -890,6 +892,44 @@ impl CaptureRegistry {
         control.set_output_size(size).await.map_err(CaptureRegistryError::from_porthole)
     }
 
+    /// Inserts a ready session record for route tests, with an optional owner
+    /// and optional native attach info, without any backend.
+    #[cfg(test)]
+    pub(crate) fn insert_test_session(
+        &self,
+        session_id: &str,
+        owner: Option<AgentId>,
+        surface_id: Option<String>,
+        native: Option<porthole_protocol::capture_sessions::NativeCaptureInfo>,
+    ) {
+        let mut inner = self.inner.lock().expect("registry poisoned");
+        inner.sessions.insert(
+            session_id.to_owned(),
+            CaptureSession {
+                source_id: SourceId::new(1),
+                track_id: TrackId::new(1),
+                owner_agent_id: owner,
+                surface_id,
+                lifecycle: CaptureSessionLifecycle::Ready,
+                width: 8,
+                height: 8,
+                stride: 32,
+                pixel_format: PixelFormat::Bgra8Unorm,
+                #[cfg(unix)]
+                cpu: None,
+                capture_task: None,
+                startup_cancel: None,
+                output_control: None,
+            },
+        );
+        #[cfg(target_os = "macos")]
+        if let Some(native) = native {
+            inner.test_native_info.insert(session_id.to_owned(), native);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = native;
+    }
+
     /// Every session as a response, with the surface it captures (the session
     /// id itself when the session has no surface).
     pub fn list_sessions(&self) -> Result<Vec<(CaptureSessionResponse, String)>, CaptureRegistryError> {
@@ -901,7 +941,17 @@ impl CaptureRegistry {
             .keys()
             .cloned()
             .collect();
-        ids.iter().map(|id| self.session_with_source(id)).collect()
+        // A session can close between the snapshot and its lookup; omit it
+        // rather than failing the whole listing.
+        let mut sessions = Vec::with_capacity(ids.len());
+        for id in &ids {
+            match self.session_with_source(id) {
+                Ok(entry) => sessions.push(entry),
+                Err(CaptureRegistryError::UnknownSession(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(sessions)
     }
 
     /// A session's response plus the identity of what it captures.
@@ -934,6 +984,8 @@ impl CaptureRegistry {
             .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
         #[cfg(target_os = "macos")]
         let native = inner.native_holds.get(session_id).map(|hold| hold.native_info.clone());
+        #[cfg(all(target_os = "macos", test))]
+        let native = native.or_else(|| inner.test_native_info.get(session_id).cloned());
         #[cfg(not(target_os = "macos"))]
         let native = None;
         // Native sessions are consumed over XPC, not the fd socket; tolerate
