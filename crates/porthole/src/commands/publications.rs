@@ -250,7 +250,10 @@ pub async fn attach(local: &DaemonClient, args: AttachArgs) -> Result<(), Client
     // user cannot pre-create it under the forwarded sockets.
     let suffix = jackstay_graph::mint_token().map_err(|e| ClientError::Local(format!("work dir: {e}")))?;
     let work = std::env::temp_dir().join(format!("pa{}", &suffix[..8]));
+    #[cfg(unix)]
     let mut builder = std::fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

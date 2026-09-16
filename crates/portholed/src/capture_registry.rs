@@ -111,7 +111,7 @@ struct CaptureRegistryInner {
     /// so two concurrent native creates can't both pass the limit.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     native_session_starting: bool,
-    #[cfg(all(target_os = "macos", test))]
+    #[cfg(test)]
     test_native_info: HashMap<String, porthole_protocol::capture_sessions::NativeCaptureInfo>,
 }
 
@@ -922,12 +922,9 @@ impl CaptureRegistry {
                 output_control: None,
             },
         );
-        #[cfg(target_os = "macos")]
         if let Some(native) = native {
             inner.test_native_info.insert(session_id.to_owned(), native);
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = native;
     }
 
     /// Every session as a response, with the surface it captures (the session
@@ -984,10 +981,10 @@ impl CaptureRegistry {
             .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
         #[cfg(target_os = "macos")]
         let native = inner.native_holds.get(session_id).map(|hold| hold.native_info.clone());
-        #[cfg(all(target_os = "macos", test))]
-        let native = native.or_else(|| inner.test_native_info.get(session_id).cloned());
         #[cfg(not(target_os = "macos"))]
-        let native = None;
+        let native: Option<porthole_protocol::capture_sessions::NativeCaptureInfo> = None;
+        #[cfg(test)]
+        let native = native.or_else(|| inner.test_native_info.get(session_id).cloned());
         // Native sessions are consumed over XPC, not the fd socket; tolerate
         // the socket being unconfigured for them.
         let fd_socket_path = if native.is_some() {

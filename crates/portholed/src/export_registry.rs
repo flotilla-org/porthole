@@ -16,14 +16,18 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "macos")]
+use jackstay_graph::export::IngressSpec;
 use jackstay_graph::{
     ChromaPolicy, Identities,
-    export::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, IngressSpec, Phase},
+    export::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, Phase},
 };
 use porthole_core::agent_policy::AgentId;
+#[cfg(target_os = "macos")]
+use porthole_protocol::{capture_sessions::NATIVE_ATTACH_TRANSPORT_MACOS_XPC, publications::PUBLICATION_KIND_REPUBLISHED};
 use porthole_protocol::{
-    capture_sessions::{NATIVE_ATTACH_TRANSPORT_MACOS_XPC, NativeCaptureInfo},
-    publications::{ExportResponse, PUBLICATION_KIND_REPUBLISHED, PublicationResponse, RepublishResponse},
+    capture_sessions::NativeCaptureInfo,
+    publications::{ExportResponse, PublicationResponse, RepublishResponse},
 };
 use uuid::Uuid;
 
