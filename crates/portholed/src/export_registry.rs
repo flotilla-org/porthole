@@ -245,10 +245,9 @@ impl ExportRegistry {
             .unwrap_or_default()
     }
 
-    /// Runs an ingress half as a launchd job for the forwarded sockets and
-    /// reports the resulting native publication.
+    /// Runs an ingress half as a launchd job for the forwarded export
+    /// described by `request` and reports the resulting publication.
     #[cfg(target_os = "macos")]
-    /// Runs an ingress half for the forwarded export described by `request`.
     pub fn republish(&self, owner: AgentId, request: RepublishRequest) -> Result<RepublishResponse, ExportError> {
         let RepublishRequest {
             media_socket,
@@ -280,8 +279,15 @@ impl ExportRegistry {
             chroma,
             cpu_socket: cpu_socket.clone(),
         };
-        let mut job =
-            jackstay_graph::export::IngressJob::spawn(&bridge, &spec, &dir).map_err(|e| ExportError::RepublishFailed(e.to_string()))?;
+        let remove_cpu_dir = || {
+            if let Some(parent) = cpu_socket.as_ref().and_then(|p| p.parent()) {
+                let _ = std::fs::remove_dir_all(parent);
+            }
+        };
+        let mut job = jackstay_graph::export::IngressJob::spawn(&bridge, &spec, &dir).map_err(|e| {
+            remove_cpu_dir();
+            ExportError::RepublishFailed(e.to_string())
+        })?;
         let status = job.wait_for_publication(Duration::from_secs(20));
         if status.publication.is_none() {
             let detail = status
@@ -294,9 +300,7 @@ impl ExportRegistry {
                 })
                 .unwrap_or_else(|| "no publication within 20 s".to_owned());
             let _ = job.stop();
-            if let Some(parent) = cpu_socket.as_ref().and_then(|p| p.parent()) {
-                let _ = std::fs::remove_dir_all(parent);
-            }
+            remove_cpu_dir();
             return Err(ExportError::RepublishFailed(detail));
         }
         let native = NativeCaptureInfo {
