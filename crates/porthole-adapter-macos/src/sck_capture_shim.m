@@ -169,6 +169,10 @@ static SCStreamConfiguration *porthole_sck_window_config(size_t width, size_t he
   config.width = width;
   config.height = height;
   config.pixelFormat = kCVPixelFormatType_32BGRA;
+  // Pin the stream to sRGB. Without this SCK delivers frames in the display's
+  // colour space (Display P3 on current Macs) while the published descriptor
+  // declares sRGB; downstream encoders would then tag the wrong primaries.
+  config.colorSpaceName = kCGColorSpaceSRGB;
   config.queueDepth = 3;
   config.showsCursor = YES;
   config.capturesAudio = NO;
