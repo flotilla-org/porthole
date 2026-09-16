@@ -53,6 +53,11 @@ impl DaemonClient {
         self.send_and_parse(req).await
     }
 
+    pub async fn delete_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
+        let request = self.build_empty_request(Method::DELETE, path)?;
+        self.send_and_parse(request).await
+    }
+
     pub async fn delete_empty(&self, path: &str) -> Result<(), ClientError> {
         let req = self.build_empty_request(Method::DELETE, path)?;
         let res = self.http.request(req).await?;

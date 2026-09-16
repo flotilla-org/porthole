@@ -21,6 +21,7 @@ pub struct AppState {
     pub wait: Arc<WaitPipeline>,
     pub attach: Arc<AttachPipeline>,
     pub capture: CaptureRegistry,
+    pub exports: crate::export_registry::ExportRegistry,
     pub agent_store: AgentPolicyStore,
     pub events: EventBus,
     pub started_at: Instant,
@@ -81,11 +82,18 @@ impl AppState {
             wait,
             attach,
             capture,
+            exports: crate::export_registry::ExportRegistry::disabled(),
             agent_store,
             events,
             started_at: Instant::now(),
             daemon_version: env!("CARGO_PKG_VERSION"),
         }
+    }
+
+    #[must_use]
+    pub fn with_exports(mut self, exports: crate::export_registry::ExportRegistry) -> Self {
+        self.exports = exports;
+        self
     }
 
     #[cfg(target_os = "linux")]

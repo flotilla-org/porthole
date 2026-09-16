@@ -17,6 +17,7 @@ hyper-util = { workspace = true }
 http-body-util = "0.1"
 porthole-core = { path = "../porthole-core" }
 porthole-protocol = { path = "../porthole-protocol" }
+jackstay-graph = { workspace = true }
 porthole-transport = { path = "../porthole-transport" }
 serde = { workspace = true }
 serde_json = { workspace = true }

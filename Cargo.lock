@@ -868,6 +868,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jackstay-graph"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/jackstay?rev=7773e57302215511e541efcb410b2579f111dcb0#7773e57302215511e541efcb410b2579f111dcb0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1206,6 +1216,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jackstay",
+ "jackstay-graph",
  "porthole-core",
  "porthole-protocol",
  "porthole-transport",
@@ -1295,6 +1306,7 @@ dependencies = [
 name = "porthole-protocol"
 version = "0.0.0"
 dependencies = [
+ "jackstay-graph",
  "porthole-core",
  "serde",
  "serde_json",
@@ -1329,6 +1341,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jackstay",
+ "jackstay-graph",
  "porthole",
  "porthole-adapter-kwin",
  "porthole-adapter-macos",

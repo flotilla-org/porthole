@@ -21,8 +21,8 @@ use crate::{
         agent_permissions as agent_permissions_route, attach as attach_route, attention as attention_route,
         capture_sessions as capture_sessions_route, close_focus as close_focus_route, content_rect as content_rect_route,
         events as events_route, info as info_route, input as input_route, launches as launches_route, place as place_route,
-        pointer as pointer_route, replace as replace_route, screenshot as screenshot_route, system_permissions as system_permissions_route,
-        wait as wait_route,
+        pointer as pointer_route, publications as publications_route, replace as replace_route, screenshot as screenshot_route,
+        system_permissions as system_permissions_route, wait as wait_route,
     },
     state::AppState,
 };
@@ -90,6 +90,17 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/capture-sessions/{id}",
             get(capture_sessions_route::get_session).delete(capture_sessions_route::delete_session),
+        )
+        .route("/publications", get(publications_route::list))
+        .route("/publications/republish", post(publications_route::post_republish))
+        .route(
+            "/publications/{id}",
+            get(publications_route::get).delete(publications_route::delete_republication),
+        )
+        .route("/publications/{id}/exports", post(publications_route::post_export))
+        .route(
+            "/publications/{id}/exports/{export_id}",
+            get(publications_route::get_export).delete(publications_route::delete_export),
         )
         .with_state(state)
 }
@@ -164,6 +175,10 @@ async fn serve_with_agent_policy_inner(
     #[cfg(windows)]
     let capture = crate::capture_registry::CaptureRegistry::disabled_with_agent_policy(agent_store.clone());
     let state = AppState::new_with_agent_policy_and_capture(adapter, capture, agent_store, events);
+    #[cfg(unix)]
+    let state = state.with_exports(crate::export_registry::ExportRegistry::new(
+        endpoint.as_socket_path().parent().map(std::path::Path::to_path_buf),
+    ));
     #[cfg(target_os = "linux")]
     let state = if let Some(kwin_adapter) = kwin_adapter {
         state.with_kwin_adapter(kwin_adapter)

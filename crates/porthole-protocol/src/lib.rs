@@ -10,6 +10,7 @@ pub mod info;
 pub mod input;
 pub mod launches;
 pub mod placement;
+pub mod publications;
 pub mod screenshot;
 pub mod search;
 pub mod system_permission;
