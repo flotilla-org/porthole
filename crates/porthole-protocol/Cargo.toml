@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 porthole-core = { path = "../porthole-core" }
+jackstay-graph = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

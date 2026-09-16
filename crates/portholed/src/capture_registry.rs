@@ -118,6 +118,8 @@ struct CaptureSession {
     source_id: SourceId,
     track_id: TrackId,
     owner_agent_id: Option<AgentId>,
+    /// The tracked surface this session captures; `None` for synthetic sessions.
+    surface_id: Option<String>,
     lifecycle: CaptureSessionLifecycle,
     width: u32,
     height: u32,
@@ -388,6 +390,7 @@ impl CaptureRegistry {
             source_id,
             track_id,
             owner_agent_id: None,
+            surface_id: None,
             lifecycle: CaptureSessionLifecycle::Ready,
             width: 2,
             height: 1,
@@ -469,6 +472,7 @@ impl CaptureRegistry {
                 source_id,
                 track_id,
                 owner_agent_id: Some(owner_agent_id),
+                surface_id: Some(surface.id.to_string()),
                 lifecycle: CaptureSessionLifecycle::Starting,
                 width: 0,
                 height: 0,
@@ -637,6 +641,7 @@ impl CaptureRegistry {
             source_id,
             track_id,
             owner_agent_id: Some(owner_agent_id),
+            surface_id: Some(surface.id.to_string()),
             lifecycle: CaptureSessionLifecycle::Ready,
             width: first_frame.width,
             height: first_frame.height,
@@ -883,6 +888,42 @@ impl CaptureRegistry {
             )));
         }
         control.set_output_size(size).await.map_err(CaptureRegistryError::from_porthole)
+    }
+
+    /// Every session as a response, with the surface it captures (the session
+    /// id itself when the session has no surface).
+    pub fn list_sessions(&self) -> Result<Vec<(CaptureSessionResponse, String)>, CaptureRegistryError> {
+        let ids: Vec<String> = self
+            .inner
+            .lock()
+            .map_err(|_| CaptureRegistryError::Poisoned)?
+            .sessions
+            .keys()
+            .cloned()
+            .collect();
+        ids.iter().map(|id| self.session_with_source(id)).collect()
+    }
+
+    /// A session's response plus the identity of what it captures.
+    pub fn session_with_source(&self, session_id: &str) -> Result<(CaptureSessionResponse, String), CaptureRegistryError> {
+        let response = self.get_session(session_id)?;
+        let inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        let source = inner
+            .sessions
+            .get(session_id)
+            .and_then(|s| s.surface_id.clone())
+            .unwrap_or_else(|| session_id.to_owned());
+        Ok((response, source))
+    }
+
+    /// The agent that created the session, if any.
+    pub fn session_owner(&self, session_id: &str) -> Result<Option<AgentId>, CaptureRegistryError> {
+        let inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
+        inner
+            .sessions
+            .get(session_id)
+            .map(|s| s.owner_agent_id.clone())
+            .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<CaptureSessionResponse, CaptureRegistryError> {

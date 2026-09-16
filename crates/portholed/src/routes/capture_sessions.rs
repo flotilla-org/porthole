@@ -137,7 +137,7 @@ async fn create_session(
     state.capture.create_surface_session(state.adapter.clone(), surface, agent_id).await
 }
 
-fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
+pub(crate) fn capture_error_to_api(error: CaptureRegistryError) -> ApiError {
     let code = match error {
         CaptureRegistryError::UnknownSession(_) => ErrorCode::SurfaceNotFound,
         CaptureRegistryError::Porthole(error) => return ApiError(error.into()),

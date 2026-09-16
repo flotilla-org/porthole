@@ -401,6 +401,12 @@ enum Command {
         #[command(subcommand)]
         command: CaptureSessionCommand,
     },
+    /// Publications: capture sessions and republished streams, and the exports
+    /// that bridge them to another host.
+    Publications {
+        #[command(subcommand)]
+        command: PublicationsCommand,
+    },
     /// Record a bounded video clip.
     Record {
         #[command(subcommand)]
@@ -572,6 +578,99 @@ enum PointerCommand {
         units: UnitsArg,
         #[arg(long)]
         session: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ChromaArg {
+    Require444,
+    Prefer444,
+    Any,
+}
+
+impl From<ChromaArg> for porthole_protocol::publications::ChromaPolicy {
+    fn from(value: ChromaArg) -> Self {
+        match value {
+            ChromaArg::Require444 => Self::Require444,
+            ChromaArg::Prefer444 => Self::Prefer444,
+            ChromaArg::Any => Self::Any,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum PublicationsCommand {
+    /// List publications known to the daemon.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Spawn the producer-side bridge half for a native capture session.
+    Export {
+        publication_id: String,
+        #[arg(long, value_enum, default_value = "prefer444")]
+        chroma: ChromaArg,
+        #[arg(long)]
+        bitrate_bps: Option<u32>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show an export's status.
+    ExportStatus {
+        publication_id: String,
+        export_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// End an export.
+    ExportClose { publication_id: String, export_id: String },
+    /// Run the consumer-side half for a forwarded export and publish it locally.
+    Republish {
+        #[arg(long)]
+        media: String,
+        #[arg(long)]
+        control: String,
+        #[arg(long)]
+        link_token: String,
+        /// Source identity carried over from the export (host:surface).
+        #[arg(long, default_value = "remote")]
+        source: String,
+        /// Publication identity carried over from the export (host:session).
+        #[arg(long, default_value = "remote")]
+        publication: String,
+        #[arg(long, value_enum, default_value = "prefer444")]
+        chroma: ChromaArg,
+        #[arg(long)]
+        json: bool,
+    },
+    /// End a republication.
+    Close { publication_id: String },
+    /// The whole sequence over SSH: track a surface on HOST, capture it
+    /// natively, export it, forward the export here and republish it.
+    Attach {
+        #[arg(long)]
+        host: String,
+        /// The remote daemon's runtime directory, when it is not the default
+        /// under the remote per-user temp dir.
+        #[arg(long)]
+        remote_runtime_dir: Option<String>,
+        /// Agent bearer token valid on the remote daemon. Falls back to
+        /// PORTHOLE_REMOTE_AGENT_TOKEN so the token stays out of process listings.
+        #[arg(long)]
+        remote_agent_token: Option<String>,
+        #[arg(long)]
+        app_name: Option<String>,
+        #[arg(long)]
+        title_pattern: Option<String>,
+        #[arg(long, value_enum, default_value = "prefer444")]
+        chroma: ChromaArg,
+        #[arg(long)]
+        bitrate_bps: Option<u32>,
+        /// Keep the SSH forwards up until interrupted, then tear everything down.
+        #[arg(long)]
+        hold: bool,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1102,6 +1201,75 @@ async fn async_main() -> std::process::ExitCode {
             } => porthole::commands::capture_session::configure(&client, &session_id, width, height, json).await,
             CaptureSessionCommand::Close { session_id } => porthole::commands::capture_session::close(&client, &session_id).await,
         },
+        Command::Publications { command } => {
+            use porthole::commands::publications as pubs;
+            match command {
+                PublicationsCommand::List { json } => pubs::list(&client, json).await,
+                PublicationsCommand::Export {
+                    publication_id,
+                    chroma,
+                    bitrate_bps,
+                    json,
+                } => pubs::export(&client, &publication_id, chroma.into(), bitrate_bps, json).await,
+                PublicationsCommand::ExportStatus {
+                    publication_id,
+                    export_id,
+                    json,
+                } => pubs::export_status(&client, &publication_id, &export_id, json).await,
+                PublicationsCommand::ExportClose { publication_id, export_id } => {
+                    pubs::export_close(&client, &publication_id, &export_id).await
+                }
+                PublicationsCommand::Republish {
+                    media,
+                    control,
+                    link_token,
+                    source,
+                    publication,
+                    chroma,
+                    json,
+                } => pubs::republish(
+                    &client,
+                    &porthole_protocol::publications::RepublishRequest {
+                        media_socket: media,
+                        control_socket: control,
+                        link_token,
+                        identities: porthole_protocol::publications::Identities { source, publication },
+                        chroma: chroma.into(),
+                    },
+                    json,
+                )
+                .await
+                .map(|_| ()),
+                PublicationsCommand::Close { publication_id } => pubs::close_republication(&client, &publication_id).await,
+                PublicationsCommand::Attach {
+                    host,
+                    remote_runtime_dir,
+                    remote_agent_token,
+                    app_name,
+                    title_pattern,
+                    chroma,
+                    bitrate_bps,
+                    hold,
+                    json,
+                } => {
+                    pubs::attach(
+                        &client,
+                        pubs::AttachArgs {
+                            host,
+                            remote_runtime_dir,
+                            remote_agent_token,
+                            app_name,
+                            title_pattern,
+                            chroma: chroma.into(),
+                            bitrate_bps,
+                            json,
+                            hold,
+                        },
+                    )
+                    .await
+                }
+            }
+        }
         Command::Record { command } => match command {
             RecordCommand::Surface {
                 surface_id,

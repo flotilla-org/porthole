@@ -12,6 +12,7 @@ pub mod input;
 pub mod launches;
 pub mod place;
 pub mod pointer;
+pub mod publications;
 pub mod replace;
 pub mod screenshot;
 pub mod system_permissions;

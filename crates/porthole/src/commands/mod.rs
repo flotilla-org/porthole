@@ -16,6 +16,7 @@ pub mod launch;
 pub mod onboard;
 pub mod place;
 pub mod pointer;
+pub mod publications;
 pub mod record;
 #[cfg(target_os = "macos")]
 mod record_av_writer;

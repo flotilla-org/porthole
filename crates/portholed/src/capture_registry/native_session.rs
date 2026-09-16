@@ -442,6 +442,7 @@ pub(super) async fn create(
             source_id,
             track_id,
             owner_agent_id: Some(owner_agent_id),
+            surface_id: Some(surface.id.to_string()),
             lifecycle: CaptureSessionLifecycle::Starting,
             width: 0,
             height: 0,
