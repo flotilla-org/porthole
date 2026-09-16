@@ -870,7 +870,7 @@ dependencies = [
 [[package]]
 name = "jackstay-graph"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=8c0a59745e83b5a5371ac433c1f47bb671c8454e#8c0a59745e83b5a5371ac433c1f47bb671c8454e"
+source = "git+https://github.com/flotilla-org/jackstay?rev=7773e57302215511e541efcb410b2579f111dcb0#7773e57302215511e541efcb410b2579f111dcb0"
 dependencies = [
  "serde",
  "serde_json",
