@@ -65,6 +65,11 @@ impl InputExecutor {
             width: f64::from(frame_width.max(1)),
             height: f64::from(frame_height.max(1)),
         };
+        // One mapping, computed once: frame pixels -> window-local points by
+        // the capture's own frame-to-window ratio (not the display scale).
+        // A controller sends coordinates in the frame it renders; the window
+        // may be sampled at a different scale than the display it is on.
+        let ratio = frame_to_window_ratio(&handle, &input, &surface, frame_width, frame_height);
         let target = Target::new(Config {
             modes: Mode::Cooperative.bit() | Mode::Physical.bit(),
             capabilities: CAP_ALL,
@@ -90,7 +95,7 @@ impl InputExecutor {
             let stop = stop.clone();
             std::thread::Builder::new()
                 .name("porthole-input-exec".into())
-                .spawn(move || poll_loop(target, input, surface, handle, stop))?
+                .spawn(move || poll_loop(target, input, surface, handle, ratio, stop))?
         };
         Ok(Self {
             path: path.to_path_buf(),
@@ -116,6 +121,26 @@ impl Drop for InputExecutor {
             let _ = t.join();
         }
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The frame-to-window ratio (window logical size / frame pixel size), so a
+/// frame coordinate maps to a window-local point. Falls back to 1:1 when the
+/// window size cannot be read.
+fn frame_to_window_ratio(
+    handle: &tokio::runtime::Handle,
+    input: &Arc<InputPipeline>,
+    surface: &SurfaceId,
+    frame_width: u32,
+    frame_height: u32,
+) -> (f64, f64) {
+    let (handle, input, surface) = (handle.clone(), input.clone(), surface.clone());
+    let size = std::thread::scope(|s| s.spawn(|| handle.block_on(input.window_logical_size(&surface))).join().ok());
+    match size {
+        Some(Ok((w, h))) if w > 0.0 && h > 0.0 && frame_width > 0 && frame_height > 0 => {
+            (w / f64::from(frame_width), h / f64::from(frame_height))
+        }
+        _ => (1.0, 1.0),
     }
 }
 
@@ -145,7 +170,14 @@ fn accept_loop(listener: UnixListener, target: Target, stop: Arc<AtomicBool>) {
     }
 }
 
-fn poll_loop(target: Target, input: Arc<InputPipeline>, surface: SurfaceId, handle: tokio::runtime::Handle, stop: Arc<AtomicBool>) {
+fn poll_loop(
+    target: Target,
+    input: Arc<InputPipeline>,
+    surface: SurfaceId,
+    handle: tokio::runtime::Handle,
+    ratio: (f64, f64),
+    stop: Arc<AtomicBool>,
+) {
     // The extent is seeded once at start and deliberately not polled: a
     // geometry change ends a controller's pointer gesture, and the surface's
     // content rect twitches when the app reacts to input, so polling it would
@@ -157,7 +189,7 @@ fn poll_loop(target: Target, input: Arc<InputPipeline>, surface: SurfaceId, hand
         while let Some(work) = target.next() {
             idle = false;
             let outcome = match work.operation {
-                Operation::Event(event) => execute(&handle, &input, &surface, event),
+                Operation::Event(event) => execute(&handle, &input, &surface, event, ratio),
                 Operation::Cleanup { .. } => {
                     let _ = handle.block_on(input.release_held(&surface));
                     Outcome::Executed
@@ -173,7 +205,9 @@ fn poll_loop(target: Target, input: Arc<InputPipeline>, surface: SurfaceId, hand
     }
 }
 
-fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface: &SurfaceId, event: Event) -> Outcome {
+fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface: &SurfaceId, event: Event, ratio: (f64, f64)) -> Outcome {
+    // Map a frame coordinate onto a window-local point.
+    let map = |x: f64, y: f64| (x * ratio.0, y * ratio.1);
     let result: Result<(), PortholeError> = match event {
         Event::Key {
             press,
@@ -195,7 +229,8 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
         },
         Event::Text(text) => handle.block_on(input.text(surface, &text)),
         Event::Motion(Position { x, y, .. }) => {
-            handle.block_on(input.pointer_move(surface, &PointerMoveSpec { x, y }, CoordUnits::Physical))
+            let (x, y) = map(x, y);
+            handle.block_on(input.pointer_move(surface, &PointerMoveSpec { x, y }, CoordUnits::Logical))
         }
         Event::Button { button, action, position } => handle.block_on(input.button(
             surface,
@@ -210,15 +245,16 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
         )),
         Event::Scroll { x, y, unit, position } => {
             let (delta_x, delta_y) = scroll_lines(x, y, unit);
+            let (px, py) = map(position.x, position.y);
             handle.block_on(input.scroll(
                 surface,
                 &ScrollSpec {
-                    x: position.x,
-                    y: position.y,
+                    x: px,
+                    y: py,
                     delta_x,
                     delta_y,
                 },
-                CoordUnits::Physical,
+                CoordUnits::Logical,
             ))
         }
     };

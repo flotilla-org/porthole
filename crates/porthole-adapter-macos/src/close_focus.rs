@@ -19,6 +19,14 @@ pub async fn focus(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "focus: surface has no pid"))? as i32;
 
+    // A driven remote session posts global HID events, which land in the
+    // frontmost window. Bringing the app frontmost is a once-per-session
+    // cost, not a per-event one: if it is already frontmost, skip the
+    // activate and AX raise entirely. This is what keeps a stream of events
+    // cheap (one CGEvent post each), the way enigo/RustDesk drive input.
+    if app_is_frontmost(pid) {
+        return Ok(());
+    }
     // Activate the owning app via NSRunningApplication.
     activate_app(pid)?;
 
@@ -239,6 +247,18 @@ where
     // Release the array we copied.
     unsafe { crate::ax::cf_release(windows_ptr) };
     result
+}
+
+fn app_is_frontmost(pid: i32) -> bool {
+    use objc2_app_kit::NSWorkspace;
+    // SAFETY: frontmostApplication is a read-only AppKit query with no
+    // preconditions; the returned app is autoreleased.
+    unsafe {
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|a| a.processIdentifier() == pid)
+            .unwrap_or(false)
+    }
 }
 
 fn activate_app(pid: i32) -> Result<(), PortholeError> {

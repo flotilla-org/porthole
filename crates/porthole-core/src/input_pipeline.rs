@@ -165,6 +165,16 @@ impl InputPipeline {
         Ok(out)
     }
 
+    /// The surface's window size in logical points, from the adapter's
+    /// geometry snapshot. Used to map frame-pixel coordinates onto the window
+    /// by the capture's own frame-to-window ratio, which is not the display
+    /// scale (a capture may sample the window at 1x while the display is 2x).
+    pub async fn window_logical_size(&self, surface: &SurfaceId) -> Result<(f64, f64), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        let snap = self.adapter.snapshot_geometry(&info).await?;
+        Ok((snap.display_local.w, snap.display_local.h))
+    }
+
     /// Look up the surface's current display's backing scale factor.
     /// Used to convert physical-pixel coordinates to the logical points the
     /// adapter expects. Errors if the surface's display has been disconnected
