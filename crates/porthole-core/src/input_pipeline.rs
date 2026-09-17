@@ -116,6 +116,22 @@ impl InputPipeline {
         self.adapter.focus(&info).await
     }
 
+    /// Begin a driven input session: focus the surface once, then let the
+    /// adapter skip per-event focus for the session. The executor calls this
+    /// when a remote controller connects. Paired with [`Self::end_drive`].
+    pub async fn begin_drive(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        self.adapter.begin_drive(&info).await
+    }
+
+    /// End a driven input session. Best-effort: a gone surface needs no
+    /// restore, so a missing handle is not an error.
+    pub async fn end_drive(&self, surface: &SurfaceId) {
+        if let Ok(info) = self.handles.require_alive(surface).await {
+            self.adapter.end_drive(&info).await;
+        }
+    }
+
     /// In-place resize/move. Surface identity is preserved — the same
     /// `surface_id` resolves before and after, the inner process keeps
     /// running. Use this for terminal-reflow tests and any other workflow

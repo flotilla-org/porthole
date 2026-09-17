@@ -87,9 +87,10 @@ impl InputExecutor {
         let accept = {
             let target = target.clone();
             let stop = stop.clone();
+            let (input, surface, handle) = (input.clone(), surface.clone(), handle.clone());
             std::thread::Builder::new()
                 .name("porthole-input-accept".into())
-                .spawn(move || accept_loop(listener, target, stop))?
+                .spawn(move || accept_loop(listener, target, input, surface, handle, stop))?
         };
         let poll = {
             let stop = stop.clone();
@@ -144,7 +145,14 @@ fn frame_to_window_ratio(
     }
 }
 
-fn accept_loop(listener: UnixListener, target: Target, stop: Arc<AtomicBool>) {
+fn accept_loop(
+    listener: UnixListener,
+    target: Target,
+    input: Arc<InputPipeline>,
+    surface: SurfaceId,
+    handle: tokio::runtime::Handle,
+    stop: Arc<AtomicBool>,
+) {
     let mut servers: Vec<Server> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -153,7 +161,15 @@ fn accept_loop(listener: UnixListener, target: Target, stop: Arc<AtomicBool>) {
                 // its own nonblocking mode, but guard the macOS accept-inherit.
                 let _ = stream.set_nonblocking(false);
                 match Server::start(target.clone(), stream) {
-                    Ok(server) => servers.push(server),
+                    Ok(server) => {
+                        // Focus the surface once for this controller session;
+                        // per-event injection then skips the (~1 s) focus. A
+                        // focus failure is non-fatal — the events still post.
+                        if let Err(e) = handle.block_on(input.begin_drive(&surface)) {
+                            eprintln!("input executor: begin_drive: {e:?}");
+                        }
+                        servers.push(server);
+                    }
                     Err(e) => eprintln!("input executor: server: {e}"),
                 }
                 servers.retain(|s| !s.finished());
@@ -192,6 +208,9 @@ fn poll_loop(
                 Operation::Event(event) => execute(&handle, &input, &surface, event, ratio),
                 Operation::Cleanup { .. } => {
                     let _ = handle.block_on(input.release_held(&surface));
+                    // The controller is gone; per-event focus resumes for any
+                    // later CLI use of this surface.
+                    handle.block_on(input.end_drive(&surface));
                     Outcome::Executed
                 }
             };

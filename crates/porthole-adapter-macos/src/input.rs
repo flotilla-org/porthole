@@ -26,6 +26,11 @@ use crate::{
 pub struct Held {
     keys: std::collections::HashMap<(SurfaceId, u64), HeldKey>,
     buttons: std::collections::HashMap<(SurfaceId, ClickButton), HeldButton>,
+    /// Surfaces a remote controller is actively driving. The executor focuses
+    /// such a surface once when the controller connects; while it is driven,
+    /// per-event injection skips the (expensive, ~1 s) focus so a stream of
+    /// events costs one HID post each, the way enigo/RustDesk drive input.
+    driven: std::collections::HashSet<SurfaceId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,7 +220,9 @@ pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Scroll
     // the cursor to the window-local point first. This is a visible side
     // effect; acceptable for v0.x.
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
-    close_focus::focus(adapter, surface).await?;
+    if !is_driven(adapter, surface) {
+        close_focus::focus(adapter, surface).await?;
+    }
     let source = event_source()?;
 
     // Move cursor.
@@ -239,6 +246,23 @@ pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Scroll
     .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "scroll event create failed"))?;
     scroll_ev.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+/// Begin a driven input session for `surface`: focus it once, then mark it so
+/// per-event injection skips focus for the session's duration.
+pub async fn begin_drive(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    close_focus::focus(adapter, surface).await?;
+    adapter.held.lock().expect("held state poisoned").driven.insert(surface.id.clone());
+    Ok(())
+}
+
+/// End a driven input session: per-event injection focuses again as normal.
+pub fn end_drive(adapter: &MacOsAdapter, surface: &SurfaceInfo) {
+    adapter.held.lock().expect("held state poisoned").driven.remove(&surface.id);
+}
+
+fn is_driven(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> bool {
+    adapter.held.lock().expect("held state poisoned").driven.contains(&surface.id)
 }
 
 pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
@@ -269,7 +293,9 @@ pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &
         }
         return Ok(());
     }
-    close_focus::focus(adapter, surface).await?;
+    if !is_driven(adapter, surface) {
+        close_focus::focus(adapter, surface).await?;
+    }
     // The event source is created after the await: it is not `Send`.
     let source = event_source()?;
     // Motion-only: no button state change. CGMouseButton::Left is required by
@@ -394,7 +420,9 @@ pub async fn button(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Button
     };
     match spec.action {
         PressAction::Down => {
-            close_focus::focus(adapter, surface).await?;
+            if !is_driven(adapter, surface) {
+                close_focus::focus(adapter, surface).await?;
+            }
             adapter.held.lock().expect("held state poisoned").buttons.insert(key, at);
             // The event source is created after the await: it is not `Send`.
             post_button(&event_source()?, down_ty, mouse_button, at)
