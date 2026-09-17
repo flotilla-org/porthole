@@ -38,7 +38,7 @@ fn export_error_to_api(error: ExportError) -> ApiError {
     let code = match &error {
         ExportError::UnknownExport(_) | ExportError::UnknownRepublication(_) => ErrorCode::SurfaceNotFound,
         ExportError::NotOwner => ErrorCode::AgentPermissionDenied,
-        ExportError::BridgeMissing | ExportError::Unsupported => ErrorCode::AdapterUnsupported,
+        ExportError::BridgeMissing | ExportError::Unsupported | ExportError::InputUnavailable => ErrorCode::AdapterUnsupported,
         ExportError::Io(_) | ExportError::Token(_) | ExportError::Spawn(_) | ExportError::Poisoned | ExportError::RepublishFailed(_) => {
             ErrorCode::InternalError
         }
@@ -121,15 +121,17 @@ pub async fn post_export(
     let native = native.clone();
     let input = request.input;
     // Spawning waits for the half to bind its sockets; keep that off the runtime.
-    let response = tokio::task::spawn_blocking(move || {
+    let created = tokio::task::spawn_blocking(move || {
         exports.create_export(&id, agent_id, identities, &native, request.chroma, request.bitrate_bps, input)
     })
     .await
-    .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("export task: {e}")).into()))?
-    .map_err(export_error_to_api)?;
+    .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("export task: {e}")).into()))?;
+    // Record the authorized execution whether or not the export succeeded: the
+    // Drive grant was checked and acted on either way.
     if let Some(execution) = execution {
         complete_route_execution(&state, execution, "/publications/{id}/exports").await?;
     }
+    let response = created.map_err(export_error_to_api)?;
     Ok((StatusCode::CREATED, Json(response)))
 }
 

@@ -323,6 +323,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn button_numbers_follow_the_canonical_scheme() {
+        // The SDL reference viewer sends primary=1, secondary=2, auxiliary=3.
+        assert_eq!(click_button(1), ClickButton::Left);
+        assert_eq!(click_button(2), ClickButton::Right);
+        assert_eq!(click_button(3), ClickButton::Middle);
+        assert_eq!(click_button(9), ClickButton::Left);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn events_reach_the_pipeline_with_press_identity() {
         let adapter = std::sync::Arc::new(InMemoryAdapter::new());

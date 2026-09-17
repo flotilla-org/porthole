@@ -53,6 +53,8 @@ pub enum ExportError {
     RepublishFailed(String),
     #[error("republications need launchd on macOS")]
     Unsupported,
+    #[error("this daemon has no input pipeline for a remote input channel")]
+    InputUnavailable,
 }
 
 struct ExportRecord {
@@ -238,7 +240,7 @@ impl ExportRegistry {
         if !input {
             return Ok(None);
         }
-        let pipeline = self.input.clone().ok_or(ExportError::Unsupported)?;
+        let pipeline = self.input.clone().ok_or(ExportError::InputUnavailable)?;
         let handle = tokio::runtime::Handle::try_current()
             .map_err(|e| ExportError::Spawn(std::io::Error::other(format!("no runtime for the input executor: {e}"))))?;
         let executor =
