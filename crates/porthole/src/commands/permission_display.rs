@@ -127,6 +127,10 @@ pub(super) fn grant_lines(g: &AgentGrantResponse) -> Vec<String> {
         format!("requester: {}", requester(g.agent_id.as_str(), &g.description)),
         format!("target: {}", target(&g.target, &g.description)),
         format!("permission scope: {}", actions(&g.actions)),
+        format!(
+            "first requested operation: {}",
+            operation(&g.description, g.origin_reason.as_deref())
+        ),
         format!("duration: {}", duration(&g.duration)),
         format!("granted: {}", super::agents::format_unix_ms_utc(g.created_at_unix_ms)),
     ];

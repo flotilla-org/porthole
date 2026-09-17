@@ -147,17 +147,18 @@ When a protected route has no matching grant, the daemon returns `403 agent_perm
 ### Approval inbox
 
 `porthole agents review` opens an inline terminal UI (18 rows by default;
-`--height 12` changes it). Tab switches **Requests** and **Grants**. Use arrow
+`--height 12` changes it). Tab or Left/Right switches **Requests** and **Grants**. Use arrow
 keys to select, `/` to filter the current view, and Enter to open details.
 Each view retains its filter and selection as requests arrive.
-Tables show requester, target, permissions, and the triggering operation or grant
-duration. Long cells wrap up to three lines; Enter shows the full details.
+Tables show requester, target, permissions and the triggering operation; Grants also
+shows duration. Long cells wrap up to three lines; Enter shows the full details.
 
-In request details, `a` approves and `d` denies that request without remembering
+From the request list or details, `a` approves and `d` denies that request without remembering
 a denial rule. Choose duration with `1` for once, `2` for until the window closes
 (window targets only), or `3` for persistent. The selected duration stays visible.
 Window requests default to until-window-closes; broader requests default to once.
-In grant details, `r` revokes. Esc returns to the list; `q` or Ctrl-C exits.
+From the grant list or details, `r` revokes. Left or Esc returns from details
+to the list; `q` or Ctrl-C exits.
 
 Approval grants the displayed capabilities on the displayed target. The first
 triggering operation is context, not a queued command to execute. Even a once

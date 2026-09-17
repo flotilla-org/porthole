@@ -468,6 +468,7 @@ fn grant_response() -> AgentGrantResponse {
         grant_id: GrantId::from("grant_1"),
         agent_id: AgentId::from("agent_1"),
         origin_request_id: Some(PermissionRequestId::from("apr_1")),
+        origin_reason: Some("typing".into()),
         target: AgentPermissionTarget::Surface {
             surface_id: SurfaceId::from("surf_1"),
         },

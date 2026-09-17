@@ -113,6 +113,8 @@ pub struct AgentGrantResponse {
     pub grant_id: GrantId,
     pub agent_id: AgentId,
     pub origin_request_id: Option<PermissionRequestId>,
+    /// Original request reason, used when structured operation context is absent.
+    pub origin_reason: Option<String>,
     pub target: AgentPermissionTarget,
     pub actions: Vec<ActionClass>,
     pub duration: AgentPermissionDuration,

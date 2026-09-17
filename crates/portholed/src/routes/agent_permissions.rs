@@ -216,14 +216,14 @@ async fn request_response(state: &AppState, request: StoredPermissionRequest) ->
 }
 
 async fn grant_response(state: &AppState, grant: StoredGrant) -> Result<AgentGrantResponse, ApiError> {
-    let context = match &grant.origin_request_id {
+    let (context, origin_reason) = match &grant.origin_request_id {
         Some(id) => state
             .agent_store
             .get_permission_request(id)
             .await?
-            .map(|r| r.context)
+            .map(|r| (r.context, r.reason))
             .unwrap_or_default(),
-        None => PermissionRequestContext::default(),
+        None => (PermissionRequestContext::default(), None),
     };
     let description = describe(state, &grant.agent_id, &grant.target, context).await?;
     Ok(AgentGrantResponse {
@@ -231,6 +231,7 @@ async fn grant_response(state: &AppState, grant: StoredGrant) -> Result<AgentGra
         grant_id: grant.grant_id,
         agent_id: grant.agent_id,
         origin_request_id: grant.origin_request_id,
+        origin_reason,
         target: grant.target.into(),
         actions: grant.actions,
         duration: grant.duration.into(),
@@ -526,6 +527,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(grants.as_array().unwrap().len(), 1);
         assert_eq!(grants[0]["origin_request_id"], pending.request_id.to_string());
+        assert_eq!(grants[0]["origin_reason"], "typing");
 
         let (status, revoked) = post(
             router.clone(),

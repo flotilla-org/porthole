@@ -64,6 +64,7 @@ struct Inbox {
     filtering: bool,
     detail: Option<Detail>,
     detail_scroll: u16,
+    list_duration: Option<(AgentPermissionRequestResponse, AgentPermissionDuration)>,
     connected: bool,
     busy: bool,
     completed: u64,
@@ -72,7 +73,7 @@ struct Inbox {
 
 struct InboxRow {
     id: String,
-    cells: [String; 4],
+    cells: Vec<String>,
 }
 
 fn short_actions(actions: &[porthole_core::agent_policy::ActionClass]) -> String {
@@ -89,20 +90,24 @@ fn short_actions(actions: &[porthole_core::agent_policy::ActionClass]) -> String
         .join(" + ")
 }
 
-// As in Flotilla's curated tables, allocate column minima first, then share
-// the remainder by weight. The operation column gets most of the extra space.
-fn inbox_widths(width: u16) -> [u16; 4] {
-    let available = width.saturating_sub(8); // selection marker + three column gaps
-    let minima: [u16; 4] = [14, 18, 16, 18];
-    if available < minima.iter().sum() {
-        let quarter = available / 4;
-        return [quarter, quarter, quarter, available - quarter * 3];
+// Reserve column minima, then distribute extra space towards targets and operations.
+fn inbox_widths(width: u16, grants: bool) -> Vec<u16> {
+    let minima = if grants { vec![12, 16, 14, 18, 10] } else { vec![14, 18, 16, 18] };
+    let columns = minima.len() as u16;
+    let available = width.saturating_sub(columns * 2); // marker + column gaps
+    let minimum: u16 = minima.iter().sum();
+    if available < minimum {
+        let mut widths = vec![available / columns; minima.len()];
+        *widths.last_mut().unwrap() += available % columns;
+        return widths;
     }
-    let extra = available - minima.iter().sum::<u16>();
-    let requester = minima[0] + extra / 6;
-    let target = minima[1] + extra / 3;
-    let permissions = minima[2] + extra / 6;
-    [requester, target, permissions, available - requester - target - permissions]
+    let extra = available - minimum;
+    let mut widths = minima;
+    widths[0] += extra / 6;
+    widths[1] += extra / 3;
+    widths[2] += extra / 6;
+    widths[3] += extra - extra / 6 * 2 - extra / 3;
+    widths
 }
 
 fn wrapped_cell(value: &str, width: u16, max_lines: u16) -> (Cell<'static>, u16) {
@@ -137,10 +142,11 @@ impl Inbox {
                 .iter()
                 .map(|g| InboxRow {
                     id: g.grant_id.to_string(),
-                    cells: [
+                    cells: vec![
                         display::clean(g.description.agent_name.as_deref().unwrap_or(g.agent_id.as_str())),
                         compact_target(&g.target, &g.description),
                         short_actions(&g.actions),
+                        display::operation(&g.description, g.origin_reason.as_deref()),
                         match g.duration {
                             AgentPermissionDuration::Once => "Once".into(),
                             AgentPermissionDuration::UntilSurfaceGone => "Until window closes".into(),
@@ -156,7 +162,7 @@ impl Inbox {
                 .iter()
                 .map(|r| InboxRow {
                     id: r.request_id.to_string(),
-                    cells: [
+                    cells: vec![
                         display::clean(r.description.agent_name.as_deref().unwrap_or(r.agent_id.as_str())),
                         compact_target(&r.target, &r.description),
                         short_actions(&r.actions),
@@ -209,9 +215,9 @@ impl Inbox {
         };
         scope.selected = rows.get(next).map(|row| row.id.clone());
     }
-    fn open(&mut self) {
+    fn selected_detail(&self) -> Option<Detail> {
         let selected = self.scopes[self.index()].selected.as_deref();
-        self.detail = if self.grants {
+        if self.grants {
             self.snapshot
                 .grants
                 .iter()
@@ -225,17 +231,55 @@ impl Inbox {
                 .find(|r| Some(r.request_id.as_str()) == selected)
                 .cloned()
                 .map(|r| {
-                    let duration = display::default_duration(&r.target);
+                    let duration = self
+                        .list_duration
+                        .as_ref()
+                        .filter(|(request, _)| request == &r)
+                        .map(|(_, duration)| duration.clone())
+                        .unwrap_or_else(|| display::default_duration(&r.target));
                     Detail::Request(r, duration)
                 })
-        };
+        }
+    }
+    fn active_detail(&self) -> Option<Detail> {
+        self.detail.clone().or_else(|| self.selected_detail())
+    }
+    fn open(&mut self) {
+        self.detail = self.selected_detail();
         self.detail_scroll = 0;
+    }
+    fn horizontal(&mut self, right: bool) {
+        if self.detail.is_some() {
+            if !right {
+                self.detail = None;
+            }
+        } else {
+            self.grants = right;
+            self.reconcile();
+        }
+    }
+    fn choose_duration(&mut self, key: char) {
+        if self.busy {
+            return;
+        }
+        if let Some(Detail::Request(r, _)) = self.active_detail() {
+            let duration = match key {
+                '1' => AgentPermissionDuration::Once,
+                '2' if matches!(r.target, AgentPermissionTarget::Surface { .. }) => AgentPermissionDuration::UntilSurfaceGone,
+                '3' => AgentPermissionDuration::Persistent,
+                _ => return,
+            };
+            self.list_duration = Some((r.clone(), duration.clone()));
+            if self.detail.is_some() {
+                self.detail = Some(Detail::Request(r, duration));
+            }
+        }
     }
     fn actionable(&self) -> bool {
         if !self.connected || self.busy {
             return false;
         }
-        match &self.detail {
+        match &self.active_detail() {
             Some(Detail::Request(r, _)) => self
                 .snapshot
                 .requests
@@ -249,7 +293,7 @@ impl Inbox {
         if !self.actionable() {
             return None;
         }
-        match (&self.detail, key) {
+        match (&self.active_detail(), key) {
             (Some(Detail::Request(r, duration)), 'a') if !r.description.agent_revoked && r.description.surface_available != Some(false) => {
                 Some(Decision::Approve(r.clone(), duration.clone()))
             }
@@ -283,7 +327,7 @@ async fn decide(client: &DaemonClient, decision: Decision) -> Result<String, Cli
                     },
                 )
                 .await?;
-            Ok("Approved. Esc returns to the inbox.".into())
+            Ok("Approved.".into())
         }
         Decision::Deny(r) => {
             let _: AgentPermissionRequestResponse = client
@@ -295,7 +339,7 @@ async fn decide(client: &DaemonClient, decision: Decision) -> Result<String, Cli
                     },
                 )
                 .await?;
-            Ok("Denied this request. Esc returns to the inbox.".into())
+            Ok("Denied this request.".into())
         }
         Decision::Revoke(id) => {
             let result: RevocationResponse = client
@@ -328,7 +372,7 @@ async fn network(client: DaemonClient, tx: watch::Sender<Update>, mut commands: 
             Ok(Ok(snapshot)) if events.is_some() => {
                 state.snapshot = Some(snapshot);
                 if !state.connected {
-                    state.message = "Live. Enter opens details; no actions are sent from the list.".into();
+                    state.message = "Live. Approval grants the permission scope; Operation shows what prompted it.".into();
                 }
                 state.connected = true;
             }
@@ -411,8 +455,19 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         areas[0],
     );
-    let context = match &app.detail {
-        Some(Detail::Request(_, duration)) => format!("APPROVE FOR: {}", display::duration(duration)),
+    let context = match app.active_detail() {
+        Some(Detail::Request(_, duration)) if !app.filtering => {
+            let filter = &app.scopes[app.index()].filter;
+            format!(
+                "APPROVE FOR: {}{}",
+                display::duration(&duration),
+                if filter.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | Filter: {filter}")
+                }
+            )
+        }
         _ => format!(
             "{}: {}",
             if app.filtering { "Filter (Enter to finish)" } else { "Filter" },
@@ -488,14 +543,14 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         let mut state = TableState::default()
             .with_offset(scope.offset)
             .with_selected(entries.iter().position(|row| Some(&row.id) == scope.selected.as_ref()));
-        let widths = inbox_widths(areas[2].width);
+        let widths = inbox_widths(areas[2].width, app.grants);
         let max_lines = areas[2].height.saturating_sub(3).clamp(1, 3);
         let rows = entries.iter().map(|entry| {
             let mut height = 1;
             let cells = entry
                 .cells
                 .iter()
-                .zip(widths)
+                .zip(widths.iter().copied())
                 .map(|(text, width)| {
                     let (cell, lines) = wrapped_cell(text, width, max_lines);
                     height = height.max(lines);
@@ -504,15 +559,14 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
                 .collect::<Vec<_>>();
             Row::new(cells).height(height)
         });
-        let header = Row::new([
-            "Requester",
-            "Target",
-            "Permissions",
-            if app.grants { "Duration" } else { "Operation" },
-        ])
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-        .bottom_margin(1);
-        let table = Table::new(rows, widths.map(Constraint::Length))
+        let mut headers = vec!["Requester", "Target", "Permissions", "Operation"];
+        if app.grants {
+            headers.push("Duration");
+        }
+        let header = Row::new(headers)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .bottom_margin(1);
+        let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
             .header(header)
             .column_spacing(2)
             .row_highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD))
@@ -527,14 +581,20 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
             frame.render_widget(Paragraph::new("No matching entries. Waiting for updates..."), empty);
         }
     }
-    let help = match app.detail {
+    let actions = match app.active_detail() {
         Some(Detail::Request(ref r, _)) if matches!(r.target, AgentPermissionTarget::Surface { .. }) => {
-            "a approve  d deny  1 once  2 until window closes  3 persistent\n↑↓ scroll  Esc back  Ctrl-C quit"
+            "a approve  d deny  1 once  2 until window closes  3 persistent"
         }
-        Some(Detail::Request(..)) => "a approve  d deny  1 once  3 persistent\n↑↓ scroll  Esc back  Ctrl-C quit",
-        Some(Detail::Grant(..)) => "r revoke grant (future checks only)\n↑↓ scroll  Esc back  Ctrl-C quit",
-        None => "↑↓ select  Enter details  Tab Requests/Grants  / filter  Esc clear\nq quit  Ctrl-C quit",
+        Some(Detail::Request(..)) => "a approve  d deny  1 once  3 persistent",
+        Some(Detail::Grant(..)) => "r revoke grant (future checks only)",
+        None => "",
     };
+    let navigation = if app.detail.is_some() {
+        "↑↓ scroll  ←/Esc back  q/Ctrl-C quit"
+    } else {
+        "↑↓ select  ←→/Tab tabs  Enter details  / filter  Esc clear  q quit"
+    };
+    let help = format!("{actions}\n{navigation}");
     frame.render_widget(Paragraph::new(help), areas[3]);
     frame.render_widget(
         Paragraph::new(display::clean(&app.message))
@@ -595,7 +655,7 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
             event = input.next() => {
                 let Some(event) = event else { break; };
                 let Event::Key(key) = event.map_err(io_error)? else { continue; };
-                // Holding down an approval key must not consume subsequent requests.
+                // Ignore repeat events from terminals that report them; busy also prevents overlapping decisions.
                 if key.kind != KeyEventKind::Press { continue; }
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) { break; }
                 if app.filtering {
@@ -611,20 +671,13 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
                     KeyCode::Char('q') => break,
                     KeyCode::Esc => { if app.detail.take().is_none() { let index = app.index(); app.scopes[index].filter.clear(); app.reconcile(); } }
                     KeyCode::Tab | KeyCode::BackTab if app.detail.is_none() => { app.grants = !app.grants; app.reconcile(); }
+                    KeyCode::Left => app.horizontal(false),
+                    KeyCode::Right => app.horizontal(true),
                     KeyCode::Char('/') if app.detail.is_none() => app.filtering = true,
                     KeyCode::Down | KeyCode::Char('j') => app.navigate(true),
                     KeyCode::Up | KeyCode::Char('k') => app.navigate(false),
                     KeyCode::Enter if app.detail.is_none() => app.open(),
-                    KeyCode::Char(c @ ('1' | '2' | '3')) if !app.busy => {
-                        if let Some(Detail::Request(r, duration)) = &mut app.detail {
-                            match c {
-                                '1' => *duration = AgentPermissionDuration::Once,
-                                '2' if matches!(r.target, AgentPermissionTarget::Surface { .. }) => *duration = AgentPermissionDuration::UntilSurfaceGone,
-                                '3' => *duration = AgentPermissionDuration::Persistent,
-                                _ => {}
-                            }
-                        }
-                    }
+                    KeyCode::Char(c @ ('1' | '2' | '3')) => app.choose_duration(c),
                     KeyCode::Char(c) => {
                         if let Some(decision) = app.decision(c) {
                             if commands.try_send(decision).is_ok() { app.busy = true; app.message = "Sending decision...".into(); }
@@ -708,6 +761,74 @@ mod tests {
         assert!(inbox.decision('a').is_none());
         assert!(matches!(inbox.decision('d'), Some(Decision::Deny(_))));
     }
+    #[test]
+    fn list_actions_use_selected_request_and_duration_without_opening_details() {
+        let mut inbox = Inbox::default();
+        let mut broad = request("broad");
+        broad.target = AgentPermissionTarget::AllSurfaces;
+        inbox.update(live(vec![request("window"), broad]));
+        assert!(
+            matches!(inbox.decision('a'), Some(Decision::Approve(r, AgentPermissionDuration::UntilSurfaceGone)) if r.request_id.as_str() == "window")
+        );
+        inbox.choose_duration('3');
+        inbox.open();
+        inbox.horizontal(false);
+        assert!(inbox.detail.is_none());
+        assert!(matches!(
+            inbox.decision('a'),
+            Some(Decision::Approve(_, AgentPermissionDuration::Persistent))
+        ));
+        inbox.navigate(true);
+        inbox.choose_duration('2'); // Invalid for all windows; retain its default.
+        assert!(
+            matches!(inbox.decision('a'), Some(Decision::Approve(r, AgentPermissionDuration::Once)) if r.request_id.as_str() == "broad")
+        );
+        assert!(matches!(inbox.decision('d'), Some(Decision::Deny(r)) if r.request_id.as_str() == "broad"));
+        inbox.busy = true;
+        assert!(inbox.decision('a').is_none());
+        inbox.busy = false;
+        inbox.connected = false;
+        assert!(inbox.decision('d').is_none());
+    }
+
+    #[test]
+    fn arrows_switch_views_and_grant_list_retains_operation_and_duration() {
+        let mut inbox = Inbox::default();
+        inbox.update(live(vec![request("window")]));
+        inbox.snapshot.grants.push(AgentGrantResponse {
+            description: Default::default(),
+            grant_id: "grant_1".into(),
+            agent_id: "agent_1".into(),
+            origin_request_id: Some("window".into()),
+            origin_reason: Some("search surfaces".into()),
+            target: AgentPermissionTarget::AllSurfaces,
+            actions: vec![ActionClass::Observe],
+            duration: AgentPermissionDuration::Persistent,
+            constraints: Default::default(),
+            created_at_unix_ms: 1000,
+            expires_at_unix_ms: None,
+            consumed_at_unix_ms: None,
+            revoked_at_unix_ms: None,
+        });
+        inbox.horizontal(true);
+        assert!(inbox.grants);
+        assert!(matches!(inbox.decision('r'), Some(Decision::Revoke(id)) if id == "grant_1"));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(110, 18)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut inbox)).unwrap();
+        let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        assert!(screen.contains("search surfaces"));
+        assert!(screen.contains("Persistent"));
+        inbox.open();
+        inbox.horizontal(true); // Right does not leave details.
+        assert!(inbox.detail.is_some());
+        inbox.horizontal(false);
+        assert!(inbox.detail.is_none());
+        assert!(inbox.grants);
+        inbox.horizontal(false);
+        assert!(!inbox.grants);
+        assert_eq!(inbox.scopes[0].selected.as_deref(), Some("window"));
+    }
+
     #[test]
     fn each_scope_retains_its_filter_and_small_terminals_render() {
         let mut inbox = Inbox::default();
