@@ -32,7 +32,7 @@ surface (`export --input`, `republish --input`, `attach --input`). On the
 producer, creating an export with input requires Drive on the surface, through
 the same guard and approval flow as `/surfaces/{id}/key`, and portholed becomes
 the jackstay input executor: it binds `x/<12 hex>/i`, runs an input target
-seeded from the surface's content rect, and drives events onto the input
+seeded from the capture frame's pixel dimensions, and drives events onto the input
 pipeline with press identity, releasing held keys and buttons when a controller
 goes away. On the consumer the ingress accepts controllers on `r/<12 hex>/i`
 and the bridge relays them. A controller is the SDL viewer's `--input-socket`

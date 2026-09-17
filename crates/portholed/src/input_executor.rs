@@ -251,17 +251,24 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
             let (x, y) = map(x, y);
             handle.block_on(input.pointer_move(surface, &PointerMoveSpec { x, y }, CoordUnits::Logical))
         }
-        Event::Button { button, action, position } => handle.block_on(input.button(
-            surface,
-            &ButtonSpec {
-                x: position.x,
-                y: position.y,
-                button: click_button(button),
-                action: press_action(action),
-                modifiers: Vec::new(),
-            },
-            CoordUnits::Physical,
-        )),
+        Event::Button { button, action, position } => {
+            // Same mapping as Motion/Scroll: a frame coordinate maps to a
+            // window-local point by the ratio, injected as logical. Passing
+            // the raw frame coordinate as physical would double-count scale
+            // whenever the capture frame is not at display resolution.
+            let (x, y) = map(position.x, position.y);
+            handle.block_on(input.button(
+                surface,
+                &ButtonSpec {
+                    x,
+                    y,
+                    button: click_button(button),
+                    action: press_action(action),
+                    modifiers: Vec::new(),
+                },
+                CoordUnits::Logical,
+            ))
+        }
         Event::Scroll { x, y, unit, position } => {
             let (delta_x, delta_y) = scroll_lines(x, y, unit);
             let (px, py) = map(position.x, position.y);
@@ -441,6 +448,73 @@ mod tests {
             assert!(start.elapsed() < Duration::from_secs(3), "no cleanup release");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        drop(executor);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn button_coordinates_go_through_the_frame_ratio() {
+        use porthole_core::{DisplayId, GeometrySnapshot, adapter::Rect};
+
+        // Window logical size 400x300 against an 800x600 frame gives ratio 0.5.
+        // A button, like Motion and Scroll, must map its frame coordinate by
+        // that ratio: frame (200,120) -> window-local (100,60). Passing the raw
+        // frame coordinate as physical would instead divide by the display
+        // scale and land the click somewhere else whenever frame != display.
+        let adapter = std::sync::Arc::new(InMemoryAdapter::new());
+        adapter
+            .set_next_snapshot_geometry(Ok(GeometrySnapshot {
+                display_id: DisplayId::new("ratio-test"),
+                display_local: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 400.0,
+                    h: 300.0,
+                },
+            }))
+            .await;
+        let handles = HandleStore::new();
+        let info = SurfaceInfo::window(SurfaceId::new(), 1);
+        let surface = info.id.clone();
+        handles.insert(info).await;
+        let input = Arc::new(InputPipeline::new(adapter.clone(), handles));
+
+        let dir = std::env::temp_dir().join(format!("porthole-ratio-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("i");
+        let executor = InputExecutor::start(&path, surface.clone(), input, tokio::runtime::Handle::current(), 800, 600).unwrap();
+
+        tokio::task::spawn_blocking(move || {
+            let client = Client::connect(UnixStream::connect(&path).unwrap(), Mode::Cooperative).unwrap();
+            let rev = client.welcome().config.geometry.revision;
+            client
+                .send(Event::Button {
+                    button: 1,
+                    action: Action::Down,
+                    position: Position {
+                        revision: rev,
+                        x: 200.0,
+                        y: 120.0,
+                    },
+                })
+                .unwrap();
+            wait(|| {
+                while let Some(status) = client.poll() {
+                    if let jackstay::input::Status::Completed { .. } = status {
+                        return Some(());
+                    }
+                }
+                None
+            });
+            client.close();
+        })
+        .await
+        .unwrap();
+
+        let buttons = adapter.button_calls().await;
+        assert_eq!(buttons.len(), 1);
+        assert_eq!((buttons[0].1.x, buttons[0].1.y), (100.0, 60.0));
+
         drop(executor);
         let _ = std::fs::remove_dir_all(&dir);
     }
