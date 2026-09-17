@@ -8,7 +8,7 @@ use crate::{
     attention::AttentionInfo,
     content_rect::ContentRectInfo,
     display::DisplayInfo,
-    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
+    input::{ButtonSpec, ClickSpec, KeyEvent, KeyStrokeSpec, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
@@ -324,6 +324,30 @@ pub trait Adapter: Send + Sync {
     /// Used by harnesses driving terminal mouse-reporting protocols
     /// (`DECSET ?1003 + ?1006 + ?1016`) that emit on motion alone.
     async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError>;
+
+    /// One keyboard transition with press identity (see [`KeyStrokeSpec`]).
+    /// Adapters that cannot hold a key report `AdapterUnsupported`.
+    async fn key_stroke(&self, _surface: &SurfaceInfo, _spec: &KeyStrokeSpec) -> Result<(), PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "adapter does not support key transitions with press identity",
+        ))
+    }
+
+    /// One mouse button transition at a window-local point (see [`ButtonSpec`]).
+    async fn button(&self, _surface: &SurfaceInfo, _spec: &ButtonSpec) -> Result<(), PortholeError> {
+        Err(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "adapter does not support button transitions with press identity",
+        ))
+    }
+
+    /// Release every key and button still held on `surface` through
+    /// `key_stroke` and `button`: the executor's cleanup when a controller
+    /// goes away or focus is lost. Nothing held is not an error.
+    async fn release_held(&self, _surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        Ok(())
+    }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
 

@@ -23,6 +23,21 @@ pub fn supported() -> &'static HashSet<&'static str> {
         for n in 1..=12u8 {
             s.insert(intern(&format!("F{n}")));
         }
+        // Modifier keys as presses of their own, for callers with press
+        // identity; atomic callers carry modifiers as flags instead.
+        for name in [
+            "ShiftLeft",
+            "ShiftRight",
+            "ControlLeft",
+            "ControlRight",
+            "AltLeft",
+            "AltRight",
+            "MetaLeft",
+            "MetaRight",
+            "CapsLock",
+        ] {
+            s.insert(name);
+        }
         // Named keys
         for name in [
             "Enter",

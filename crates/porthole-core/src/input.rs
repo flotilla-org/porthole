@@ -42,7 +42,7 @@ pub struct KeyEvent {
     pub modifiers: Vec<Modifier>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClickButton {
     #[default]
@@ -75,6 +75,44 @@ pub struct ScrollSpec {
     pub delta_x: f64,
     #[serde(default)]
     pub delta_y: f64,
+}
+
+/// What a press-identity primitive does with its press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PressAction {
+    Down,
+    Up,
+    /// A key held long enough to auto-repeat; keys only.
+    Repeat,
+}
+
+/// One keyboard transition with press identity, the shape a jackstay input
+/// executor needs. `press` names the press so that its `Up` and `Repeat`
+/// reuse the binding its `Down` made even if the key's meaning has changed
+/// since; the adapter keeps that binding. `key` is a DOM `KeyboardEvent.code`
+/// as for [`KeyEvent`]; `modifiers` are the flags carried on this event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyStrokeSpec {
+    pub press: u64,
+    pub action: PressAction,
+    pub key: String,
+    #[serde(default)]
+    pub modifiers: Vec<Modifier>,
+}
+
+/// One mouse button transition at a window-local point. A `Down` records the
+/// button as held, so following [`PointerMoveSpec`]s become drags until the
+/// matching `Up`. `Repeat` is not a button action.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ButtonSpec {
+    pub x: f64,
+    pub y: f64,
+    #[serde(default)]
+    pub button: ClickButton,
+    pub action: PressAction,
+    #[serde(default)]
+    pub modifiers: Vec<Modifier>,
 }
 
 /// Pointer (motion-only) primitive. `x`/`y` are window-local; the adapter
@@ -120,6 +158,23 @@ mod tests {
         assert_eq!(click.button, ClickButton::Left);
         assert_eq!(click.count, 1);
         assert!(click.modifiers.is_empty());
+    }
+
+    #[test]
+    fn press_specs_round_trip_and_default_optional_fields() {
+        let stroke = KeyStrokeSpec {
+            press: 7,
+            action: PressAction::Repeat,
+            key: "KeyA".into(),
+            modifiers: vec![Modifier::Shift],
+        };
+        let json = serde_json::to_string(&stroke).unwrap();
+        assert!(json.contains("\"repeat\""));
+        assert_eq!(serde_json::from_str::<KeyStrokeSpec>(&json).unwrap(), stroke);
+        let button: ButtonSpec = serde_json::from_str(r#"{"x":1.0,"y":2.0,"action":"down"}"#).unwrap();
+        assert_eq!(button.button, ClickButton::Left);
+        assert_eq!(button.action, PressAction::Down);
+        assert!(button.modifiers.is_empty());
     }
 
     #[test]

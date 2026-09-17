@@ -8,7 +8,7 @@ use porthole_core::{
     adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot, VideoCaptureFramePublisher},
     attention::AttentionInfo,
     display::DisplayInfo,
-    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
+    input::{ButtonSpec, ClickSpec, KeyEvent, KeyStrokeSpec, PointerMoveSpec, ScrollSpec},
     permission::SystemPermissionStatus,
     surface::{PlatformSurfaceRef, SurfaceInfo},
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
@@ -74,6 +74,11 @@ pub mod window_alive;
 /// starts fresh and any earlier prompt belongs to a dead process.
 #[derive(Default)]
 pub struct MacOsAdapter {
+    /// Keys and buttons held through `key_stroke` and `button`: the executor
+    /// contract binds a press to what its down posted, and drags need the
+    /// held button. Per process state only, released by `release_held`.
+    #[cfg(target_os = "macos")]
+    held: std::sync::Mutex<input::Held>,
     _private: (),
 }
 
@@ -148,6 +153,18 @@ impl Adapter for MacOsAdapter {
 
     async fn pointer_move(&self, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
         input::pointer_move(self, surface, spec).await
+    }
+
+    async fn key_stroke(&self, surface: &SurfaceInfo, spec: &KeyStrokeSpec) -> Result<(), PortholeError> {
+        input::key_stroke(self, surface, spec).await
+    }
+
+    async fn button(&self, surface: &SurfaceInfo, spec: &ButtonSpec) -> Result<(), PortholeError> {
+        input::button(self, surface, spec).await
+    }
+
+    async fn release_held(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        input::release_held(self, surface).await
     }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
