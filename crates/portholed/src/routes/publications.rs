@@ -120,9 +120,19 @@ pub async fn post_export(
     let exports = state.exports.clone();
     let native = native.clone();
     let input = request.input;
+    let frame = (session.width, session.height);
     // Spawning waits for the half to bind its sockets; keep that off the runtime.
     let created = tokio::task::spawn_blocking(move || {
-        exports.create_export(&id, agent_id, identities, &native, request.chroma, request.bitrate_bps, input)
+        exports.create_export(
+            &id,
+            agent_id,
+            identities,
+            &native,
+            request.chroma,
+            request.bitrate_bps,
+            input,
+            frame,
+        )
     })
     .await
     .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("export task: {e}")).into()))?;

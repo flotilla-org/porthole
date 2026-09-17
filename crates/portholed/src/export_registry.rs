@@ -180,6 +180,7 @@ impl ExportRegistry {
         chroma: ChromaPolicy,
         bitrate_bps: Option<u32>,
         input: bool,
+        frame: (u32, u32),
     ) -> Result<ExportResponse, ExportError> {
         let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
         let export_id = format!("exp_{}", Uuid::new_v4().simple());
@@ -191,7 +192,7 @@ impl ExportRegistry {
         // Start the input executor first, if asked, so its socket is on the
         // egress command line.
         #[cfg(unix)]
-        let executor = self.start_executor(input, &dir, &identities.source)?;
+        let executor = self.start_executor(input, &dir, &identities.source, frame)?;
         #[cfg(unix)]
         let input_socket = executor.as_ref().map(|e| e.path().to_path_buf());
         #[cfg(not(unix))]
@@ -236,15 +237,21 @@ impl ExportRegistry {
     /// captured surface. `dir` is the export's socket directory and `surface`
     /// the surface id to inject into.
     #[cfg(unix)]
-    fn start_executor(&self, input: bool, dir: &Path, surface: &str) -> Result<Option<crate::input_executor::InputExecutor>, ExportError> {
+    fn start_executor(
+        &self,
+        input: bool,
+        dir: &Path,
+        surface: &str,
+        frame: (u32, u32),
+    ) -> Result<Option<crate::input_executor::InputExecutor>, ExportError> {
         if !input {
             return Ok(None);
         }
         let pipeline = self.input.clone().ok_or(ExportError::InputUnavailable)?;
         let handle = tokio::runtime::Handle::try_current()
             .map_err(|e| ExportError::Spawn(std::io::Error::other(format!("no runtime for the input executor: {e}"))))?;
-        let executor =
-            crate::input_executor::InputExecutor::start(&dir.join("i"), surface.into(), pipeline, handle).map_err(ExportError::Spawn)?;
+        let executor = crate::input_executor::InputExecutor::start(&dir.join("i"), surface.into(), pipeline, handle, frame.0, frame.1)
+            .map_err(ExportError::Spawn)?;
         Ok(Some(executor))
     }
 
@@ -546,6 +553,7 @@ mod tests {
                 ChromaPolicy::Prefer444,
                 None,
                 false,
+                (0, 0),
             )
             .unwrap_err();
         assert!(matches!(err, ExportError::Io(_) | ExportError::BridgeMissing), "{err}");

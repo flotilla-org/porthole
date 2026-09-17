@@ -16,7 +16,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use jackstay::input::{CAP_ALL, Config, Event, Geometry, Key, Mode, Operation, Outcome, Position, ScrollUnit, Target, transport::Server};
@@ -30,9 +30,6 @@ use porthole_core::{
 /// Link latency adds to the controller's idle timeout, so give it room beyond
 /// the 5 s default.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
-/// How often the executor re-reads the surface's size to update the extent.
-const GEOMETRY_POLL: Duration = Duration::from_secs(1);
-
 /// A running executor. Dropping it stops the threads and unlinks the socket.
 pub struct InputExecutor {
     path: PathBuf,
@@ -44,16 +41,30 @@ pub struct InputExecutor {
 impl InputExecutor {
     /// Binds `path` and starts serving controllers that drive `surface`.
     /// `handle` runs the pipeline's async calls from the executor threads.
-    pub fn start(path: &Path, surface: SurfaceId, input: Arc<InputPipeline>, handle: tokio::runtime::Handle) -> std::io::Result<Self> {
+    pub fn start(
+        path: &Path,
+        surface: SurfaceId,
+        input: Arc<InputPipeline>,
+        handle: tokio::runtime::Handle,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> std::io::Result<Self> {
         if path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 format!("{}: path exists; another export may own it", path.display()),
             ));
         }
-        // Seed the extent from the surface's logical size so a controller maps
-        // its window onto the right coordinates from the first frame.
-        let geometry = initial_geometry(&handle, &input, &surface);
+        // The extent is the captured frame in pixels: a controller maps its
+        // view of that frame onto the extent, and the events come back in
+        // frame pixels, injected in physical units (divided by the surface's
+        // scale at the daemon boundary). The frame origin is the window
+        // origin, so no content-rect offset is needed.
+        let geometry = Geometry {
+            revision: 1,
+            width: f64::from(frame_width.max(1)),
+            height: f64::from(frame_height.max(1)),
+        };
         let target = Target::new(Config {
             modes: Mode::Cooperative.bit() | Mode::Physical.bit(),
             capabilities: CAP_ALL,
@@ -79,7 +90,7 @@ impl InputExecutor {
             let stop = stop.clone();
             std::thread::Builder::new()
                 .name("porthole-input-exec".into())
-                .spawn(move || poll_loop(target, input, surface, handle, geometry, stop))?
+                .spawn(move || poll_loop(target, input, surface, handle, stop))?
         };
         Ok(Self {
             path: path.to_path_buf(),
@@ -105,30 +116,6 @@ impl Drop for InputExecutor {
             let _ = t.join();
         }
         let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn initial_geometry(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface: &SurfaceId) -> Geometry {
-    // Run the async query on a thread of its own: `start` may be called from a
-    // runtime worker (a test) or a blocking thread (create_export), and
-    // `block_on` must not run on a worker.
-    let (handle, input, surface) = (handle.clone(), input.clone(), surface.clone());
-    let rect = std::thread::scope(|s| {
-        s.spawn(|| handle.block_on(input.content_rect(&surface, CoordUnits::Logical)))
-            .join()
-            .ok()
-    });
-    match rect {
-        Some(Ok(rect)) if rect.rect.w > 0.0 && rect.rect.h > 0.0 => Geometry {
-            revision: 1,
-            width: rect.rect.w,
-            height: rect.rect.h,
-        },
-        _ => Geometry {
-            revision: 1,
-            width: 1.0,
-            height: 1.0,
-        },
     }
 }
 
@@ -158,15 +145,13 @@ fn accept_loop(listener: UnixListener, target: Target, stop: Arc<AtomicBool>) {
     }
 }
 
-fn poll_loop(
-    target: Target,
-    input: Arc<InputPipeline>,
-    surface: SurfaceId,
-    handle: tokio::runtime::Handle,
-    mut geometry: Geometry,
-    stop: Arc<AtomicBool>,
-) {
-    let mut last_geometry = Instant::now();
+fn poll_loop(target: Target, input: Arc<InputPipeline>, surface: SurfaceId, handle: tokio::runtime::Handle, stop: Arc<AtomicBool>) {
+    // The extent is seeded once at start and deliberately not polled: a
+    // geometry change ends a controller's pointer gesture, and the surface's
+    // content rect twitches when the app reacts to input, so polling it would
+    // cancel the very gesture that caused the twitch. A real resize should
+    // drive set_geometry from the capture session's frame size; that is the
+    // follow-up the design note records.
     while !stop.load(Ordering::Relaxed) {
         let mut idle = true;
         while let Some(work) = target.next() {
@@ -180,21 +165,6 @@ fn poll_loop(
             };
             if let Err(e) = target.complete(work.id, outcome) {
                 eprintln!("input executor: complete: {e:?}");
-            }
-        }
-        // Follow the surface's size: a controller learns the new extent as a
-        // reset. Only bumped while a controller could be attached.
-        if last_geometry.elapsed() >= GEOMETRY_POLL {
-            last_geometry = Instant::now();
-            if let Ok(rect) = handle.block_on(input.content_rect(&surface, CoordUnits::Logical)) {
-                if rect.rect.w > 0.0 && rect.rect.h > 0.0 && (rect.rect.w != geometry.width || rect.rect.h != geometry.height) {
-                    geometry = Geometry {
-                        revision: geometry.revision + 1,
-                        width: rect.rect.w,
-                        height: rect.rect.h,
-                    };
-                    let _ = target.set_geometry(geometry);
-                }
             }
         }
         if idle {
@@ -225,7 +195,7 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
         },
         Event::Text(text) => handle.block_on(input.text(surface, &text)),
         Event::Motion(Position { x, y, .. }) => {
-            handle.block_on(input.pointer_move(surface, &PointerMoveSpec { x, y }, CoordUnits::Logical))
+            handle.block_on(input.pointer_move(surface, &PointerMoveSpec { x, y }, CoordUnits::Physical))
         }
         Event::Button { button, action, position } => handle.block_on(input.button(
             surface,
@@ -236,7 +206,7 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
                 action: press_action(action),
                 modifiers: Vec::new(),
             },
-            CoordUnits::Logical,
+            CoordUnits::Physical,
         )),
         Event::Scroll { x, y, unit, position } => {
             let (delta_x, delta_y) = scroll_lines(x, y, unit);
@@ -248,7 +218,7 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
                     delta_x,
                     delta_y,
                 },
-                CoordUnits::Logical,
+                CoordUnits::Physical,
             ))
         }
     };
@@ -305,7 +275,7 @@ fn scroll_lines(x: f64, y: f64, unit: ScrollUnit) -> (f64, f64) {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::net::UnixStream;
+    use std::{os::unix::net::UnixStream, time::Instant};
 
     use jackstay::input::{Action, Event, Key, Mode, Position, transport::Client};
     use porthole_core::{handle::HandleStore, in_memory::InMemoryAdapter, surface::SurfaceInfo};
@@ -344,16 +314,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("porthole-exec-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("i");
-        let executor = InputExecutor::start(&path, surface.clone(), input, tokio::runtime::Handle::current()).unwrap();
+        // Frame is 800x600 pixels; the in-memory display is scale 1, so frame
+        // pixels inject as the same window-local logical points.
+        let executor = InputExecutor::start(&path, surface.clone(), input, tokio::runtime::Handle::current(), 800, 600).unwrap();
 
         // Drive the executor from a blocking thread: the jackstay Client is
         // synchronous and would otherwise stall the async test.
         let recorded = tokio::task::spawn_blocking(move || {
             let client = Client::connect(UnixStream::connect(&path).unwrap(), Mode::Cooperative).unwrap();
             let geo = client.welcome().config.geometry;
+            assert_eq!((geo.width, geo.height), (800.0, 600.0));
             let pos = Position {
                 revision: geo.revision,
-                x: 100.0,
+                x: 200.0,
                 y: 120.0,
             };
             client.send(Event::Motion(pos)).unwrap();
@@ -398,6 +371,7 @@ mod tests {
         let buttons = adapter.button_calls().await;
         assert_eq!(buttons.len(), 2);
         assert_eq!(buttons[0].1.action, PressAction::Down);
+        assert_eq!((buttons[0].1.x, buttons[0].1.y), (200.0, 120.0));
         assert_eq!(buttons[1].1.action, PressAction::Up);
         let keys = adapter.key_stroke_calls().await;
         assert_eq!(keys.len(), 1);
