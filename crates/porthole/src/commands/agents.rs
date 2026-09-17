@@ -13,6 +13,12 @@ struct EmptyBody {}
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum AgentsCommand {
+    /// Live local approval inbox; Tab switches Requests and Grants.
+    Review {
+        /// Height in terminal rows; does not enter the alternate screen.
+        #[arg(long, default_value_t = 18, value_parser = clap::value_parser!(u16).range(8..=50))]
+        height: u16,
+    },
     /// Create an agent identity and print its bearer token once.
     Create {
         #[arg(long)]
@@ -148,6 +154,9 @@ pub trait AgentClient {
 }
 
 pub async fn run(client: &mut DaemonClient, command: AgentsCommand) -> Result<(), ClientError> {
+    if let AgentsCommand::Review { height } = command {
+        return super::approvals::run(client, height).await;
+    }
     let output = run_with_output(client, command).await?;
     print!("{output}");
     Ok(())
@@ -155,6 +164,7 @@ pub async fn run(client: &mut DaemonClient, command: AgentsCommand) -> Result<()
 
 pub async fn run_with_output<C: AgentClient>(client: &mut C, command: AgentsCommand) -> Result<String, ClientError> {
     match command {
+        AgentsCommand::Review { .. } => Err(ClientError::Local("review requires an interactive terminal".into())),
         AgentsCommand::Create { name, json } => {
             let response = client
                 .create_identity(CreateAgentIdentityRequest {
@@ -263,7 +273,7 @@ fn render_identity(response: AgentIdentityResponse, json: bool) -> Result<String
     }
 }
 
-fn format_unix_ms_utc(unix_ms: u64) -> String {
+pub(super) fn format_unix_ms_utc(unix_ms: u64) -> String {
     let total_seconds = unix_ms / 1_000;
     let millis = unix_ms % 1_000;
     let days = (total_seconds / 86_400) as i64;
@@ -293,49 +303,42 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
 
 fn render_requests(response: Vec<AgentPermissionRequestResponse>, json: bool) -> Result<String, ClientError> {
     if json {
-        render_json(&response)
-    } else {
-        Ok(response
-            .into_iter()
-            .map(|request| {
-                format!(
-                    "request_id: {}\nagent_id: {}\nstatus: {}\n",
-                    request.request_id, request.agent_id, request.status
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"))
+        return render_json(&response);
     }
+    if response.is_empty() {
+        return Ok("No pending requests.\n".into());
+    }
+    Ok(response
+        .iter()
+        .map(|r| super::permission_display::request_lines(r).join("\n") + "\n")
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
-
 fn render_request(response: AgentPermissionRequestResponse, json: bool) -> Result<String, ClientError> {
     if json {
         render_json(&response)
     } else {
-        Ok(format!(
-            "request_id: {}\nagent_id: {}\nstatus: {}\n",
-            response.request_id, response.agent_id, response.status
-        ))
+        Ok(super::permission_display::request_lines(&response).join("\n") + "\n")
     }
 }
-
 fn render_grants(response: Vec<AgentGrantResponse>, json: bool) -> Result<String, ClientError> {
     if json {
-        render_json(&response)
-    } else {
-        Ok(response
-            .into_iter()
-            .map(|grant| format!("grant_id: {}\nagent_id: {}\n", grant.grant_id, grant.agent_id))
-            .collect::<Vec<_>>()
-            .join("\n"))
+        return render_json(&response);
     }
+    if response.is_empty() {
+        return Ok("No active grants.\n".into());
+    }
+    Ok(response
+        .iter()
+        .map(|g| super::permission_display::grant_lines(g).join("\n") + "\n")
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
-
 fn render_grant(response: AgentGrantResponse, json: bool) -> Result<String, ClientError> {
     if json {
         render_json(&response)
     } else {
-        Ok(format!("grant_id: {}\nagent_id: {}\n", response.grant_id, response.agent_id))
+        Ok(super::permission_display::grant_lines(&response).join("\n") + "\n")
     }
 }
 

@@ -31,3 +31,12 @@ lives outside porthole and is expected to generalise beyond it.
   enforcement point and a token-verification dependency.
 - The roadmap's phase-2.5 "operator authority" and phase-3 "approval notification"
   items are deferred under this ADR rather than open work.
+
+## Local operator usability, 2026-09-17
+
+The inline `porthole agents review` inbox and richer request/grant descriptions
+improve the existing local operator path. They do not introduce a separate
+operator identity, remote authority, native notifications or broader enforcement.
+The daemon supplies descriptions shared by CLI and TUI clients; the existing
+request target/actions remain the authorization scope. This work leaves the
+general authority decision above deferred.

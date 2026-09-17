@@ -10,6 +10,7 @@ use porthole_protocol::error::WireError;
 use porthole_transport::{Endpoint, LocalHttpClient};
 use serde::{Serialize, de::DeserializeOwned};
 
+#[derive(Clone)]
 pub struct DaemonClient {
     http: LocalHttpClient,
     bearer_token: Option<String>,
@@ -41,6 +42,17 @@ impl DaemonClient {
 
     pub fn bearer_token(&self) -> Option<&str> {
         self.bearer_token.as_deref()
+    }
+
+    /// Subscribe before fetching a snapshot; each received frame invalidates it.
+    /// The consumer refetches after reconnects and event-bus resync notifications.
+    pub async fn events(&self) -> Result<hyper::body::Incoming, ClientError> {
+        let req = self.build_empty_request(Method::GET, "/events")?;
+        let response = self.http.request(req).await?;
+        if !response.status().is_success() {
+            return Err(ClientError::Local(format!("events: HTTP {}", response.status())));
+        }
+        Ok(response.into_body())
     }
 
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {

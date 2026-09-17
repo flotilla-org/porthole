@@ -4,10 +4,13 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use porthole_core::{ErrorCode, PortholeError, agent_policy::ActionClass};
-use porthole_protocol::capture_sessions::{
-    CaptureOutputRequest, CaptureOutputResponse, CaptureSessionResponse, CreateCaptureSessionResponse,
+use porthole_protocol::{
+    agent_permissions::PermissionOperation,
+    capture_sessions::{CaptureOutputRequest, CaptureOutputResponse, CaptureSessionResponse, CreateCaptureSessionResponse},
 };
 use serde::Deserialize;
+
+use super::agent_guard::PermissionTrigger;
 
 /// Query for `POST /capture-sessions/surfaces/{id}`. `native=true` requests
 /// the platform native handle path; the default is the CPU-shm fd-socket path.
@@ -42,7 +45,7 @@ pub async fn post_surface(
         &headers,
         surface_id.as_str(),
         &[ActionClass::Observe, ActionClass::Record],
-        Some("record surface"),
+        PermissionTrigger::operation("record surface", PermissionOperation::Capture { native: kind.native }),
     )
     .await?;
     let surface = state.handles.require_alive(&surface_id).await?;

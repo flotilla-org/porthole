@@ -5,9 +5,13 @@ use porthole_core::{
     adapter::{ArtifactLaunchSpec, LaunchSpec, ProcessLaunchSpec, RequireConfidence},
     agent_policy::ActionClass,
 };
-use porthole_protocol::launches::{ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, WireConfidence, WireCorrelation};
+use porthole_protocol::{
+    agent_permissions::PermissionOperation,
+    launches::{ArtifactLaunch, LaunchKind, LaunchRequest, LaunchResponse, WireConfidence, WireCorrelation},
+};
 use uuid::Uuid;
 
+use super::agent_guard::PermissionTrigger;
 use crate::{
     routes::{
         agent_guard::{authorize_launch_actions, complete_route_execution},
@@ -30,7 +34,23 @@ pub async fn post_launches(
     }
 
     let spec = request_to_launch_spec(&req)?;
-    let execution = authorize_launch_actions(&state, &headers, &[ActionClass::Manage], Some("launch surface")).await?;
+    let application = match &req.kind {
+        LaunchKind::Process(process) => process.app.chars().take(256).collect(),
+        LaunchKind::Artifact(artifact) => std::path::Path::new(&artifact.path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .chars()
+            .take(256)
+            .collect(),
+    };
+    let execution = authorize_launch_actions(
+        &state,
+        &headers,
+        &[ActionClass::Manage],
+        PermissionTrigger::operation("launch surface", PermissionOperation::Launch { application }),
+    )
+    .await?;
     let placement = req.placement.as_ref();
     let result = state.pipeline.launch(&spec, placement).await?;
     complete_route_execution(&state, execution, "/launches").await?;

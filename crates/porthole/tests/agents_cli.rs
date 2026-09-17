@@ -448,6 +448,7 @@ fn identity_response() -> AgentIdentityResponse {
 
 fn request_response() -> AgentPermissionRequestResponse {
     AgentPermissionRequestResponse {
+        description: Default::default(),
         request_id: PermissionRequestId::from("apr_1"),
         agent_id: AgentId::from("agent_1"),
         target: AgentPermissionTarget::Surface {
@@ -463,6 +464,7 @@ fn request_response() -> AgentPermissionRequestResponse {
 
 fn grant_response() -> AgentGrantResponse {
     AgentGrantResponse {
+        description: Default::default(),
         grant_id: GrantId::from("grant_1"),
         agent_id: AgentId::from("agent_1"),
         origin_request_id: Some(PermissionRequestId::from("apr_1")),
@@ -477,4 +479,33 @@ fn grant_response() -> AgentGrantResponse {
         consumed_at_unix_ms: None,
         revoked_at_unix_ms: None,
     }
+}
+
+#[tokio::test]
+async fn human_request_list_explains_principal_target_scope_and_redacts_terminal_controls() {
+    use porthole_protocol::agent_permissions::{PermissionDescription, PermissionOperation, PermissionSurface};
+    let mut request = request_response();
+    request.description = PermissionDescription {
+        agent_name: Some("KS presenter\x1b[2J".into()),
+        surface: Some(PermissionSurface {
+            app_name: Some("Kitty".into()),
+            title: Some("Project\nterminal".into()),
+            pid: Some(42),
+        }),
+        operation: Some(PermissionOperation::Text { characters: 120 }),
+        surface_available: Some(true),
+        ..Default::default()
+    };
+    let mut client = FakeAgentClient {
+        requests_response: vec![request],
+        ..Default::default()
+    };
+    let output = run_with_output(&mut client, AgentsCommand::Requests { json: false }).await.unwrap();
+    assert!(output.contains("KS presenter"));
+    assert!(output.contains("agent_1"));
+    assert!(output.contains("Kitty: Project terminal"));
+    assert!(output.contains("type 120 characters"));
+    assert!(output.contains("drive (keyboard, text, pointer)"));
+    assert!(output.contains("until this window closes"));
+    assert!(!output.contains('\x1b'));
 }
