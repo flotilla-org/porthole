@@ -247,21 +247,27 @@ pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &
     // A button held through `button` turns motion into a drag of that
     // button, and the held point follows so its up lands here. Held state
     // is checked before focusing: a drag must not re-raise the window.
-    let dragging = {
+    let dragging: Vec<(ClickButton, HeldButton)> = {
         let mut held = adapter.held.lock().expect("held state poisoned");
-        let mut dragging = None;
+        let mut dragging = Vec::new();
         for ((id, button), at) in held.buttons.iter_mut() {
             if *id == surface.id {
                 at.x = screen_x;
                 at.y = screen_y;
-                dragging.get_or_insert((*button, *at));
+                dragging.push((*button, *at));
             }
         }
+        // Every held button drags, in a fixed order.
+        dragging.sort_by_key(|(button, _)| *button as u8);
         dragging
     };
-    if let Some((button, at)) = dragging {
-        let (_, _, drag_ty, mouse_button) = button_types(button);
-        return post_button(&event_source()?, drag_ty, mouse_button, at);
+    if !dragging.is_empty() {
+        let source = event_source()?;
+        for (button, at) in dragging {
+            let (_, _, drag_ty, mouse_button) = button_types(button);
+            post_button(&source, drag_ty, mouse_button, at)?;
+        }
+        return Ok(());
     }
     close_focus::focus(adapter, surface).await?;
     // The event source is created after the await: it is not `Send`.
@@ -401,10 +407,20 @@ pub async fn button(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Button
     }
 }
 
-/// Releases every key and button held on `surface`. Keys go up in the order
-/// they were pressed is not knowable here, so modifiers and plain keys are
-/// released together with the flags their downs carried.
+/// Releases every key and button held on `surface`. The order the keys went
+/// down is not known here, so modifiers and plain keys are released together,
+/// each with the flags its down carried. Nothing is forgotten until it can be
+/// posted: a revoked Accessibility grant leaves the held state for a retry.
 pub async fn release_held(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    {
+        let held = adapter.held.lock().expect("held state poisoned");
+        let nothing = !held.keys.keys().any(|(id, _)| *id == surface.id) && !held.buttons.keys().any(|(id, _)| *id == surface.id);
+        if nothing {
+            return Ok(());
+        }
+    }
+    ensure_accessibility_granted(adapter)?;
+    let source = event_source()?;
     let (keys, buttons) = {
         let mut held = adapter.held.lock().expect("held state poisoned");
         let key_ids: Vec<(SurfaceId, u64)> = held.keys.keys().filter(|(id, _)| *id == surface.id).cloned().collect();
@@ -416,11 +432,6 @@ pub async fn release_held(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Resu
             .collect();
         (keys, buttons)
     };
-    if keys.is_empty() && buttons.is_empty() {
-        return Ok(());
-    }
-    ensure_accessibility_granted(adapter)?;
-    let source = event_source()?;
     let mut first_error = None;
     for key in keys {
         if let Err(e) = post_key(&source, key, false, false) {

@@ -3,12 +3,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+#[cfg(target_os = "macos")]
+use porthole_core::input::{ButtonSpec, KeyStrokeSpec};
 use porthole_core::{
     ErrorCode, PortholeError,
     adapter::{Adapter, LaunchOutcome, ProcessLaunchSpec, Screenshot, VideoCaptureFramePublisher},
     attention::AttentionInfo,
     display::DisplayInfo,
-    input::{ButtonSpec, ClickSpec, KeyEvent, KeyStrokeSpec, PointerMoveSpec, ScrollSpec},
+    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
     permission::SystemPermissionStatus,
     surface::{PlatformSurfaceRef, SurfaceInfo},
     wait::{WaitCondition, WaitOutcome, WaitTimeout},
