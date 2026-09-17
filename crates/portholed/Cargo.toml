@@ -53,6 +53,10 @@ porthole-adapter-windows = { path = "../porthole-adapter-windows" }
 tempfile = "3"
 porthole = { path = "../porthole" }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+porthole-adapter-macos = { path = "../porthole-adapter-macos" }
+jackstay = { workspace = true, features = ["backend-macos"] }
+
 [[bin]]
 name = "portholed"
 path = "src/main.rs"

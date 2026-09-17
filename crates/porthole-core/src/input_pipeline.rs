@@ -116,6 +116,22 @@ impl InputPipeline {
         self.adapter.focus(&info).await
     }
 
+    /// Begin a driven input session: focus the surface once, then let the
+    /// adapter skip per-event focus for the session. The executor calls this
+    /// when a remote controller connects. Paired with [`Self::end_drive`].
+    pub async fn begin_drive(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        self.adapter.begin_drive(&info).await
+    }
+
+    /// End a driven input session. Best-effort: a gone surface needs no
+    /// restore, so a missing handle is not an error.
+    pub async fn end_drive(&self, surface: &SurfaceId) {
+        if let Ok(info) = self.handles.require_alive(surface).await {
+            self.adapter.end_drive(&info).await;
+        }
+    }
+
     /// In-place resize/move. Surface identity is preserved — the same
     /// `surface_id` resolves before and after, the inner process keeps
     /// running. Use this for terminal-reflow tests and any other workflow
@@ -163,6 +179,16 @@ impl InputPipeline {
             };
         }
         Ok(out)
+    }
+
+    /// The surface's window size in logical points, from the adapter's
+    /// geometry snapshot. Used to map frame-pixel coordinates onto the window
+    /// by the capture's own frame-to-window ratio, which is not the display
+    /// scale (a capture may sample the window at 1x while the display is 2x).
+    pub async fn window_logical_size(&self, surface: &SurfaceId) -> Result<(f64, f64), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        let snap = self.adapter.snapshot_geometry(&info).await?;
+        Ok((snap.display_local.w, snap.display_local.h))
     }
 
     /// Look up the surface's current display's backing scale factor.

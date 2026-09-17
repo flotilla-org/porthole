@@ -353,6 +353,19 @@ pub trait Adapter: Send + Sync {
 
     async fn focus(&self, surface: &SurfaceInfo) -> Result<(), PortholeError>;
 
+    /// Begin a driven input session: a remote controller has connected and
+    /// will stream events. The default focuses the surface once; an adapter
+    /// whose per-event injection focuses may also suppress that for the
+    /// session so a stream of events costs one post each rather than a focus
+    /// per event. Paired with [`Adapter::end_drive`].
+    async fn begin_drive(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        self.focus(surface).await
+    }
+
+    /// End a driven input session: per-event injection returns to its normal
+    /// focus behavior. The default does nothing.
+    async fn end_drive(&self, _surface: &SurfaceInfo) {}
+
     /// Reject unsupported wait conditions before entering the timeout-only polling API.
     fn validate_wait(&self, _condition: &WaitCondition) -> Result<(), PortholeError> {
         Ok(())

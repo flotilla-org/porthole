@@ -177,6 +177,14 @@ impl Adapter for MacOsAdapter {
         close_focus::focus(self, surface).await
     }
 
+    async fn begin_drive(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        input::begin_drive(self, surface).await
+    }
+
+    async fn end_drive(&self, surface: &SurfaceInfo) {
+        input::end_drive(self, surface);
+    }
+
     async fn wait(
         &self,
         surface: &SurfaceInfo,

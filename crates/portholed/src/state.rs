@@ -92,7 +92,14 @@ impl AppState {
 
     #[must_use]
     pub fn with_exports(mut self, exports: crate::export_registry::ExportRegistry) -> Self {
-        self.exports = exports;
+        #[cfg(unix)]
+        {
+            self.exports = exports.with_input(self.input.clone());
+        }
+        #[cfg(not(unix))]
+        {
+            self.exports = exports;
+        }
         self
     }
 

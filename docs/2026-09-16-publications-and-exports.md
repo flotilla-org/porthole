@@ -27,6 +27,18 @@ republication. Capture sessions now record the surface they capture, so a
 publication carries two identities: the source (a surface id) and the running
 publication (the session id), kept apart as the registry note asks.
 
+An export or republication can carry an input channel back to the captured
+surface (`export --input`, `republish --input`, `attach --input`). On the
+producer, creating an export with input requires Drive on the surface, through
+the same guard and approval flow as `/surfaces/{id}/key`, and portholed becomes
+the jackstay input executor: it binds `x/<12 hex>/i`, runs an input target
+seeded from the capture frame's pixel dimensions, and drives events onto the input
+pipeline with press identity, releasing held keys and buttons when a controller
+goes away. On the consumer the ingress accepts controllers on `r/<12 hex>/i`
+and the bridge relays them. A controller is the SDL viewer's `--input-socket`
+or katzensteg's input socket; there is no token on the consumer socket yet, as
+with the CPU socket.
+
 A republication is native by default. With `cpu` set on the request
 (`republish --cpu`, `attach --cpu`) the ingress half also serves it over a
 generic CPU setup socket under the runtime directory (`r/<12 hex>/s`), which
