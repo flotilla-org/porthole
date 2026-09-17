@@ -150,6 +150,8 @@ When a protected route has no matching grant, the daemon returns `403 agent_perm
 `--height 12` changes it). Tab switches **Requests** and **Grants**. Use arrow
 keys to select, `/` to filter the current view, and Enter to open details.
 Each view retains its filter and selection as requests arrive.
+Tables show requester, target, permissions, and the triggering operation or grant
+duration. Long cells wrap up to three lines; Enter shows the full details.
 
 In request details, `a` approves and `d` denies that request without remembering
 a denial rule. Choose duration with `1` for once, `2` for until the window closes

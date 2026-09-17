@@ -19,7 +19,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -70,52 +70,111 @@ struct Inbox {
     message: String,
 }
 
+struct InboxRow {
+    id: String,
+    cells: [String; 4],
+}
+
+fn short_actions(actions: &[porthole_core::agent_policy::ActionClass]) -> String {
+    use porthole_core::agent_policy::ActionClass;
+    actions
+        .iter()
+        .map(|action| match action {
+            ActionClass::Observe => "observe",
+            ActionClass::Drive => "drive",
+            ActionClass::Manage => "manage",
+            ActionClass::Record => "record",
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
+// As in Flotilla's curated tables, allocate column minima first, then share
+// the remainder by weight. The operation column gets most of the extra space.
+fn inbox_widths(width: u16) -> [u16; 4] {
+    let available = width.saturating_sub(8); // selection marker + three column gaps
+    let minima: [u16; 4] = [14, 18, 16, 18];
+    if available < minima.iter().sum() {
+        let quarter = available / 4;
+        return [quarter, quarter, quarter, available - quarter * 3];
+    }
+    let extra = available - minima.iter().sum::<u16>();
+    let requester = minima[0] + extra / 6;
+    let target = minima[1] + extra / 3;
+    let permissions = minima[2] + extra / 6;
+    [requester, target, permissions, available - requester - target - permissions]
+}
+
+fn wrapped_cell(value: &str, width: u16, max_lines: u16) -> (Cell<'static>, u16) {
+    let mut lines = textwrap::wrap(value, usize::from(width.max(1)));
+    if lines.len() > usize::from(max_lines) {
+        lines.truncate(usize::from(max_lines));
+        if let Some(last) = lines.last_mut() {
+            let prefix = if width > 1 {
+                textwrap::wrap(last, usize::from(width - 1))
+                    .first()
+                    .map(|line| line.to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            *last = format!("{prefix}…").into();
+        }
+    }
+    let height = lines.len().max(1) as u16;
+    (Cell::from(lines.join("\n")), height)
+}
+
 impl Inbox {
     fn index(&self) -> usize {
         usize::from(self.grants)
     }
-    fn entries(&self) -> Vec<(String, String)> {
+    fn entries(&self) -> Vec<InboxRow> {
         let filter = self.scopes[self.index()].filter.to_lowercase();
         let rows: Vec<_> = if self.grants {
             self.snapshot
                 .grants
                 .iter()
-                .map(|g| {
-                    (
-                        g.grant_id.to_string(),
-                        format!(
-                            "{} | {} | {}",
-                            display::clean(g.description.agent_name.as_deref().unwrap_or(g.agent_id.as_str())),
-                            display::actions(&g.actions),
-                            compact_target(&g.target, &g.description)
-                        ),
-                    )
+                .map(|g| InboxRow {
+                    id: g.grant_id.to_string(),
+                    cells: [
+                        display::clean(g.description.agent_name.as_deref().unwrap_or(g.agent_id.as_str())),
+                        compact_target(&g.target, &g.description),
+                        short_actions(&g.actions),
+                        match g.duration {
+                            AgentPermissionDuration::Once => "Once".into(),
+                            AgentPermissionDuration::UntilSurfaceGone => "Until window closes".into(),
+                            AgentPermissionDuration::Persistent => "Persistent".into(),
+                            _ => display::duration(&g.duration),
+                        },
+                    ],
                 })
                 .collect()
         } else {
             self.snapshot
                 .requests
                 .iter()
-                .map(|r| {
-                    (
-                        r.request_id.to_string(),
-                        format!(
-                            "{} | {} | {}",
-                            display::clean(r.description.agent_name.as_deref().unwrap_or(r.agent_id.as_str())),
-                            display::operation(&r.description, r.reason.as_deref()),
-                            compact_target(&r.target, &r.description)
-                        ),
-                    )
+                .map(|r| InboxRow {
+                    id: r.request_id.to_string(),
+                    cells: [
+                        display::clean(r.description.agent_name.as_deref().unwrap_or(r.agent_id.as_str())),
+                        compact_target(&r.target, &r.description),
+                        short_actions(&r.actions),
+                        display::operation(&r.description, r.reason.as_deref()),
+                    ],
                 })
                 .collect()
         };
-        rows.into_iter().filter(|(_, text)| text.to_lowercase().contains(&filter)).collect()
+        rows.into_iter()
+            .filter(|row| row.id.to_lowercase().contains(&filter) || row.cells.iter().any(|cell| cell.to_lowercase().contains(&filter)))
+            .collect()
     }
+
     fn reconcile(&mut self) {
         let rows = self.entries();
         let scope = &mut self.scopes[self.index()];
-        if !rows.iter().any(|(id, _)| Some(id) == scope.selected.as_ref()) {
-            scope.selected = rows.first().map(|(id, _)| id.clone());
+        if !rows.iter().any(|row| Some(&row.id) == scope.selected.as_ref()) {
+            scope.selected = rows.first().map(|row| row.id.clone());
             scope.offset = 0;
         }
     }
@@ -142,13 +201,13 @@ impl Inbox {
         }
         let rows = self.entries();
         let scope = &mut self.scopes[self.index()];
-        let current = rows.iter().position(|(id, _)| Some(id) == scope.selected.as_ref()).unwrap_or(0);
+        let current = rows.iter().position(|row| Some(&row.id) == scope.selected.as_ref()).unwrap_or(0);
         let next = if down {
             (current + 1).min(rows.len().saturating_sub(1))
         } else {
             current.saturating_sub(1)
         };
-        scope.selected = rows.get(next).map(|(id, _)| id.clone());
+        scope.selected = rows.get(next).map(|row| row.id.clone());
     }
     fn open(&mut self) {
         let selected = self.scopes[self.index()].selected.as_deref();
@@ -384,32 +443,88 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         if !app.actionable() {
             lines.push("Actions unavailable: resolved, changed, offline, or target unavailable. Esc to refresh selection.".into());
         }
-        frame.render_widget(
-            Paragraph::new(lines.join("\n"))
-                .wrap(Wrap { trim: false })
-                .scroll((app.detail_scroll, 0))
-                .block(Block::default().borders(Borders::TOP)),
-            areas[2],
-        );
+        let label_width = areas[2].width.saturating_sub(3).min(14);
+        let value_width = areas[2].width.saturating_sub(label_width + 2).max(1);
+        let mut rows = Vec::new();
+        for line in lines {
+            let (label, value) = line.split_once(": ").unwrap_or(("", &line));
+            let label = match label {
+                "request_id" => "Request ID",
+                "grant_id" => "Grant ID",
+                "requester" => "Requester",
+                "target" => "Target",
+                "first requested operation" => "Requested",
+                "permission scope" => "Allows",
+                "status" => "Status",
+                "requested" => "Created",
+                "duration" => "Duration",
+                "granted" => "Granted",
+                "constraint" => "Constraint",
+                "Actions unavailable" | "Approval unavailable" => "Unavailable",
+                other => other,
+            };
+            for (index, wrapped) in textwrap::wrap(value, usize::from(value_width)).into_iter().enumerate() {
+                rows.push(Row::new(vec![
+                    Cell::from(if index == 0 { label.to_owned() } else { String::new() }).style(Style::default().fg(Color::Cyan)),
+                    Cell::from(wrapped.into_owned()),
+                ]));
+            }
+        }
+        let visible = usize::from(areas[2].height.saturating_sub(1));
+        app.detail_scroll = app
+            .detail_scroll
+            .min(rows.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
+        let table = Table::new(
+            rows.into_iter().skip(usize::from(app.detail_scroll)),
+            [Constraint::Length(label_width), Constraint::Min(1)],
+        )
+        .column_spacing(2)
+        .block(Block::default().borders(Borders::TOP));
+        frame.render_widget(table, areas[2]);
     } else {
         app.reconcile();
         let entries = app.entries();
         let scope = &mut app.scopes[app.index()];
-        let mut state = ListState::default()
+        let mut state = TableState::default()
             .with_offset(scope.offset)
-            .with_selected(entries.iter().position(|(id, _)| Some(id) == scope.selected.as_ref()));
-        if entries.is_empty() {
-            frame.render_widget(
-                Paragraph::new("No matching entries. Waiting for updates...").block(Block::default().borders(Borders::TOP)),
-                areas[2],
-            );
-        } else {
-            let list = List::new(entries.iter().map(|(_, text)| ListItem::new(text.as_str())))
-                .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                .highlight_symbol("> ")
-                .block(Block::default().borders(Borders::TOP));
-            frame.render_stateful_widget(list, areas[2], &mut state);
-            scope.offset = state.offset();
+            .with_selected(entries.iter().position(|row| Some(&row.id) == scope.selected.as_ref()));
+        let widths = inbox_widths(areas[2].width);
+        let max_lines = areas[2].height.saturating_sub(3).clamp(1, 3);
+        let rows = entries.iter().map(|entry| {
+            let mut height = 1;
+            let cells = entry
+                .cells
+                .iter()
+                .zip(widths)
+                .map(|(text, width)| {
+                    let (cell, lines) = wrapped_cell(text, width, max_lines);
+                    height = height.max(lines);
+                    cell
+                })
+                .collect::<Vec<_>>();
+            Row::new(cells).height(height)
+        });
+        let header = Row::new([
+            "Requester",
+            "Target",
+            "Permissions",
+            if app.grants { "Duration" } else { "Operation" },
+        ])
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .bottom_margin(1);
+        let table = Table::new(rows, widths.map(Constraint::Length))
+            .header(header)
+            .column_spacing(2)
+            .row_highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).add_modifier(Modifier::BOLD))
+            .highlight_symbol("> ")
+            .block(Block::default().borders(Borders::TOP));
+        frame.render_stateful_widget(table, areas[2], &mut state);
+        scope.offset = state.offset();
+        if entries.is_empty() && areas[2].height > 3 {
+            let mut empty = areas[2];
+            empty.y += 3;
+            empty.height -= 3;
+            frame.render_widget(Paragraph::new("No matching entries. Waiting for updates..."), empty);
         }
     }
     let help = match app.detail {
