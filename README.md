@@ -160,6 +160,12 @@ Window requests default to until-window-closes; broader requests default to once
 From the grant list or details, `r` revokes. Left or Esc returns from details
 to the list; `q` or Ctrl-C exits.
 
+The Grants view, `porthole agents grants` (including `--json`), and
+`GET /agent-permissions/grants` list currently effective grants. They omit grants
+for revoked or missing identities and until-window-closes grants for unavailable
+windows, as well as revoked, consumed and expired grants. Records are retained;
+historical inspection is tracked in [#139](https://github.com/flotilla-org/porthole/issues/139).
+
 Approval grants the displayed capabilities on the displayed target. The first
 triggering operation is context, not a queued command to execute. Even a once
 grant permits the next matching operation. Text requests retain only character

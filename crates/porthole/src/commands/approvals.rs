@@ -386,6 +386,7 @@ async fn network(client: DaemonClient, tx: watch::Sender<Update>, mut commands: 
             result => {
                 state.connected = false;
                 state.message = match result {
+                    Ok(Ok(_)) => "Event stream unavailable. Retrying; actions disabled.".into(),
                     Ok(Err(error)) => format!("Disconnected: {error}. Retrying; actions disabled."),
                     _ => "Disconnected or timed out. Retrying; actions disabled.".into(),
                 };

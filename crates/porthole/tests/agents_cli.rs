@@ -487,7 +487,7 @@ async fn human_request_list_explains_principal_target_scope_and_redacts_terminal
     use porthole_protocol::agent_permissions::{PermissionDescription, PermissionOperation, PermissionSurface};
     let mut request = request_response();
     request.description = PermissionDescription {
-        agent_name: Some("KS presenter\x1b[2J".into()),
+        agent_name: Some("KS presenter\x1b[2J\u{202e}\u{2066}".into()),
         surface: Some(PermissionSurface {
             app_name: Some("Kitty".into()),
             title: Some("Project\nterminal".into()),
@@ -509,4 +509,6 @@ async fn human_request_list_explains_principal_target_scope_and_redacts_terminal
     assert!(output.contains("drive (keyboard, text, pointer)"));
     assert!(output.contains("until this window closes"));
     assert!(!output.contains('\x1b'));
+    assert!(!output.contains('\u{202e}'));
+    assert!(!output.contains('\u{2066}'));
 }
