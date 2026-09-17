@@ -101,8 +101,14 @@ fn inbox_widths(width: u16, grants: bool) -> Vec<u16> {
         *widths.last_mut().unwrap() += available % columns;
         return widths;
     }
-    let extra = available - minimum;
+    let mut extra = available - minimum;
     let mut widths = minima;
+    if grants {
+        // Fit the common "Until window closes" label before widening free text.
+        let duration_extra = extra.min(19 - widths[4]);
+        widths[4] += duration_extra;
+        extra -= duration_extra;
+    }
     widths[0] += extra / 6;
     widths[1] += extra / 3;
     widths[2] += extra / 6;
@@ -176,13 +182,14 @@ impl Inbox {
             .collect()
     }
 
-    fn reconcile(&mut self) {
+    fn reconcile(&mut self) -> Vec<InboxRow> {
         let rows = self.entries();
         let scope = &mut self.scopes[self.index()];
         if !rows.iter().any(|row| Some(&row.id) == scope.selected.as_ref()) {
             scope.selected = rows.first().map(|row| row.id.clone());
             scope.offset = 0;
         }
+        rows
     }
     fn update(&mut self, update: Update) {
         if let Some(snapshot) = update.snapshot {
@@ -544,8 +551,7 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         .block(Block::default().borders(Borders::TOP));
         frame.render_widget(table, areas[2]);
     } else {
-        app.reconcile();
-        let entries = app.entries();
+        let entries = app.reconcile();
         let scope = &mut app.scopes[app.index()];
         let mut state = TableState::default()
             .with_offset(scope.offset)

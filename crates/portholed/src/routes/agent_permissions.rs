@@ -167,6 +167,8 @@ pub async fn get_grants(State(state): State<AppState>) -> Result<Json<Vec<AgentG
     let mut result = Vec::with_capacity(grants.len());
     for grant in grants {
         let response = grant_response(&state, grant).await?;
+        // This endpoint lists effective grants for the live inbox, not history.
+        // Identity revocation disables its grants without deleting their records.
         if response.description.agent_revoked
             || (matches!(
                 response.duration,
