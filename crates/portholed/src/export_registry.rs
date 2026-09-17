@@ -197,7 +197,7 @@ impl ExportRegistry {
         let input_socket = executor.as_ref().map(|e| e.path().to_path_buf());
         #[cfg(not(unix))]
         let input_socket = {
-            let _ = input;
+            let _ = (input, frame);
             None
         };
         let spec = EgressSpec {
