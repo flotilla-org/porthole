@@ -7,7 +7,10 @@ pub fn swift_build_configuration(release: bool) -> &'static str {
 }
 
 pub fn scratch_path() -> PathBuf {
-    Path::new("target").join("swift").join("PortholeHelper")
+    std::env::var_os("PORTHOLE_SWIFT_SCRATCH_PATH")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new("target").join("swift").join("PortholeHelper"))
 }
 
 pub fn swift_build_args(release: bool) -> Vec<String> {
