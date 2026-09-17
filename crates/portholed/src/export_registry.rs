@@ -63,6 +63,11 @@ struct ExportRecord {
     media_socket: PathBuf,
     control_socket: PathBuf,
     handle: HalfHandle,
+    /// The input executor bound for this export, when it carries input. Held
+    /// so it lives as long as the export and is torn down with it on drop.
+    #[cfg(unix)]
+    #[allow(dead_code, reason = "kept for its Drop; not read")]
+    executor: Option<crate::input_executor::InputExecutor>,
 }
 
 #[cfg(target_os = "macos")]
@@ -72,6 +77,8 @@ struct RepublishRecord {
     native: NativeCaptureInfo,
     /// The CPU setup socket the half serves, when one was requested.
     cpu_socket: Option<PathBuf>,
+    /// The input socket the half accepts controllers on, when requested.
+    input_socket: Option<PathBuf>,
     job: jackstay_graph::export::IngressJob,
 }
 
@@ -87,6 +94,9 @@ struct Inner {
 pub struct ExportRegistry {
     inner: Arc<Mutex<Inner>>,
     runtime_dir: Option<PathBuf>,
+    /// The input pipeline an export's executor drives when it carries input.
+    #[cfg(unix)]
+    input: Option<Arc<porthole_core::input_pipeline::InputPipeline>>,
 }
 
 impl std::fmt::Debug for ExportRegistry {
@@ -130,7 +140,17 @@ impl ExportRegistry {
         Self {
             inner: Arc::new(Mutex::new(Inner::default())),
             runtime_dir,
+            #[cfg(unix)]
+            input: None,
         }
+    }
+
+    /// Sets the input pipeline exports drive when they carry input.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_input(mut self, input: Arc<porthole_core::input_pipeline::InputPipeline>) -> Self {
+        self.input = Some(input);
+        self
     }
 
     #[must_use]
@@ -148,6 +168,7 @@ impl ExportRegistry {
     }
 
     /// Spawns an egress half for a native publication owned by `owner`.
+    #[allow(clippy::too_many_arguments, reason = "an export is defined by all of these")]
     pub fn create_export(
         &self,
         publication_id: &str,
@@ -156,6 +177,7 @@ impl ExportRegistry {
         native: &NativeCaptureInfo,
         chroma: ChromaPolicy,
         bitrate_bps: Option<u32>,
+        input: bool,
     ) -> Result<ExportResponse, ExportError> {
         let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
         let export_id = format!("exp_{}", Uuid::new_v4().simple());
@@ -164,6 +186,17 @@ impl ExportRegistry {
         // export's directory and socket names short.
         let dir = self.runtime_dir()?.join("x").join(&export_id[4..16]);
         std::fs::create_dir_all(&dir).map_err(ExportError::Io)?;
+        // Start the input executor first, if asked, so its socket is on the
+        // egress command line.
+        #[cfg(unix)]
+        let executor = self.start_executor(input, &dir, &identities.source)?;
+        #[cfg(unix)]
+        let input_socket = executor.as_ref().map(|e| e.path().to_path_buf());
+        #[cfg(not(unix))]
+        let input_socket = {
+            let _ = input;
+            None
+        };
         let spec = EgressSpec {
             source_service: native.endpoint.clone(),
             source_token: Some(native.attach_token.clone()),
@@ -172,6 +205,7 @@ impl ExportRegistry {
             link_token: jackstay_graph::mint_token().map_err(ExportError::Token)?,
             chroma,
             bitrate_bps,
+            input_socket,
         };
         let handle = jackstay_graph::export::spawn_egress(&bridge, &spec).map_err(ExportError::Spawn)?;
         let mut record = ExportRecord {
@@ -182,6 +216,8 @@ impl ExportRegistry {
             media_socket: spec.media_socket.clone(),
             control_socket: spec.control_socket.clone(),
             handle,
+            #[cfg(unix)]
+            executor,
         };
         // The peer cannot connect before the sockets exist; wait briefly for them.
         let status = record.handle.wait_for(Phase::Listening, Duration::from_secs(5));
@@ -192,6 +228,22 @@ impl ExportRegistry {
             .exports
             .insert(export_id, record);
         Ok(response)
+    }
+
+    /// Binds an input executor for an export that carries input, driving the
+    /// captured surface. `dir` is the export's socket directory and `surface`
+    /// the surface id to inject into.
+    #[cfg(unix)]
+    fn start_executor(&self, input: bool, dir: &Path, surface: &str) -> Result<Option<crate::input_executor::InputExecutor>, ExportError> {
+        if !input {
+            return Ok(None);
+        }
+        let pipeline = self.input.clone().ok_or(ExportError::Unsupported)?;
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|e| ExportError::Spawn(std::io::Error::other(format!("no runtime for the input executor: {e}"))))?;
+        let executor =
+            crate::input_executor::InputExecutor::start(&dir.join("i"), surface.into(), pipeline, handle).map_err(ExportError::Spawn)?;
+        Ok(Some(executor))
     }
 
     /// An export is addressed under its publication; one named under another
@@ -256,20 +308,22 @@ impl ExportRegistry {
             identities,
             chroma,
             cpu,
+            input,
         } = request;
         let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
         let publication_id = format!("rep_{}", Uuid::new_v4().simple());
         let service = format!("work.flotilla.porthole.republish.{}", &publication_id[4..20]);
         let dir = self.runtime_dir()?.join("republications").join(&publication_id);
         // Short, like export sockets: Unix socket paths are limited to 104 bytes.
-        let cpu_socket = cpu
-            .then(|| self.runtime_dir().map(|r| r.join("r").join(&publication_id[4..16]).join("s")))
+        // The CPU and input sockets share one short directory owned by portholed.
+        let sockets_dir = (cpu || input)
+            .then(|| self.runtime_dir().map(|r| r.join("r").join(&publication_id[4..16])))
             .transpose()?;
-        if let Some(path) = &cpu_socket {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(ExportError::Io)?;
-            }
+        if let Some(d) = &sockets_dir {
+            std::fs::create_dir_all(d).map_err(ExportError::Io)?;
         }
+        let cpu_socket = sockets_dir.as_ref().filter(|_| cpu).map(|d| d.join("s"));
+        let input_socket = sockets_dir.as_ref().filter(|_| input).map(|d| d.join("i"));
         let spec = IngressSpec {
             media_socket: PathBuf::from(media_socket),
             control_socket: PathBuf::from(control_socket),
@@ -278,14 +332,15 @@ impl ExportRegistry {
             link_token,
             chroma,
             cpu_socket: cpu_socket.clone(),
+            input_socket: input_socket.clone(),
         };
-        let remove_cpu_dir = || {
-            if let Some(parent) = cpu_socket.as_ref().and_then(|p| p.parent()) {
-                let _ = std::fs::remove_dir_all(parent);
+        let remove_sockets_dir = || {
+            if let Some(d) = &sockets_dir {
+                let _ = std::fs::remove_dir_all(d);
             }
         };
         let mut job = jackstay_graph::export::IngressJob::spawn(&bridge, &spec, &dir).map_err(|e| {
-            remove_cpu_dir();
+            remove_sockets_dir();
             ExportError::RepublishFailed(e.to_string())
         })?;
         let status = job.wait_for_publication(Duration::from_secs(20));
@@ -300,7 +355,7 @@ impl ExportRegistry {
                 })
                 .unwrap_or_else(|| "no publication within 20 s".to_owned());
             let _ = job.stop();
-            remove_cpu_dir();
+            remove_sockets_dir();
             return Err(ExportError::RepublishFailed(detail));
         }
         let native = NativeCaptureInfo {
@@ -312,9 +367,11 @@ impl ExportRegistry {
             owner,
             identities: identities.clone(),
             native: native.clone(),
-            // The path portholed asked for and whose directory it owns; the half
-            // reports the same one, and the directory cleanup keys off this.
+            // The paths portholed asked for and whose directory it owns; the
+            // half reports the same ones, and the directory cleanup keys off
+            // this shared parent.
             cpu_socket,
+            input_socket,
             job,
         };
         let response = RepublishResponse {
@@ -386,8 +443,14 @@ impl ExportRegistry {
             }
             let mut record = inner.republications.remove(publication_id).expect("checked above");
             let _ = record.job.stop();
-            if let Some(parent) = record.cpu_socket.as_ref().and_then(|p| p.parent()) {
-                let _ = std::fs::remove_dir_all(parent);
+            // Both sockets live in one directory; remove it once.
+            let dir = record
+                .cpu_socket
+                .as_ref()
+                .or(record.input_socket.as_ref())
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+            if let Some(dir) = dir {
+                let _ = std::fs::remove_dir_all(dir);
             }
             Ok(())
         }
@@ -440,6 +503,7 @@ fn republish_publication(publication_id: &str, record: &RepublishRecord, status:
         height,
         native: Some(record.native.clone()),
         cpu_socket: record.cpu_socket.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        input_socket: record.input_socket.as_ref().map(|p| p.to_string_lossy().into_owned()),
     }
 }
 
@@ -479,6 +543,7 @@ mod tests {
                 &native,
                 ChromaPolicy::Prefer444,
                 None,
+                false,
             )
             .unwrap_err();
         assert!(matches!(err, ExportError::Io(_) | ExportError::BridgeMissing), "{err}");

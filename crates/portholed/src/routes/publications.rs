@@ -14,7 +14,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use jackstay_graph::Identities;
-use porthole_core::error::{ErrorCode, PortholeError};
+use porthole_core::{
+    agent_policy::ActionClass,
+    error::{ErrorCode, PortholeError},
+};
 use porthole_protocol::publications::{
     CreateExportRequest, ExportResponse, ListPublicationsResponse, PUBLICATION_KIND_CAPTURE, PublicationResponse, RepublishRequest,
     RepublishResponse,
@@ -23,7 +26,11 @@ use porthole_protocol::publications::{
 use crate::{
     capture_registry::CaptureRegistryError,
     export_registry::ExportError,
-    routes::{agent_guard::authenticated_agent_id, capture_sessions::capture_error_to_api, errors::ApiError},
+    routes::{
+        agent_guard::{authenticated_agent_id, authorize_surface_actions, complete_route_execution},
+        capture_sessions::capture_error_to_api,
+        errors::ApiError,
+    },
     state::AppState,
 };
 
@@ -53,6 +60,7 @@ fn capture_publication(session: &porthole_protocol::capture_sessions::CaptureSes
         height: session.height,
         native: session.native.clone(),
         cpu_socket: None,
+        input_socket: None,
     }
 }
 
@@ -98,18 +106,30 @@ pub async fn post_export(
             PortholeError::new(ErrorCode::InvalidArgument, "only native capture sessions can be exported").into(),
         ));
     };
+    // Carrying input means injecting into the surface, so require Drive on it,
+    // through the same guard and approval flow as the input routes.
+    let execution = if request.input {
+        Some(authorize_surface_actions(&state, &headers, &source, &[ActionClass::Drive], Some("export with remote input")).await?)
+    } else {
+        None
+    };
     let identities = Identities {
         source,
         publication: id.clone(),
     };
     let exports = state.exports.clone();
     let native = native.clone();
+    let input = request.input;
     // Spawning waits for the half to bind its sockets; keep that off the runtime.
-    let response =
-        tokio::task::spawn_blocking(move || exports.create_export(&id, agent_id, identities, &native, request.chroma, request.bitrate_bps))
-            .await
-            .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("export task: {e}")).into()))?
-            .map_err(export_error_to_api)?;
+    let response = tokio::task::spawn_blocking(move || {
+        exports.create_export(&id, agent_id, identities, &native, request.chroma, request.bitrate_bps, input)
+    })
+    .await
+    .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("export task: {e}")).into()))?
+    .map_err(export_error_to_api)?;
+    if let Some(execution) = execution {
+        complete_route_execution(&state, execution, "/publications/{id}/exports").await?;
+    }
     Ok((StatusCode::CREATED, Json(response)))
 }
 

@@ -33,6 +33,10 @@ pub struct PublicationResponse {
     /// consumers without a native attach path (katzensteg's `jackstay-source`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_socket: Option<String>,
+    /// A jackstay input socket a controller drives the publication through,
+    /// when the publication carries input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_socket: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,6 +51,9 @@ pub struct CreateExportRequest {
     pub chroma: ChromaPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bitrate_bps: Option<u32>,
+    /// Carry an input channel back to the captured surface (needs Drive).
+    #[serde(default)]
+    pub input: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,6 +90,9 @@ pub struct RepublishRequest {
     /// Also serve the republication over a generic CPU setup socket.
     #[serde(default)]
     pub cpu: bool,
+    /// Also accept input controllers and relay them to the producer.
+    #[serde(default)]
+    pub input: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,6 +110,7 @@ mod tests {
     fn create_export_request_defaults_and_rejects_unknown_fields() {
         let r: CreateExportRequest = serde_json::from_str("{}").unwrap();
         assert_eq!(r.chroma, ChromaPolicy::Prefer444);
+        assert!(!r.input);
         assert!(serde_json::from_str::<CreateExportRequest>(r#"{"carrier":"x"}"#).is_err());
     }
 
@@ -115,6 +126,7 @@ mod tests {
             },
             chroma: ChromaPolicy::Any,
             cpu: true,
+            input: true,
         };
         let json = serde_json::to_string(&r).unwrap();
         assert_eq!(serde_json::from_str::<RepublishRequest>(&json).unwrap(), r);
@@ -123,5 +135,6 @@ mod tests {
         )
         .unwrap();
         assert!(!without.cpu);
+        assert!(!without.input);
     }
 }

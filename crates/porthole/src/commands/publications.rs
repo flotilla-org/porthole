@@ -26,8 +26,14 @@ fn viewer_hints(publication: &PublicationResponse) -> Vec<String> {
         ));
     }
     if let Some(socket) = &publication.cpu_socket {
-        hints.push(format!("cpu viewer: capture-viewer-sdl --cpu-socket {socket}"));
+        let input = publication
+            .input_socket
+            .as_ref()
+            .map_or(String::new(), |i| format!(" --input-socket {i}"));
+        hints.push(format!("cpu viewer: capture-viewer-sdl --cpu-socket {socket}{input}"));
         hints.push(format!("katzensteg: katzensteg jackstay-source {socket}"));
+    } else if let Some(input) = &publication.input_socket {
+        hints.push(format!("input socket: {input}"));
     }
     hints
 }
@@ -65,12 +71,17 @@ pub async fn export(
     publication_id: &str,
     chroma: ChromaPolicy,
     bitrate_bps: Option<u32>,
+    input: bool,
     json: bool,
 ) -> Result<(), ClientError> {
     let response: ExportResponse = client
         .post_json(
             &format!("/publications/{publication_id}/exports"),
-            &CreateExportRequest { chroma, bitrate_bps },
+            &CreateExportRequest {
+                chroma,
+                bitrate_bps,
+                input,
+            },
         )
         .await?;
     if json {
@@ -157,6 +168,9 @@ pub struct AttachArgs {
     pub bitrate_bps: Option<u32>,
     /// Also serve the republication over a generic CPU setup socket.
     pub cpu: bool,
+    /// Carry an input channel back to the captured surface (needs Drive on
+    /// the remote surface).
+    pub input: bool,
     pub json: bool,
     /// Keep the forwards and the republication alive until interrupted.
     pub hold: bool,
@@ -388,6 +402,7 @@ async fn attach_inner(
             &CreateExportRequest {
                 chroma: args.chroma,
                 bitrate_bps: args.bitrate_bps,
+                input: args.input,
             },
         )
         .await?;
@@ -417,6 +432,7 @@ async fn attach_inner(
             },
             chroma: args.chroma,
             cpu: args.cpu,
+            input: args.input,
         },
         args.json,
     )

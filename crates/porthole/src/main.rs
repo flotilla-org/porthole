@@ -612,6 +612,9 @@ enum PublicationsCommand {
         chroma: ChromaArg,
         #[arg(long)]
         bitrate_bps: Option<u32>,
+        /// Carry an input channel back to the surface (needs Drive on it).
+        #[arg(long)]
+        input: bool,
         #[arg(long)]
         json: bool,
     },
@@ -644,6 +647,9 @@ enum PublicationsCommand {
         /// (katzensteg's `jackstay-source`, the SDL viewer's `--cpu-socket`).
         #[arg(long)]
         cpu: bool,
+        /// Also accept input controllers and relay them to the producer.
+        #[arg(long)]
+        input: bool,
         #[arg(long)]
         json: bool,
     },
@@ -673,6 +679,10 @@ enum PublicationsCommand {
         /// Also serve the republication over a generic CPU setup socket.
         #[arg(long)]
         cpu: bool,
+        /// Carry an input channel back to the surface (needs Drive on the
+        /// remote surface); a controller drives it through the local socket.
+        #[arg(long)]
+        input: bool,
         /// Keep the SSH forwards up until interrupted, then tear everything down.
         #[arg(long)]
         hold: bool,
@@ -1216,8 +1226,9 @@ async fn async_main() -> std::process::ExitCode {
                     publication_id,
                     chroma,
                     bitrate_bps,
+                    input,
                     json,
-                } => pubs::export(&client, &publication_id, chroma.into(), bitrate_bps, json).await,
+                } => pubs::export(&client, &publication_id, chroma.into(), bitrate_bps, input, json).await,
                 PublicationsCommand::ExportStatus {
                     publication_id,
                     export_id,
@@ -1234,6 +1245,7 @@ async fn async_main() -> std::process::ExitCode {
                     publication,
                     chroma,
                     cpu,
+                    input,
                     json,
                 } => pubs::republish(
                     &client,
@@ -1244,6 +1256,7 @@ async fn async_main() -> std::process::ExitCode {
                         identities: porthole_protocol::publications::Identities { source, publication },
                         chroma: chroma.into(),
                         cpu,
+                        input,
                     },
                     json,
                 )
@@ -1259,6 +1272,7 @@ async fn async_main() -> std::process::ExitCode {
                     chroma,
                     bitrate_bps,
                     cpu,
+                    input,
                     hold,
                     json,
                 } => {
@@ -1273,6 +1287,7 @@ async fn async_main() -> std::process::ExitCode {
                             chroma: chroma.into(),
                             bitrate_bps,
                             cpu,
+                            input,
                             json,
                             hold,
                         },
