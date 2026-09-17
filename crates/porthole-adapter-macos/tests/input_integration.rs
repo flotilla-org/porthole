@@ -131,3 +131,140 @@ async fn attention_and_displays_return_non_empty() {
     });
     assert!(any_inside, "cursor position should fall within some display");
 }
+
+/// Press identity on a real window: a key held with shift then released
+/// through its press id, a left button held across a drag and released where
+/// the drag ended, and `release_held` with nothing left over. The frame must
+/// change after the typing; the drag selects the typed text.
+#[tokio::test]
+#[ignore = "requires a real macOS desktop session + permissions"]
+async fn press_identity_primitives_drive_textedit() {
+    use porthole_core::{
+        adapter::ArtifactLaunchSpec,
+        input::{ButtonSpec, KeyStrokeSpec, Modifier, PointerMoveSpec, PressAction},
+    };
+    let adapter = MacOsAdapter::new();
+    // Open a document of our own rather than launching the app: a bare
+    // launch may show the open panel, and reusing a running instance would
+    // type into whatever document it has up.
+    let path = std::env::temp_dir().join(format!("porthole-press-identity-{}.txt", std::process::id()));
+    std::fs::write(&path, "press identity\n").expect("temp document");
+    let outcome = adapter
+        .launch_artifact(&ArtifactLaunchSpec {
+            path: path.clone(),
+            require_confidence: RequireConfidence::Strong,
+            require_fresh_surface: true,
+            force_place: false,
+            timeout: Duration::from_secs(10),
+        })
+        .await
+        .expect("open document");
+    let surface = outcome.surface;
+    adapter
+        .wait(
+            &surface,
+            &WaitCondition::Stable {
+                window_ms: 800,
+                threshold_pct: 1.0,
+            },
+            Instant::now() + Duration::from_secs(10),
+        )
+        .await
+        .expect("initial stable");
+    adapter.focus(&surface).await.expect("focus");
+
+    // "A" through a held shift: the shift press is bound at its down; the
+    // KeyA press carries the shift flag on its own events.
+    let stroke = |press, action, key: &str, modifiers: Vec<Modifier>| KeyStrokeSpec {
+        press,
+        action,
+        key: key.into(),
+        modifiers,
+    };
+    adapter
+        .key_stroke(&surface, &stroke(1, PressAction::Down, "ShiftLeft", vec![Modifier::Shift]))
+        .await
+        .expect("shift down");
+    for press in 2..14u64 {
+        adapter
+            .key_stroke(&surface, &stroke(press, PressAction::Down, "KeyA", vec![Modifier::Shift]))
+            .await
+            .expect("a down");
+        adapter
+            .key_stroke(&surface, &stroke(press, PressAction::Up, "KeyA", vec![Modifier::Shift]))
+            .await
+            .expect("a up");
+    }
+    adapter
+        .key_stroke(&surface, &stroke(1, PressAction::Up, "ShiftLeft", vec![]))
+        .await
+        .expect("shift up");
+    let dirty = adapter
+        .wait(
+            &surface,
+            // A dozen letters in a document window are well under a
+            // percent of its pixels.
+            &WaitCondition::Dirty { threshold_pct: 0.02 },
+            Instant::now() + Duration::from_secs(10),
+        )
+        .await
+        .expect("dirty after typing");
+    assert_eq!(dirty.condition, "dirty");
+
+    // Drag across the text: down, motion while held (a drag), up at the end.
+    adapter
+        .button(
+            &surface,
+            &ButtonSpec {
+                x: 40.0,
+                y: 90.0,
+                button: ClickButton::Left,
+                action: PressAction::Down,
+                modifiers: vec![],
+            },
+        )
+        .await
+        .expect("button down");
+    for x in [60.0, 90.0, 120.0] {
+        adapter.pointer_move(&surface, &PointerMoveSpec { x, y: 90.0 }).await.expect("drag");
+    }
+    adapter
+        .button(
+            &surface,
+            &ButtonSpec {
+                x: 120.0,
+                y: 90.0,
+                button: ClickButton::Left,
+                action: PressAction::Up,
+                modifiers: vec![],
+            },
+        )
+        .await
+        .expect("button up");
+    adapter.release_held(&surface).await.expect("nothing held");
+
+    // Held state left behind on purpose is released by release_held.
+    adapter
+        .key_stroke(&surface, &stroke(9, PressAction::Down, "KeyB", vec![]))
+        .await
+        .expect("b down");
+    adapter.release_held(&surface).await.expect("release b");
+
+    // The typed text made the document dirty; TextEdit vetoes the first
+    // close with a save sheet, which Cmd-D ("Don't Save") dismisses.
+    let _ = std::fs::remove_file(&path);
+    if let Err(e) = adapter.close(&surface).await {
+        assert_eq!(e.code, porthole_core::ErrorCode::CloseFailed, "{e:?}");
+        adapter
+            .key(
+                &surface,
+                &[KeyEvent {
+                    key: "KeyD".into(),
+                    modifiers: vec![Modifier::Cmd],
+                }],
+            )
+            .await
+            .expect("dismiss save sheet");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}

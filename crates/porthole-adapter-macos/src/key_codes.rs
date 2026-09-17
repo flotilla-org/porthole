@@ -9,6 +9,21 @@ pub fn key_code(name: &str) -> Option<u16> {
     table().get(name).copied()
 }
 
+/// The event flag a modifier keycode changes. A modifier key press is a
+/// flags-changed event on macOS, not a key down; posting it as a key event
+/// would be ignored or misread by the receiver.
+pub fn modifier_flag(code: u16) -> Option<core_graphics::event::CGEventFlags> {
+    use core_graphics::event::CGEventFlags;
+    Some(match code {
+        0x38 | 0x3C => CGEventFlags::CGEventFlagShift,
+        0x3B | 0x3E => CGEventFlags::CGEventFlagControl,
+        0x3A | 0x3D => CGEventFlags::CGEventFlagAlternate,
+        0x37 | 0x36 => CGEventFlags::CGEventFlagCommand,
+        0x39 => CGEventFlags::CGEventFlagAlphaShift,
+        _ => return None,
+    })
+}
+
 fn table() -> &'static HashMap<&'static str, u16> {
     static TABLE: OnceLock<HashMap<&'static str, u16>> = OnceLock::new();
     TABLE.get_or_init(|| {
@@ -60,6 +75,22 @@ fn table() -> &'static HashMap<&'static str, u16> {
             ("Digit9", 0x19),
         ];
         for &(n, c) in digits {
+            m.insert(n, c);
+        }
+
+        // Modifier keys; see `modifier_flag` for how they are posted.
+        let modifiers: &[(&str, u16)] = &[
+            ("ShiftLeft", 0x38),
+            ("ShiftRight", 0x3C),
+            ("ControlLeft", 0x3B),
+            ("ControlRight", 0x3E),
+            ("AltLeft", 0x3A),
+            ("AltRight", 0x3D),
+            ("MetaLeft", 0x37),
+            ("MetaRight", 0x36),
+            ("CapsLock", 0x39),
+        ];
+        for &(n, c) in modifiers {
             m.insert(n, c);
         }
 

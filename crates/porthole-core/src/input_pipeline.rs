@@ -6,7 +6,7 @@ use crate::{
     content_rect::ContentRectInfo,
     display::Rect,
     handle::HandleStore,
-    input::{ClickSpec, CoordUnits, KeyEvent, PointerMoveSpec, ScrollSpec},
+    input::{ButtonSpec, ClickSpec, CoordUnits, KeyEvent, KeyStrokeSpec, PointerMoveSpec, PressAction, ScrollSpec},
     key_names,
     surface::{SurfaceId, SurfaceInfo},
 };
@@ -61,6 +61,38 @@ impl InputPipeline {
         let info = self.handles.require_alive(surface).await?;
         let spec = self.to_logical_pointer(spec, units, &info).await?;
         self.adapter.pointer_move(&info, &spec).await
+    }
+
+    /// One keyboard transition with press identity; the key name is checked
+    /// like `key`'s.
+    pub async fn key_stroke(&self, surface: &SurfaceId, spec: &KeyStrokeSpec) -> Result<(), PortholeError> {
+        if !key_names::is_supported(&spec.key) {
+            return Err(PortholeError::new(
+                ErrorCode::UnknownKey,
+                format!("key '{}' is not in the supported set", spec.key),
+            ));
+        }
+        let info = self.handles.require_alive(surface).await?;
+        self.adapter.key_stroke(&info, spec).await
+    }
+
+    /// One button transition at a window-local point in `units`.
+    pub async fn button(&self, surface: &SurfaceId, spec: &ButtonSpec, units: CoordUnits) -> Result<(), PortholeError> {
+        if spec.action == PressAction::Repeat {
+            return Err(PortholeError::new(
+                ErrorCode::InvalidArgument,
+                "a button transition is down or up; repeat is a key action",
+            ));
+        }
+        let info = self.handles.require_alive(surface).await?;
+        let spec = self.to_logical_button(spec, units, &info).await?;
+        self.adapter.button(&info, &spec).await
+    }
+
+    /// Release everything `key_stroke` and `button` left held on `surface`.
+    pub async fn release_held(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
+        let info = self.handles.require_alive(surface).await?;
+        self.adapter.release_held(&info).await
     }
 
     pub async fn close(&self, surface: &SurfaceId) -> Result<(), PortholeError> {
@@ -175,6 +207,20 @@ impl InputPipeline {
         })
     }
 
+    async fn to_logical_button(&self, spec: &ButtonSpec, units: CoordUnits, info: &SurfaceInfo) -> Result<ButtonSpec, PortholeError> {
+        if matches!(units, CoordUnits::Logical) {
+            return Ok(spec.clone());
+        }
+        let scale = self.surface_scale(info).await?;
+        Ok(ButtonSpec {
+            x: spec.x / scale,
+            y: spec.y / scale,
+            button: spec.button,
+            action: spec.action,
+            modifiers: spec.modifiers.clone(),
+        })
+    }
+
     async fn to_logical_pointer(
         &self,
         spec: &PointerMoveSpec,
@@ -267,6 +313,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(adapter.key_calls().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn key_stroke_checks_the_name_and_delegates() {
+        let (adapter, handles, id) = setup().await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let bad = KeyStrokeSpec {
+            press: 1,
+            action: PressAction::Down,
+            key: "NotAKey".into(),
+            modifiers: vec![],
+        };
+        assert_eq!(pipeline.key_stroke(&id, &bad).await.unwrap_err().code, ErrorCode::UnknownKey);
+        let good = KeyStrokeSpec { key: "KeyA".into(), ..bad };
+        pipeline.key_stroke(&id, &good).await.unwrap();
+        let calls = adapter.key_stroke_calls().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, good);
+    }
+
+    #[tokio::test]
+    async fn button_rejects_repeat_and_scales_physical_units() {
+        let (adapter, handles, id) = setup().await;
+        adapter.set_test_scale_for_snapshot(2.0).await;
+        let pipeline = InputPipeline::new(adapter.clone(), handles);
+        let spec = ButtonSpec {
+            x: 200.0,
+            y: 100.0,
+            button: crate::input::ClickButton::Left,
+            action: PressAction::Repeat,
+            modifiers: vec![],
+        };
+        assert_eq!(
+            pipeline.button(&id, &spec, CoordUnits::Logical).await.unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let down = ButtonSpec {
+            action: PressAction::Down,
+            ..spec
+        };
+        pipeline.button(&id, &down, CoordUnits::Physical).await.unwrap();
+        let calls = adapter.button_calls().await;
+        assert_eq!(calls.len(), 1);
+        // The in-memory display reports scale 2.
+        assert_eq!((calls[0].1.x, calls[0].1.y), (100.0, 50.0));
+        assert_eq!(calls[0].1.action, PressAction::Down);
+        pipeline.release_held(&id).await.unwrap();
+        assert_eq!(adapter.release_held_calls().await, vec![id]);
     }
 
     #[tokio::test]

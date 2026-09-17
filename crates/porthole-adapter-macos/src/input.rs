@@ -7,11 +7,56 @@ use core_graphics::{
 };
 use porthole_core::{
     ErrorCode, PortholeError,
-    input::{ClickButton, ClickSpec, KeyEvent, Modifier, PointerMoveSpec, ScrollSpec},
-    surface::SurfaceInfo,
+    input::{ButtonSpec, ClickButton, ClickSpec, KeyEvent, KeyStrokeSpec, Modifier, PointerMoveSpec, PressAction, ScrollSpec},
+    surface::{SurfaceId, SurfaceInfo},
 };
 
-use crate::{MacOsAdapter, close_focus, key_codes::key_code, permissions::ensure_accessibility_granted};
+use crate::{
+    MacOsAdapter, close_focus,
+    key_codes::{key_code, modifier_flag},
+    permissions::ensure_accessibility_granted,
+};
+
+/// What `key_stroke` and `button` have left down. A key press is bound to
+/// the keycode and flags its down posted, so its up and repeats reuse them
+/// even if the caller's key name changes meanwhile; a button is bound to the
+/// screen point and flags of its down, updated by drags, so its up lands
+/// where the pointer is.
+#[derive(Debug, Default)]
+pub struct Held {
+    keys: std::collections::HashMap<(SurfaceId, u64), HeldKey>,
+    buttons: std::collections::HashMap<(SurfaceId, ClickButton), HeldButton>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HeldKey {
+    code: u16,
+    flags: CGEventFlags,
+    pid: i32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HeldButton {
+    x: f64,
+    y: f64,
+    flags: CGEventFlags,
+}
+
+/// A key transition for `code` carrying `flags`. Modifier keycodes become
+/// flags-changed events with their own flag set on the way down and cleared
+/// on the way up, which is what a physical modifier key produces.
+fn keyboard_event(source: &CGEventSource, code: u16, down: bool, flags: CGEventFlags) -> Result<CGEvent, PortholeError> {
+    let event = CGEvent::new_keyboard_event(source.clone(), code, down)
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "key event create failed"))?;
+    match modifier_flag(code) {
+        Some(own) => {
+            event.set_type(CGEventType::FlagsChanged);
+            event.set_flags(if down { flags | own } else { flags & !own });
+        }
+        None => event.set_flags(flags),
+    }
+    Ok(event)
+}
 
 fn event_source() -> Result<CGEventSource, PortholeError> {
     CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -38,16 +83,8 @@ pub async fn key(adapter: &MacOsAdapter, surface: &SurfaceInfo, events: &[KeyEve
     for ev in events {
         let code = key_code(&ev.key).ok_or_else(|| PortholeError::new(ErrorCode::UnknownKey, format!("no keycode for '{}'", ev.key)))?;
         let flags = flags_for(&ev.modifiers);
-
-        let down = CGEvent::new_keyboard_event(source.clone(), code, true)
-            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "key down event create failed"))?;
-        down.set_flags(flags);
-        down.post(CGEventTapLocation::HID);
-
-        let up = CGEvent::new_keyboard_event(source.clone(), code, false)
-            .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "key up event create failed"))?;
-        up.set_flags(flags);
-        up.post(CGEventTapLocation::HID);
+        keyboard_event(&source, code, true, flags)?.post(CGEventTapLocation::HID);
+        keyboard_event(&source, code, false, flags)?.post(CGEventTapLocation::HID);
     }
     Ok(())
 }
@@ -207,7 +244,33 @@ pub async fn scroll(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &Scroll
 pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &PointerMoveSpec) -> Result<(), PortholeError> {
     ensure_accessibility_granted(adapter)?;
     let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
+    // A button held through `button` turns motion into a drag of that
+    // button, and the held point follows so its up lands here. Held state
+    // is checked before focusing: a drag must not re-raise the window.
+    let dragging: Vec<(ClickButton, HeldButton)> = {
+        let mut held = adapter.held.lock().expect("held state poisoned");
+        let mut dragging = Vec::new();
+        for ((id, button), at) in held.buttons.iter_mut() {
+            if *id == surface.id {
+                at.x = screen_x;
+                at.y = screen_y;
+                dragging.push((*button, *at));
+            }
+        }
+        // Every held button drags, in a fixed order.
+        dragging.sort_by_key(|(button, _)| *button as u8);
+        dragging
+    };
+    if !dragging.is_empty() {
+        let source = event_source()?;
+        for (button, at) in dragging {
+            let (_, _, drag_ty, mouse_button) = button_types(button);
+            post_button(&source, drag_ty, mouse_button, at)?;
+        }
+        return Ok(());
+    }
     close_focus::focus(adapter, surface).await?;
+    // The event source is created after the await: it is not `Send`.
     let source = event_source()?;
     // Motion-only: no button state change. CGMouseButton::Left is required by
     // the API but ignored for MouseMoved events.
@@ -220,6 +283,168 @@ pub async fn pointer_move(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &
     .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "pointer move event create failed"))?;
     move_ev.post(CGEventTapLocation::HID);
     Ok(())
+}
+
+fn button_types(button: ClickButton) -> (CGEventType, CGEventType, CGEventType, CGMouseButton) {
+    match button {
+        ClickButton::Left => (
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseUp,
+            CGEventType::LeftMouseDragged,
+            CGMouseButton::Left,
+        ),
+        ClickButton::Right => (
+            CGEventType::RightMouseDown,
+            CGEventType::RightMouseUp,
+            CGEventType::RightMouseDragged,
+            CGMouseButton::Right,
+        ),
+        ClickButton::Middle => (
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseUp,
+            CGEventType::OtherMouseDragged,
+            CGMouseButton::Center,
+        ),
+    }
+}
+
+fn post_key(source: &CGEventSource, held: HeldKey, down: bool, repeat: bool) -> Result<(), PortholeError> {
+    let event = keyboard_event(source, held.code, down, held.flags)?;
+    if repeat {
+        event.set_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT, 1);
+    }
+    // Posted to the process like `text`, so a controller's keys reach the
+    // surface it drives without contending for HID focus on every event;
+    // the executor focuses the surface once when the controller is admitted.
+    event.post_to_pid(held.pid);
+    Ok(())
+}
+
+fn post_button(source: &CGEventSource, ty: CGEventType, button: CGMouseButton, at: HeldButton) -> Result<(), PortholeError> {
+    let event = CGEvent::new_mouse_event(source.clone(), ty, CGPoint::new(at.x, at.y), button)
+        .map_err(|_| PortholeError::new(ErrorCode::SystemPermissionNeeded, "mouse event create failed"))?;
+    event.set_flags(at.flags);
+    event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, 1);
+    event.post(CGEventTapLocation::HID);
+    Ok(())
+}
+
+/// One keyboard transition with press identity. A down binds the press to
+/// the keycode and flags it posts; the up and repeats of that press reuse the
+/// binding. An up for a press this adapter never saw down falls back to the
+/// key name, so a controller whose executor restarted can still release.
+pub async fn key_stroke(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &KeyStrokeSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    let pid = surface
+        .pid
+        .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "key_stroke: surface has no pid"))? as i32;
+    if !is_pid_alive(pid) {
+        return Err(PortholeError::new(
+            ErrorCode::SurfaceDead,
+            format!("key_stroke: target process {pid} is not running"),
+        ));
+    }
+    let resolve = || -> Result<HeldKey, PortholeError> {
+        let code =
+            key_code(&spec.key).ok_or_else(|| PortholeError::new(ErrorCode::UnknownKey, format!("no keycode for '{}'", spec.key)))?;
+        Ok(HeldKey {
+            code,
+            flags: flags_for(&spec.modifiers),
+            pid,
+        })
+    };
+    let key = (surface.id.clone(), spec.press);
+    let source = event_source()?;
+    match spec.action {
+        PressAction::Down => {
+            let held = resolve()?;
+            adapter.held.lock().expect("held state poisoned").keys.insert(key, held);
+            post_key(&source, held, true, false)
+        }
+        PressAction::Repeat => {
+            let held = match adapter.held.lock().expect("held state poisoned").keys.get(&key) {
+                Some(h) => *h,
+                None => resolve()?,
+            };
+            post_key(&source, held, true, true)
+        }
+        PressAction::Up => {
+            let held = match adapter.held.lock().expect("held state poisoned").keys.remove(&key) {
+                Some(h) => h,
+                None => resolve()?,
+            };
+            post_key(&source, held, false, false)
+        }
+    }
+}
+
+/// One button transition at a window-local point. A down focuses the surface
+/// (a click on a background window would only activate it) and records the
+/// button as held at that point; motion while held is posted as a drag by
+/// `pointer_move`; the up is posted where the pointer last was.
+pub async fn button(adapter: &MacOsAdapter, surface: &SurfaceInfo, spec: &ButtonSpec) -> Result<(), PortholeError> {
+    ensure_accessibility_granted(adapter)?;
+    let (screen_x, screen_y) = window_to_screen(surface, spec.x, spec.y).await?;
+    let (down_ty, up_ty, _, mouse_button) = button_types(spec.button);
+    let key = (surface.id.clone(), spec.button);
+    let at = HeldButton {
+        x: screen_x,
+        y: screen_y,
+        flags: flags_for(&spec.modifiers),
+    };
+    match spec.action {
+        PressAction::Down => {
+            close_focus::focus(adapter, surface).await?;
+            adapter.held.lock().expect("held state poisoned").buttons.insert(key, at);
+            // The event source is created after the await: it is not `Send`.
+            post_button(&event_source()?, down_ty, mouse_button, at)
+        }
+        PressAction::Up => {
+            adapter.held.lock().expect("held state poisoned").buttons.remove(&key);
+            post_button(&event_source()?, up_ty, mouse_button, at)
+        }
+        PressAction::Repeat => Err(PortholeError::new(ErrorCode::InvalidArgument, "a button transition is down or up")),
+    }
+}
+
+/// Releases every key and button held on `surface`. The order the keys went
+/// down is not known here, so modifiers and plain keys are released together,
+/// each with the flags its down carried. Nothing is forgotten until it can be
+/// posted: a revoked Accessibility grant leaves the held state for a retry.
+pub async fn release_held(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+    {
+        let held = adapter.held.lock().expect("held state poisoned");
+        let nothing = !held.keys.keys().any(|(id, _)| *id == surface.id) && !held.buttons.keys().any(|(id, _)| *id == surface.id);
+        if nothing {
+            return Ok(());
+        }
+    }
+    ensure_accessibility_granted(adapter)?;
+    let source = event_source()?;
+    let (keys, buttons) = {
+        let mut held = adapter.held.lock().expect("held state poisoned");
+        let key_ids: Vec<(SurfaceId, u64)> = held.keys.keys().filter(|(id, _)| *id == surface.id).cloned().collect();
+        let keys: Vec<HeldKey> = key_ids.iter().filter_map(|k| held.keys.remove(k)).collect();
+        let button_ids: Vec<(SurfaceId, ClickButton)> = held.buttons.keys().filter(|(id, _)| *id == surface.id).cloned().collect();
+        let buttons: Vec<(ClickButton, HeldButton)> = button_ids
+            .iter()
+            .filter_map(|k| held.buttons.remove(k).map(|at| (k.1, at)))
+            .collect();
+        (keys, buttons)
+    };
+    let mut first_error = None;
+    for key in keys {
+        if let Err(e) = post_key(&source, key, false, false) {
+            first_error.get_or_insert(e);
+        }
+    }
+    for (button, at) in buttons {
+        let (_, up_ty, _, mouse_button) = button_types(button);
+        if let Err(e) = post_button(&source, up_ty, mouse_button, at) {
+            first_error.get_or_insert(e);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Converts window-local logical points to screen-global logical points using

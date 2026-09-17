@@ -16,7 +16,7 @@ use crate::{
     attention::{AttentionInfo, CursorPos},
     content_rect::{ContentRectInfo, Descent},
     display::{DisplayId, DisplayInfo, Rect as DisplayRect},
-    input::{ClickSpec, KeyEvent, PointerMoveSpec, ScrollSpec},
+    input::{ButtonSpec, ClickSpec, KeyEvent, KeyStrokeSpec, PointerMoveSpec, ScrollSpec},
     permission::{SystemPermissionPromptOutcome, SystemPermissionStatus},
     placement::GeometrySnapshot,
     search::{Candidate, SearchQuery},
@@ -65,6 +65,9 @@ struct Script {
     launch_calls: Vec<ProcessLaunchSpec>,
     screenshot_calls: Vec<SurfaceId>,
     key_calls: Vec<(SurfaceId, Vec<KeyEvent>)>,
+    key_stroke_calls: Vec<(SurfaceId, KeyStrokeSpec)>,
+    button_calls: Vec<(SurfaceId, ButtonSpec)>,
+    release_held_calls: Vec<SurfaceId>,
     text_calls: Vec<(SurfaceId, String)>,
     click_calls: Vec<(SurfaceId, ClickSpec)>,
     scroll_calls: Vec<(SurfaceId, ScrollSpec)>,
@@ -196,6 +199,15 @@ impl InMemoryAdapter {
     }
     pub async fn key_calls(&self) -> Vec<(SurfaceId, Vec<KeyEvent>)> {
         self.script.lock().await.key_calls.clone()
+    }
+    pub async fn key_stroke_calls(&self) -> Vec<(SurfaceId, KeyStrokeSpec)> {
+        self.script.lock().await.key_stroke_calls.clone()
+    }
+    pub async fn button_calls(&self) -> Vec<(SurfaceId, ButtonSpec)> {
+        self.script.lock().await.button_calls.clone()
+    }
+    pub async fn release_held_calls(&self) -> Vec<SurfaceId> {
+        self.script.lock().await.release_held_calls.clone()
     }
     pub async fn text_calls(&self) -> Vec<(SurfaceId, String)> {
         self.script.lock().await.text_calls.clone()
@@ -373,6 +385,21 @@ impl Adapter for InMemoryAdapter {
         let mut s = self.script.lock().await;
         s.pointer_move_calls.push((surface.id.clone(), spec.clone()));
         s.next_pointer_move_result.take().unwrap_or(Ok(()))
+    }
+
+    async fn key_stroke(&self, surface: &SurfaceInfo, spec: &KeyStrokeSpec) -> Result<(), PortholeError> {
+        self.script.lock().await.key_stroke_calls.push((surface.id.clone(), spec.clone()));
+        Ok(())
+    }
+
+    async fn button(&self, surface: &SurfaceInfo, spec: &ButtonSpec) -> Result<(), PortholeError> {
+        self.script.lock().await.button_calls.push((surface.id.clone(), spec.clone()));
+        Ok(())
+    }
+
+    async fn release_held(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {
+        self.script.lock().await.release_held_calls.push(surface.id.clone());
+        Ok(())
     }
 
     async fn close(&self, surface: &SurfaceInfo) -> Result<(), PortholeError> {

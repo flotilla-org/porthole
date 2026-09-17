@@ -29,6 +29,17 @@ pub fn virtual_key(name: &str) -> Result<(u16, bool), PortholeError> {
         "BracketLeft" => 0xdb,
         "BracketRight" => 0xdd,
         "Backslash" => 0xdc,
+        // Modifier keys as presses of their own; extended where Windows
+        // reports them so (right-hand Control and Alt).
+        "ShiftLeft" => 0xa0,
+        "ShiftRight" => 0xa1,
+        "ControlLeft" => 0xa2,
+        "ControlRight" => 0xa3,
+        "AltLeft" => 0xa4,
+        "AltRight" => 0xa5,
+        "MetaLeft" => 0x5b,
+        "MetaRight" => 0x5c,
+        "CapsLock" => 0x14,
         _ => {
             if let Some(s) = name
                 .strip_prefix("Key")
@@ -52,7 +63,7 @@ pub fn virtual_key(name: &str) -> Result<(u16, bool), PortholeError> {
             return Err(PortholeError::new(ErrorCode::UnknownKey, format!("unsupported key: {name}")));
         }
     };
-    Ok((code, matches!(code, 0x21..=0x28 | 0x2e)))
+    Ok((code, matches!(code, 0x21..=0x28 | 0x2e | 0xa3 | 0xa5 | 0x5b | 0x5c)))
 }
 
 #[cfg(test)]
@@ -66,6 +77,8 @@ mod tests {
         assert_eq!(virtual_key("ArrowLeft").unwrap(), (0x25, true));
         assert_eq!(virtual_key("KeyA").unwrap(), (0x41, false));
         assert_eq!(virtual_key("F12").unwrap(), (0x7b, false));
+        assert_eq!(virtual_key("ShiftLeft").unwrap(), (0xa0, false));
+        assert_eq!(virtual_key("ControlRight").unwrap(), (0xa3, true));
         assert_eq!(virtual_key("KeyAA").unwrap_err().code, ErrorCode::UnknownKey);
     }
 }
