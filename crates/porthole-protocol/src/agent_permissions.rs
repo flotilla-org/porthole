@@ -63,6 +63,7 @@ pub struct AgentPermissionNeededDetails {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PermissionDescription {
     pub agent_name: Option<String>,
+    /// True when the identity is revoked or no longer exists.
     pub agent_revoked: bool,
     pub surface: Option<PermissionSurface>,
     /// None for non-window selectors; false also covers an unavailable handle.

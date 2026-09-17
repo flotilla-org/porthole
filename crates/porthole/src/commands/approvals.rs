@@ -488,8 +488,15 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
                     }
                 }
                 lines.push("This grants the capability scope above, not just the triggering operation.".into());
-                if r.description.agent_revoked || r.description.surface_available == Some(false) {
-                    lines.push("Approval unavailable: requester revoked or window unavailable. You can still deny this request.".into());
+                let description = app
+                    .snapshot
+                    .requests
+                    .iter()
+                    .find(|current| current.request_id == r.request_id)
+                    .map(|current| &current.description)
+                    .unwrap_or(&r.description);
+                if description.agent_revoked || description.surface_available == Some(false) {
+                    lines.push("Approval unavailable: requester revoked or window unavailable.".into());
                 }
                 lines
             }
@@ -680,7 +687,11 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
                     KeyCode::Char(c @ ('1' | '2' | '3')) => app.choose_duration(c),
                     KeyCode::Char(c) => {
                         if let Some(decision) = app.decision(c) {
-                            if commands.try_send(decision).is_ok() { app.busy = true; app.message = "Sending decision...".into(); }
+                            match commands.try_send(decision) {
+                                Ok(()) => { app.busy = true; app.message = "Sending decision...".into(); }
+                                Err(mpsc::error::TrySendError::Full(_)) => app.message = "Not sent: another decision is queued. Try again after it completes.".into(),
+                                Err(mpsc::error::TrySendError::Closed(_)) => app.message = "Not sent: approval worker stopped. Reopen the inbox.".into(),
+                            }
                         }
                     }
                     _ => {}
@@ -761,6 +772,22 @@ mod tests {
         assert!(inbox.decision('a').is_none());
         assert!(matches!(inbox.decision('d'), Some(Decision::Deny(_))));
     }
+    #[test]
+    fn open_details_explain_window_closure_without_replacing_the_reviewed_request() {
+        let mut inbox = Inbox::default();
+        inbox.update(live(vec![request("window")]));
+        inbox.open();
+        let mut closed = request("window");
+        closed.description.surface_available = Some(false);
+        inbox.update(live(vec![closed]));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut inbox)).unwrap();
+        let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        assert!(screen.contains("requester revoked or window unavailable"));
+        assert!(matches!(inbox.detail, Some(Detail::Request(ref r, _)) if r.description.surface_available.is_none()));
+        assert!(inbox.decision('a').is_none());
+    }
+
     #[test]
     fn list_actions_use_selected_request_and_duration_without_opening_details() {
         let mut inbox = Inbox::default();
