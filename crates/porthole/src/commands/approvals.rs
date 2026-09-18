@@ -430,8 +430,8 @@ async fn network(client: DaemonClient, tx: watch::Sender<Update>, mut commands: 
 }
 
 fn compact_target(target: &AgentPermissionTarget, description: &porthole_protocol::agent_permissions::PermissionDescription) -> String {
-    match &description.surface {
-        Some(s) => display::clean(&format!(
+    match (target, &description.surface) {
+        (AgentPermissionTarget::Surface { .. }, Some(s)) => display::clean(&format!(
             "{}: {}{}",
             s.app_name.as_deref().unwrap_or("unknown app"),
             s.title.as_deref().unwrap_or("untitled"),
@@ -441,7 +441,15 @@ fn compact_target(target: &AgentPermissionTarget, description: &porthole_protoco
                 ""
             }
         )),
-        None => display::target(target, description),
+        // A triggering window is context, not the grant's scope. In compact
+        // rows keep broader selectors visible instead of substituting its title.
+        _ => display::target(
+            target,
+            &porthole_protocol::agent_permissions::PermissionDescription {
+                surface_available: description.surface_available,
+                ..Default::default()
+            },
+        ),
     }
 }
 
@@ -893,6 +901,47 @@ mod tests {
         inbox.horizontal(false);
         assert!(!inbox.grants);
         assert_eq!(inbox.scopes[0].selected.as_deref(), Some("window"));
+    }
+
+    #[test]
+    fn broad_scope_is_visible_even_when_the_trigger_has_window_metadata() {
+        use porthole_protocol::agent_permissions::{AgentPermissionAppSelector, PermissionDescription, PermissionSurface};
+        let description = PermissionDescription {
+            surface: Some(PermissionSurface {
+                app_name: Some("Kitty".into()),
+                title: Some("project".into()),
+                pid: Some(42),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(compact_target(&AgentPermissionTarget::AllSurfaces, &description), "all windows");
+        assert_eq!(
+            compact_target(
+                &AgentPermissionTarget::App {
+                    app: AgentPermissionAppSelector::AppName { app_name: "Kitty".into() },
+                },
+                &description
+            ),
+            "all windows of app named Kitty"
+        );
+        assert!(
+            compact_target(
+                &AgentPermissionTarget::FrontmostOnce {
+                    surface_id: "surf_1".into(),
+                },
+                &description
+            )
+            .starts_with("selected frontmost window")
+        );
+        assert_eq!(
+            compact_target(
+                &AgentPermissionTarget::Surface {
+                    surface_id: "surf_1".into(),
+                },
+                &description
+            ),
+            "Kitty: project"
+        );
     }
 
     #[test]
