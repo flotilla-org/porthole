@@ -1,5 +1,6 @@
 //! Local operator UI. The daemon owns policy, scope and request state.
 use std::{
+    collections::HashMap,
     io::{self, IsTerminal},
     time::Duration,
 };
@@ -64,7 +65,7 @@ struct Inbox {
     filtering: bool,
     detail: Option<Detail>,
     detail_scroll: u16,
-    list_duration: Option<(AgentPermissionRequestResponse, AgentPermissionDuration)>,
+    list_durations: HashMap<String, (AgentPermissionRequestResponse, AgentPermissionDuration)>,
     connected: bool,
     busy: bool,
     completed: u64,
@@ -194,6 +195,9 @@ impl Inbox {
     fn update(&mut self, update: Update) {
         if let Some(snapshot) = update.snapshot {
             self.snapshot = snapshot;
+            let requests: HashMap<_, _> = self.snapshot.requests.iter().map(|r| (r.request_id.as_str(), r)).collect();
+            self.list_durations
+                .retain(|id, (request, _)| requests.get(id.as_str()).is_some_and(|current| **current == *request));
         }
         if update.completed != self.completed {
             self.busy = false;
@@ -239,8 +243,8 @@ impl Inbox {
                 .cloned()
                 .map(|r| {
                     let duration = self
-                        .list_duration
-                        .as_ref()
+                        .list_durations
+                        .get(r.request_id.as_str())
                         .filter(|(request, _)| request == &r)
                         .map(|(_, duration)| duration.clone())
                         .unwrap_or_else(|| display::default_duration(&r.target));
@@ -276,7 +280,7 @@ impl Inbox {
                 '3' => AgentPermissionDuration::Persistent,
                 _ => return,
             };
-            self.list_duration = Some((r.clone(), duration.clone()));
+            self.list_durations.insert(r.request_id.to_string(), (r.clone(), duration.clone()));
             if self.detail.is_some() {
                 self.detail = Some(Detail::Request(r, duration));
             }
@@ -823,6 +827,34 @@ mod tests {
         inbox.busy = false;
         inbox.connected = false;
         assert!(inbox.decision('d').is_none());
+    }
+
+    #[test]
+    fn duration_choices_survive_other_choices_but_not_request_changes_or_removal() {
+        let mut inbox = Inbox::default();
+        inbox.update(live(vec![request("a"), request("b")]));
+        inbox.choose_duration('3');
+        inbox.navigate(true);
+        inbox.choose_duration('1');
+        inbox.navigate(false);
+        assert!(matches!(
+            inbox.decision('a'),
+            Some(Decision::Approve(_, AgentPermissionDuration::Persistent))
+        ));
+        let mut changed = request("a");
+        changed.actions = vec![ActionClass::Observe];
+        inbox.update(live(vec![changed, request("b")]));
+        assert!(matches!(
+            inbox.decision('a'),
+            Some(Decision::Approve(_, AgentPermissionDuration::UntilSurfaceGone))
+        ));
+        inbox.navigate(true);
+        assert!(matches!(
+            inbox.decision('a'),
+            Some(Decision::Approve(_, AgentPermissionDuration::Once))
+        ));
+        inbox.update(live(vec![]));
+        assert!(inbox.list_durations.is_empty());
     }
 
     #[test]

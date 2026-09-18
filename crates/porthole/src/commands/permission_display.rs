@@ -10,7 +10,7 @@ pub(super) fn clean(value: &str) -> String {
     value
         .chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+            if c.is_control() || matches!(c, '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
                 ' '
             } else {
                 c
