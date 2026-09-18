@@ -134,13 +134,64 @@ porthole agents create --name "My Agent" --json
 # Prefer the environment variable so tokens don't appear in process listings.
 export PORTHOLE_AGENT_TOKEN=pta_agent_...
 
+porthole agents requests        # readable requester, target, operation and scope
 porthole agents requests --json
+porthole agents review          # live inline Requests / Grants inbox
 porthole agents approve <request_id> --duration until-surface-gone
 porthole agents grants --json
 porthole agents grant revoke <grant_id>
 ```
 
-When a protected route has no matching grant, the daemon returns `403 agent_permission_needed` with a `details.request_id`, `details.target`, and requested actions. Agent clients can retry after approval. Helper/UI clients should subscribe to `/events` for `agent_permission_requested` and `agent_permission_resolved` in the steady state; the CLI commands above provide a polling/operator fallback.
+When a protected route has no matching grant, the daemon returns `403 agent_permission_needed` with a `details.request_id`, `details.target`, and requested actions. Agent clients can retry after approval. Helper/UI clients should subscribe to `/events` for `agent_permission_requested` and `agent_permission_resolved` in the steady state; the live inbox uses those events and refreshes after reconnects. The noninteractive CLI commands remain available for scripts and one-off decisions.
+
+### Approval inbox
+
+`porthole agents review` opens an inline terminal UI (18 rows by default;
+`--height 12` changes it). Tab or Left/Right switches **Requests** and **Grants**. Use arrow
+keys to select, `/` to filter the current view, and Enter to open details.
+Each view retains its filter and selection as requests arrive.
+Tables show requester, target, permissions and the triggering operation; Grants also
+shows duration. Long cells wrap up to three lines; Enter shows the full details.
+
+From the request list or details, `a` approves and `d` denies that request without remembering
+a denial rule. Choose duration with `1` for once, `2` for until the window closes
+(window targets only), or `3` for persistent. The selected duration stays visible.
+Window requests default to until-window-closes; broader requests default to once.
+From the grant list or details, `r` revokes. Left or Esc returns from details
+to the list; `q` or Ctrl-C exits.
+
+The Grants view, `porthole agents grants` (including `--json`), and
+`GET /agent-permissions/grants` list currently effective grants. They omit grants
+for revoked or missing identities and until-window-closes grants for unavailable
+windows, as well as revoked, consumed and expired grants. Records are retained;
+historical inspection is tracked in [#139](https://github.com/flotilla-org/porthole/issues/139).
+
+Approval grants the displayed capabilities on the displayed target. The first
+triggering operation is context, not a queued command to execute. Even a once
+grant permits the next matching operation. Text requests retain only character
+counts; key summaries, launch application names and capture modes provide context
+without storing text bodies, arguments or environment values. Registered agent
+names identify bearer-token principals, not verified OS processes.
+
+The inbox disables decisions while disconnected and refreshes after reconnects.
+A request resolved or changed while its details are open cannot be approved from
+that stale view. Revocation affects future permission checks; an already-running
+capture continues. This remains the local-trust operator path described in
+[ADR-0006](docs/adr/0006-agent-permission-authority-deferred.md). Remote approval,
+helper notifications and centralised approval remain later work.
+
+For an isolated Unix preview, without desktop permissions:
+
+```sh
+mkdir -p /tmp/porthole-approval-demo
+cargo run -p portholed --example approval_inbox -- /tmp/porthole-approval-demo/porthole.sock
+# In another terminal:
+PORTHOLE_RUNTIME_DIR=/tmp/porthole-approval-demo cargo run -p porthole -- agents review
+```
+
+The fixture uses the real daemon router with the in-memory adapter and policy
+store. It adds a request after eight seconds; decisions disappear when it exits.
+It does not connect to the installed daemon or exercise desktop capture.
 
 ### Discover capabilities
 

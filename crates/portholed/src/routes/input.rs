@@ -4,10 +4,12 @@ use axum::{
     http::HeaderMap,
 };
 use porthole_core::{agent_policy::ActionClass, surface::SurfaceId};
-use porthole_protocol::input::{
-    ClickRequest, ClickResponse, KeyRequest, KeyResponse, ScrollRequest, ScrollResponse, TextRequest, TextResponse,
+use porthole_protocol::{
+    agent_permissions::PermissionOperation,
+    input::{ClickRequest, ClickResponse, KeyRequest, KeyResponse, ScrollRequest, ScrollResponse, TextRequest, TextResponse},
 };
 
+use super::agent_guard::PermissionTrigger;
 use crate::{
     routes::{
         agent_guard::{authorize_surface_actions, complete_route_execution},
@@ -28,7 +30,26 @@ pub async fn post_key(
         &headers,
         surface_id.as_str(),
         &[ActionClass::Drive],
-        Some("send key events"),
+        PermissionTrigger::operation(
+            "send key events",
+            PermissionOperation::Key {
+                combinations: req
+                    .events
+                    .iter()
+                    .take(8)
+                    .map(|event| {
+                        event
+                            .modifiers
+                            .iter()
+                            .map(|modifier| format!("{modifier:?}"))
+                            .chain(std::iter::once(event.key.chars().take(80).collect::<String>()))
+                            .collect::<Vec<_>>()
+                            .join("+")
+                    })
+                    .collect(),
+                event_count: req.events.len(),
+            },
+        ),
     )
     .await?;
     let count = req.events.len();
@@ -47,7 +68,19 @@ pub async fn post_text(
     Json(req): Json<TextRequest>,
 ) -> Result<Json<TextResponse>, ApiError> {
     let surface_id = SurfaceId::from(id);
-    let execution = authorize_surface_actions(&state, &headers, surface_id.as_str(), &[ActionClass::Drive], Some("send text")).await?;
+    let execution = authorize_surface_actions(
+        &state,
+        &headers,
+        surface_id.as_str(),
+        &[ActionClass::Drive],
+        PermissionTrigger::operation(
+            "send text",
+            PermissionOperation::Text {
+                characters: req.text.chars().count(),
+            },
+        ),
+    )
+    .await?;
     let chars = req.text.chars().count();
     state.input.text(&surface_id, &req.text).await?;
     complete_route_execution(&state, execution, "/surfaces/{id}/text").await?;

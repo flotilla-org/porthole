@@ -6,7 +6,10 @@ use porthole_core::{
     },
 };
 use porthole_protocol::{
-    agent_permissions::{AgentPermissionDuration, AgentPermissionNeededDetails, AgentPermissionTarget},
+    agent_permissions::{
+        AgentPermissionDuration, AgentPermissionNeededDetails, AgentPermissionTarget, PermissionOperation, PermissionRequestContext,
+        PermissionSurface,
+    },
     error::WireError,
 };
 
@@ -22,11 +25,33 @@ pub struct AuthorizedRouteExecution {
     pub actions: Vec<ActionClass>,
 }
 
+/// Descriptive context for the first blocked operation, never an authority scope.
+pub struct PermissionTrigger {
+    reason: Option<String>,
+    operation: Option<PermissionOperation>,
+}
+impl From<Option<&str>> for PermissionTrigger {
+    fn from(reason: Option<&str>) -> Self {
+        Self {
+            reason: reason.map(str::to_owned),
+            operation: None,
+        }
+    }
+}
+impl PermissionTrigger {
+    pub fn operation(reason: &str, operation: PermissionOperation) -> Self {
+        Self {
+            reason: Some(reason.to_owned()),
+            operation: Some(operation),
+        }
+    }
+}
+
 struct PermissionNeededContext {
     target: TargetSelector,
     surface_id: Option<SurfaceId>,
     actions: Vec<ActionClass>,
-    reason: Option<String>,
+    trigger: PermissionTrigger,
     recommended_duration: AgentPermissionDuration,
     publish_new_request: bool,
 }
@@ -36,16 +61,16 @@ pub async fn authorize_surface_actions(
     headers: &HeaderMap,
     surface_id: &str,
     actions: &[ActionClass],
-    reason: Option<&str>,
+    reason: impl Into<PermissionTrigger>,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
-    authorize_surface_actions_inner(state, headers, surface_id, actions, reason, false).await
+    authorize_surface_actions_inner(state, headers, surface_id, actions, reason.into(), false).await
 }
 
 pub async fn authorize_launch_actions(
     state: &AppState,
     headers: &HeaderMap,
     actions: &[ActionClass],
-    reason: Option<&str>,
+    reason: impl Into<PermissionTrigger>,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
     let agent_id = authenticated_agent_id(state, headers).await?;
     let target = TargetSelector::LaunchedByAgent;
@@ -65,7 +90,7 @@ pub async fn authorize_launch_actions(
         target_context,
         None,
         actions,
-        reason,
+        reason.into(),
         AgentPermissionDuration::Once,
         false,
     )
@@ -76,7 +101,7 @@ pub async fn authorize_all_surfaces_actions(
     state: &AppState,
     headers: &HeaderMap,
     actions: &[ActionClass],
-    reason: Option<&str>,
+    reason: impl Into<PermissionTrigger>,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
     let agent_id = authenticated_agent_id(state, headers).await?;
     let target = TargetSelector::AllSurfaces;
@@ -96,7 +121,7 @@ pub async fn authorize_all_surfaces_actions(
         target_context,
         None,
         actions,
-        reason,
+        reason.into(),
         AgentPermissionDuration::Once,
         false,
     )
@@ -108,7 +133,7 @@ async fn authorize_surface_actions_inner(
     headers: &HeaderMap,
     surface_id: &str,
     actions: &[ActionClass],
-    reason: Option<&str>,
+    reason: PermissionTrigger,
     retried_once_consumption: bool,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
     let agent_id = authenticated_agent_id(state, headers).await?;
@@ -148,7 +173,7 @@ async fn authorize_target_actions(
     target_context: TargetContext,
     details_surface_id: Option<SurfaceId>,
     actions: &[ActionClass],
-    reason: Option<&str>,
+    reason: PermissionTrigger,
     recommended_duration: AgentPermissionDuration,
     retried_once_consumption: bool,
 ) -> Result<AuthorizedRouteExecution, ApiError> {
@@ -175,7 +200,7 @@ async fn authorize_target_actions(
                             target,
                             surface_id: details_surface_id,
                             actions: actions.to_vec(),
-                            reason: reason.map(ToOwned::to_owned),
+                            trigger: reason,
                             recommended_duration,
                             publish_new_request: false,
                         },
@@ -217,7 +242,7 @@ async fn authorize_target_actions(
                     target,
                     surface_id: details_surface_id,
                     actions: actions.to_vec(),
-                    reason: reason.map(ToOwned::to_owned),
+                    trigger: reason,
                     recommended_duration,
                     publish_new_request: true,
                 },
@@ -256,14 +281,26 @@ async fn permission_needed(
         target,
         surface_id,
         actions,
-        reason,
+        trigger,
         recommended_duration,
         publish_new_request,
     } = context;
     let wire_target: AgentPermissionTarget = target.clone().into();
+    let surface = match &surface_id {
+        Some(id) => state.handles.get(id).await.ok().map(|s| PermissionSurface {
+            app_name: s.app_name,
+            title: s.title,
+            pid: s.pid,
+        }),
+        None => None,
+    };
+    let context = PermissionRequestContext {
+        surface,
+        operation: trigger.operation,
+    };
     let (request, created) = state
         .agent_store
-        .find_or_create_pending_request(agent_id.clone(), target, actions.clone(), reason, now_unix_ms())
+        .find_or_create_pending_request(agent_id.clone(), target, actions.clone(), trigger.reason, context, now_unix_ms())
         .await?;
     if publish_new_request && created {
         state.events.publish(AgentEvent::AgentPermissionRequested {

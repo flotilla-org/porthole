@@ -58,8 +58,46 @@ pub struct AgentPermissionNeededDetails {
     pub recommended_duration: AgentPermissionDuration,
 }
 
+/// Display context only; authorization is still determined by target/actions.
+/// Names and metadata identify a registered principal, not a verified process.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionDescription {
+    pub agent_name: Option<String>,
+    /// True when the identity is revoked or no longer exists.
+    pub agent_revoked: bool,
+    pub surface: Option<PermissionSurface>,
+    /// None for non-window selectors; false also covers an unavailable handle.
+    pub surface_available: Option<bool>,
+    pub operation: Option<PermissionOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionSurface {
+    pub app_name: Option<String>,
+    pub title: Option<String>,
+    pub pid: Option<u32>,
+}
+
+/// The first operation that triggered a deduplicated capability request.
+/// No text bodies, process arguments, environment or clipboard data are stored.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionRequestContext {
+    pub surface: Option<PermissionSurface>,
+    pub operation: Option<PermissionOperation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PermissionOperation {
+    Key { combinations: Vec<String>, event_count: usize },
+    Text { characters: usize },
+    Launch { application: String },
+    Capture { native: bool },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentPermissionRequestResponse {
+    pub description: PermissionDescription,
     pub request_id: PermissionRequestId,
     pub agent_id: AgentId,
     pub target: AgentPermissionTarget,
@@ -72,9 +110,12 @@ pub struct AgentPermissionRequestResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentGrantResponse {
+    pub description: PermissionDescription,
     pub grant_id: GrantId,
     pub agent_id: AgentId,
     pub origin_request_id: Option<PermissionRequestId>,
+    /// Original request reason, used when structured operation context is absent.
+    pub origin_reason: Option<String>,
     pub target: AgentPermissionTarget,
     pub actions: Vec<ActionClass>,
     pub duration: AgentPermissionDuration,

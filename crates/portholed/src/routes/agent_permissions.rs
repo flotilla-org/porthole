@@ -10,7 +10,8 @@ use porthole_core::{
 };
 use porthole_protocol::agent_permissions::{
     AgentGrantResponse, AgentIdentityResponse, AgentPermissionConstraints, AgentPermissionRequestResponse, ApproveAgentPermissionRequest,
-    CreateAgentIdentityRequest, CreateAgentIdentityResponse, DenyAgentPermissionRequest, MintAgentTokenResponse, RevocationResponse,
+    CreateAgentIdentityRequest, CreateAgentIdentityResponse, DenyAgentPermissionRequest, MintAgentTokenResponse, PermissionDescription,
+    PermissionRequestContext, PermissionSurface, RevocationResponse,
 };
 
 use crate::{
@@ -94,7 +95,11 @@ pub async fn post_revoke_identity_token(
 
 pub async fn get_requests(State(state): State<AppState>) -> Result<Json<Vec<AgentPermissionRequestResponse>>, ApiError> {
     let requests = state.agent_store.list_pending_permission_requests().await?;
-    Ok(Json(requests.into_iter().map(request_response).collect()))
+    let mut result = Vec::with_capacity(requests.len());
+    for request in requests {
+        result.push(request_response(&state, request).await?);
+    }
+    Ok(Json(result))
 }
 
 pub async fn get_request(
@@ -105,7 +110,7 @@ pub async fn get_request(
     let Some(request) = state.agent_store.get_permission_request(&request_id).await? else {
         return Err(ApiError::from(crate::agent_store::AgentStoreError::PermissionRequestNotFound));
     };
-    Ok(Json(request_response(request)))
+    Ok(Json(request_response(&state, request).await?))
 }
 
 pub async fn post_approve_request(
@@ -137,7 +142,7 @@ pub async fn post_approve_request(
         request_id,
         status: "approved".into(),
     });
-    Ok(Json(grant_response(grant)))
+    Ok(Json(grant_response(&state, grant).await?))
 }
 
 pub async fn post_deny_request(
@@ -154,12 +159,27 @@ pub async fn post_deny_request(
         request_id,
         status: "denied".into(),
     });
-    Ok(Json(request_response(request)))
+    Ok(Json(request_response(&state, request).await?))
 }
 
 pub async fn get_grants(State(state): State<AppState>) -> Result<Json<Vec<AgentGrantResponse>>, ApiError> {
     let grants = state.agent_store.list_active_grants(now_unix_ms()).await?;
-    Ok(Json(grants.into_iter().map(grant_response).collect()))
+    let mut result = Vec::with_capacity(grants.len());
+    for grant in grants {
+        let response = grant_response(&state, grant).await?;
+        // This endpoint lists effective grants for the live inbox, not history.
+        // Identity revocation disables its grants without deleting their records.
+        if response.description.agent_revoked
+            || (matches!(
+                response.duration,
+                porthole_protocol::agent_permissions::AgentPermissionDuration::UntilSurfaceGone
+            ) && response.description.surface_available == Some(false))
+        {
+            continue;
+        }
+        result.push(response);
+    }
+    Ok(Json(result))
 }
 
 pub async fn post_revoke_grant(State(state): State<AppState>, Path(grant_id): Path<String>) -> Result<Json<RevocationResponse>, ApiError> {
@@ -182,8 +202,10 @@ fn identity_response(identity: StoredAgentIdentity) -> AgentIdentityResponse {
     }
 }
 
-fn request_response(request: StoredPermissionRequest) -> AgentPermissionRequestResponse {
-    AgentPermissionRequestResponse {
+async fn request_response(state: &AppState, request: StoredPermissionRequest) -> Result<AgentPermissionRequestResponse, ApiError> {
+    let description = describe(state, &request.agent_id, &request.target, request.context).await?;
+    Ok(AgentPermissionRequestResponse {
+        description,
         request_id: request.request_id,
         agent_id: request.agent_id,
         target: request.target.into(),
@@ -192,14 +214,26 @@ fn request_response(request: StoredPermissionRequest) -> AgentPermissionRequestR
         status: request.status.as_str().to_string(),
         created_at_unix_ms: request.created_at_unix_ms,
         resolved_at_unix_ms: request.resolved_at_unix_ms,
-    }
+    })
 }
 
-fn grant_response(grant: StoredGrant) -> AgentGrantResponse {
-    AgentGrantResponse {
+async fn grant_response(state: &AppState, grant: StoredGrant) -> Result<AgentGrantResponse, ApiError> {
+    let (context, origin_reason) = match &grant.origin_request_id {
+        Some(id) => state
+            .agent_store
+            .get_permission_request(id)
+            .await?
+            .map(|r| (r.context, r.reason))
+            .unwrap_or_default(),
+        None => (PermissionRequestContext::default(), None),
+    };
+    let description = describe(state, &grant.agent_id, &grant.target, context).await?;
+    Ok(AgentGrantResponse {
+        description,
         grant_id: grant.grant_id,
         agent_id: grant.agent_id,
         origin_request_id: grant.origin_request_id,
+        origin_reason,
         target: grant.target.into(),
         actions: grant.actions,
         duration: grant.duration.into(),
@@ -208,7 +242,7 @@ fn grant_response(grant: StoredGrant) -> AgentGrantResponse {
         expires_at_unix_ms: grant.expires_at_unix_ms,
         consumed_at_unix_ms: grant.consumed_at_unix_ms,
         revoked_at_unix_ms: grant.revoked_at_unix_ms,
-    }
+    })
 }
 
 fn not_found(message: &str) -> ApiError {
@@ -220,6 +254,39 @@ fn now_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time before Unix epoch")
         .as_millis() as u64
+}
+
+async fn describe(
+    state: &AppState,
+    agent: &AgentId,
+    target: &TargetSelector,
+    context: PermissionRequestContext,
+) -> Result<PermissionDescription, ApiError> {
+    let identity = state.agent_store.get_identity(agent).await?;
+    let (surface, surface_available) = match target {
+        TargetSelector::Surface { surface_id } | TargetSelector::FrontmostOnce { surface_id } => {
+            let current = state.handles.get(surface_id).await.ok();
+            let available = current
+                .as_ref()
+                .is_some_and(|s| s.state == porthole_core::surface::SurfaceState::Alive);
+            let surface = context.surface.or_else(|| {
+                current.map(|s| PermissionSurface {
+                    app_name: s.app_name,
+                    title: s.title,
+                    pid: s.pid,
+                })
+            });
+            (surface, Some(available))
+        }
+        _ => (context.surface, None),
+    };
+    Ok(PermissionDescription {
+        agent_name: identity.as_ref().map(|i| i.display_name.clone()),
+        agent_revoked: identity.is_none_or(|i| i.revoked_at_unix_ms.is_some()),
+        surface,
+        surface_available,
+        operation: context.operation,
+    })
 }
 
 #[cfg(test)]
@@ -254,11 +321,59 @@ mod tests {
     const NOW: u64 = 1_000;
 
     async fn test_state() -> AppState {
-        AppState::new_with_agent_policy(
+        let state = AppState::new_with_agent_policy(
             Arc::new(InMemoryAdapter::new()),
             AgentPolicyStore::open_in_memory().await.unwrap(),
             EventBus::new(),
+        );
+        let mut surface = porthole_core::surface::SurfaceInfo::window(SurfaceId::from("surf_1"), 42);
+        surface.app_name = Some("Kitty".into());
+        surface.title = Some("Project terminal".into());
+        state.handles.insert(surface).await;
+        state
+    }
+
+    #[tokio::test]
+    async fn request_descriptions_retain_first_operation_without_text_and_follow_grants() {
+        let state = test_state().await;
+        let identity = state.agent_store.create_identity("KS presenter", None, NOW).await.unwrap();
+        let router = build_router(state.clone());
+        for text in ["秘密🐈", "different retry"] {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/surfaces/surf_1/text")
+                .header("authorization", format!("Bearer {}", identity.token))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"text": text}).to_string()))
+                .unwrap();
+            assert_eq!(router.clone().oneshot(req).await.unwrap().status(), StatusCode::FORBIDDEN);
+        }
+        let (_, requests) = get(router.clone(), "/agent-permissions/requests").await;
+        assert_eq!(requests.as_array().unwrap().len(), 1);
+        let description = &requests[0]["description"];
+        assert_eq!(description["agent_name"], "KS presenter");
+        assert_eq!(description["surface"]["app_name"], "Kitty");
+        assert_eq!(description["surface"]["title"], "Project terminal");
+        assert_eq!(description["operation"], serde_json::json!({"kind":"text", "characters":3}));
+        assert!(!requests.to_string().contains("秘密"));
+        assert!(!requests.to_string().contains("different retry"));
+        let id = requests[0]["request_id"].as_str().unwrap();
+        let (status, grant) = post(
+            router.clone(),
+            &format!("/agent-permissions/requests/{id}/approve"),
+            serde_json::json!({
+                "duration":{"type":"until_surface_gone"}, "target":surface_target("surf_1"), "actions":["drive"]
+            }),
         )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{grant}");
+        assert_eq!(grant["description"], *description);
+        state.handles.mark_dead(&SurfaceId::from("surf_1")).await.unwrap();
+        let (_, old) = get(router.clone(), &format!("/agent-permissions/requests/{id}")).await;
+        assert_eq!(old["description"]["surface_available"], false);
+        assert_eq!(old["description"]["surface"]["title"], "Project terminal");
+        let (_, grants) = get(router, "/agent-permissions/grants").await;
+        assert!(grants.as_array().unwrap().is_empty());
     }
 
     async fn request(router: axum::Router, method: Method, uri: &str, body: Option<serde_json::Value>) -> (StatusCode, serde_json::Value) {
@@ -414,6 +529,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(grants.as_array().unwrap().len(), 1);
         assert_eq!(grants[0]["origin_request_id"], pending.request_id.to_string());
+        assert_eq!(grants[0]["origin_reason"], "typing");
 
         let (status, revoked) = post(
             router.clone(),

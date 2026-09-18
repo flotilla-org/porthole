@@ -161,6 +161,7 @@ coordinator/translator machinery and API stability remain outside these mileston
 - [x] Daemon identity/request/grant endpoints and `/events` publication for requested/resolved/policy-changed state.
 - [x] Default-deny route guard for the first `drive` vertical slice: key, text, click, scroll, and pointer movement.
 - [x] CLI operator commands: `porthole agents create/list/show/revoke`, token mint/revoke, pending request list/show/approve/deny, grant list/revoke.
+- [x] Local approval inbox: richer request/grant descriptions and an inline live `porthole agents review` TUI with Requests/Grants views. It retains the current local-trust authority and capability-grant semantics.
 - [x] Map remaining HTTP route classes: `observe`, `manage`, and surface-session `record` creation.
 - [x] Add bearer-auth handshaking to raw capture-transfer fd-socket consumption, or replace it with a daemon-mediated read path.
 - Deferred under ADR-0006: helper/private operator authority for identity and policy mutation. The current CLI operator path relies on the local-user trust boundary.

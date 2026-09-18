@@ -7,7 +7,7 @@ use std::{
 use porthole_core::agent_policy::{
     ActionClass, AgentId, Constraint, Denial, DenialId, DurationSpec, Grant, GrantId, PermissionRequestId, PolicySnapshot, TargetSelector,
 };
-use porthole_protocol::agent_permissions::AgentIdentityMetadata;
+use porthole_protocol::agent_permissions::{AgentIdentityMetadata, PermissionRequestContext};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
@@ -102,6 +102,7 @@ impl PermissionRequestStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredPermissionRequest {
+    pub context: PermissionRequestContext,
     pub request_id: PermissionRequestId,
     pub agent_id: AgentId,
     pub target: TargetSelector,
@@ -343,9 +344,16 @@ impl AgentPolicyStore {
         reason: Option<String>,
         created_at_unix_ms: u64,
     ) -> StoreResult<StoredPermissionRequest> {
-        self.find_or_create_pending_request(agent_id, target, actions, reason, created_at_unix_ms)
-            .await
-            .map(|(request, _created)| request)
+        self.find_or_create_pending_request(
+            agent_id,
+            target,
+            actions,
+            reason,
+            PermissionRequestContext::default(),
+            created_at_unix_ms,
+        )
+        .await
+        .map(|(request, _created)| request)
     }
 
     pub async fn find_or_create_pending_request(
@@ -354,6 +362,7 @@ impl AgentPolicyStore {
         target: TargetSelector,
         actions: Vec<ActionClass>,
         reason: Option<String>,
+        context: PermissionRequestContext,
         created_at_unix_ms: u64,
     ) -> StoreResult<(StoredPermissionRequest, bool)> {
         self.with_conn(move |conn| {
@@ -368,8 +377,8 @@ impl AgentPolicyStore {
             let stored_reason = reason.clone();
             let tx = conn.transaction()?;
             tx.execute(
-                "INSERT INTO agent_permission_requests(request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms)
-                 VALUES(?1, ?2, ?3, ?4, ?5, 'pending', ?6, NULL)",
+                "INSERT INTO agent_permission_requests(request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json)
+                 VALUES(?1, ?2, ?3, ?4, ?5, 'pending', ?6, NULL, ?7)",
                 params![
                     request_id.as_str(),
                     agent_id.as_str(),
@@ -377,6 +386,7 @@ impl AgentPolicyStore {
                     actions_json,
                     reason,
                     created_at_unix_ms,
+                    serde_json::to_string(&context)?,
                 ],
             )?;
             insert_audit(
@@ -397,6 +407,7 @@ impl AgentPolicyStore {
             )?;
             tx.commit()?;
             let request = StoredPermissionRequest {
+                context,
                 request_id,
                 agent_id,
                 target,
@@ -499,7 +510,7 @@ impl AgentPolicyStore {
     pub async fn list_pending_permission_requests(&self) -> StoreResult<Vec<StoredPermissionRequest>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
+                "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
                  FROM agent_permission_requests
                  WHERE status = 'pending'
                  ORDER BY created_at_unix_ms, request_id",
@@ -620,6 +631,7 @@ impl AgentPolicyStore {
                 reason.as_deref(),
             )?;
             let updated_request = StoredPermissionRequest {
+                context: request.context,
                 request_id: request.request_id,
                 agent_id: request.agent_id,
                 target: request.target,
@@ -953,6 +965,12 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
     )?;
     add_column_if_missing(conn, "agent_denials", "reason", "reason TEXT")?;
     add_column_if_missing(conn, "agent_permission_requests", "reason", "reason TEXT")?;
+    add_column_if_missing(
+        conn,
+        "agent_permission_requests",
+        "context_json",
+        "context_json TEXT NOT NULL DEFAULT '{}'",
+    )?;
     add_column_if_missing(conn, "agent_permission_audit", "reason", "reason TEXT")?;
     Ok(())
 }
@@ -1003,7 +1021,7 @@ fn select_pending_request(
 ) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
              FROM agent_permission_requests
              WHERE agent_id = ?1
                AND target_json = ?2
@@ -1019,7 +1037,7 @@ fn select_pending_request(
 fn select_request_by_id(conn: &Connection, request_id: &PermissionRequestId) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
              FROM agent_permission_requests
              WHERE request_id = ?1",
             params![request_id.as_str()],
@@ -1035,7 +1053,7 @@ fn select_request_by_id_tx(
 ) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
              FROM agent_permission_requests
              WHERE request_id = ?1",
             params![request_id.as_str()],
@@ -1045,7 +1063,7 @@ fn select_request_by_id_tx(
     row.map(stored_request_from_tuple).transpose()
 }
 
-type RequestTuple = (String, String, String, String, Option<String>, String, u64, Option<u64>);
+type RequestTuple = (String, String, String, String, Option<String>, String, u64, Option<u64>, String);
 type IdentityTuple = (String, String, String, u64, Option<u64>);
 type GrantTuple = (
     String,
@@ -1144,12 +1162,14 @@ fn request_tuple_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestTu
         row.get(5)?,
         row.get(6)?,
         row.get(7)?,
+        row.get(8)?,
     ))
 }
 
 fn stored_request_from_tuple(row: RequestTuple) -> StoreResult<StoredPermissionRequest> {
-    let (request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms) = row;
+    let (request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json) = row;
     Ok(StoredPermissionRequest {
+        context: from_json(&context_json)?,
         request_id: PermissionRequestId::from(request_id),
         agent_id: AgentId::from(agent_id),
         target: from_json(&target_json)?,
@@ -1258,7 +1278,7 @@ mod tests {
             ActionClass, AgentContext, AuthorizationDecision, Constraint, DurationSpec, GrantId, TargetContext, TargetSelector,
         },
     };
-    use porthole_protocol::agent_permissions::AgentIdentityMetadata;
+    use porthole_protocol::agent_permissions::{AgentIdentityMetadata, PermissionRequestContext};
 
     use super::*;
 
@@ -1294,6 +1314,49 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn first_request_context_survives_retries_and_store_reopening() {
+        use porthole_protocol::agent_permissions::PermissionOperation;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.sqlite");
+        let store = AgentPolicyStore::open_at_path(&path).await.unwrap();
+        let identity = store.create_identity("writer", None, NOW).await.unwrap();
+        let context = PermissionRequestContext {
+            surface: None,
+            operation: Some(PermissionOperation::Text { characters: 3 }),
+        };
+        let (first, created) = store
+            .find_or_create_pending_request(
+                identity.agent_id.clone(),
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                Some("send text".into()),
+                context.clone(),
+                NOW,
+            )
+            .await
+            .unwrap();
+        assert!(created);
+        let (retry, created) = store
+            .find_or_create_pending_request(
+                identity.agent_id,
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                Some("retry".into()),
+                PermissionRequestContext::default(),
+                NOW + 1,
+            )
+            .await
+            .unwrap();
+        assert!(!created);
+        assert_eq!(first.request_id, retry.request_id);
+        drop(store);
+        let reopened = AgentPolicyStore::open_at_path(&path).await.unwrap();
+        let restored = reopened.get_permission_request(&first.request_id).await.unwrap().unwrap();
+        assert_eq!(restored.context, context);
+        assert_eq!(restored.reason.as_deref(), Some("send text"));
     }
 
     #[tokio::test]
@@ -1474,11 +1537,25 @@ mod tests {
         let identity = store.create_identity("agent", None, NOW).await.unwrap();
 
         let (first, first_created) = store
-            .find_or_create_pending_request(identity.agent_id.clone(), target("surf_1"), vec![ActionClass::Drive], None, NOW + 1)
+            .find_or_create_pending_request(
+                identity.agent_id.clone(),
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                None,
+                PermissionRequestContext::default(),
+                NOW + 1,
+            )
             .await
             .unwrap();
         let (second, second_created) = store
-            .find_or_create_pending_request(identity.agent_id, target("surf_1"), vec![ActionClass::Drive], None, NOW + 2)
+            .find_or_create_pending_request(
+                identity.agent_id,
+                target("surf_1"),
+                vec![ActionClass::Drive],
+                None,
+                PermissionRequestContext::default(),
+                NOW + 2,
+            )
             .await
             .unwrap();
 
