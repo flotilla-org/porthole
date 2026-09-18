@@ -122,24 +122,26 @@ pub async fn close(adapter: &MacOsAdapter, surface: &SurfaceInfo) -> Result<(), 
 }
 
 pub async fn window_bounds(surface: &SurfaceInfo) -> Result<Rect, PortholeError> {
-    use crate::enumerate::list_windows;
     let pid = surface
         .pid
         .ok_or_else(|| PortholeError::new(ErrorCode::CapabilityMissing, "window_bounds: surface has no pid"))? as i32;
+    // With a window id, AX resolves the window directly and returns SurfaceDead
+    // if it is gone, so the CGWindowList enumeration is a redundant existence
+    // check. It is also a system-wide scan, which dominates the per-event cost
+    // when driving a stream of input, so skip it on the common id-present path.
+    if let Some(cg_id) = surface.macos_cg_window_id() {
+        return bounds_from_ax(pid, Some(cg_id));
+    }
+    // Without an id, fall back to finding the window by pid (and title) first.
+    use crate::enumerate::list_windows;
     let windows = list_windows()?;
-    let hit = if let Some(cg_id) = surface.macos_cg_window_id() {
-        windows.iter().find(|w| w.cg_window_id == cg_id)
-    } else {
-        windows
-            .iter()
-            .find(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title))
-    };
+    let hit = windows
+        .iter()
+        .find(|w| w.owner_pid == pid && (surface.title.is_none() || w.title == surface.title));
     match hit {
-        Some(_w) => {
-            // CGWindowList doesn't give us bounds in our `WindowRecord`. For v0 we
-            // read them from AX below.
-            bounds_from_ax(pid, surface.macos_cg_window_id())
-        }
+        // CGWindowList doesn't give us bounds in our `WindowRecord`; read them
+        // from AX (the [0] window for this pid).
+        Some(_w) => bounds_from_ax(pid, None),
         None => Err(PortholeError::new(ErrorCode::SurfaceDead, "window_bounds: no matching window")),
     }
 }
