@@ -448,10 +448,14 @@ impl AgentPolicyStore {
             if request.status != PermissionRequestStatus::Pending {
                 return Ok((request, false));
             }
-            tx.execute(
+            let updated = tx.execute(
                 "UPDATE agent_permission_requests SET status = 'invalidated', resolved_at_unix_ms = ?1, invalidation_reason = ?2 WHERE request_id = ?3 AND status = 'pending'",
                 params![decided_at_unix_ms, reason, request_id.as_str()],
             )?;
+            if updated == 0 {
+                let current = select_request_by_id_tx(&tx, &request_id)?.ok_or(AgentStoreError::PermissionRequestNotFound)?;
+                return Ok((current, false));
+            }
             insert_audit(&tx, &request.agent_id, Some(&request_id), None, &request.target, &request.actions,
                 "invalidated", None, None, None, Some(decided_at_unix_ms), None, None, Some(&reason))?;
             tx.commit()?;

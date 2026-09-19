@@ -497,11 +497,11 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         areas[0],
     );
-    let context = match app.active_detail() {
-        Some(Detail::Request(..)) if !app.filtering && app.decision('a').is_err() => {
-            format!("Cannot approve: {}", app.decision('a').err().unwrap())
+    let context = match (app.active_detail(), app.decision('a')) {
+        (Some(Detail::Request(..)), Err(reason)) if !app.filtering => {
+            format!("Cannot approve: {reason}")
         }
-        Some(Detail::Request(_, duration)) if !app.filtering => {
+        (Some(Detail::Request(_, duration)), _) if !app.filtering => {
             let filter = &app.scopes[app.index()].filter;
             format!(
                 "APPROVE FOR: {}{}",

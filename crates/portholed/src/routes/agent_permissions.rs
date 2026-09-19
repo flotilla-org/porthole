@@ -208,6 +208,7 @@ fn identity_response(identity: StoredAgentIdentity) -> AgentIdentityResponse {
     }
 }
 
+/// Retires invalid pending requests and publishes their resolution before building the response.
 async fn request_response(state: &AppState, mut request: StoredPermissionRequest) -> Result<AgentPermissionRequestResponse, ApiError> {
     let description = describe(state, &request.agent_id, &request.target, request.context.clone()).await?;
     // Missing/dead handle IDs and revoked identities cannot become valid again.
