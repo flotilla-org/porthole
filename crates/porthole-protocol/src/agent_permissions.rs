@@ -104,6 +104,8 @@ pub struct AgentPermissionRequestResponse {
     pub actions: Vec<ActionClass>,
     pub reason: Option<String>,
     pub status: String,
+    /// Automatic retirement reason; does not replace the original operation reason.
+    pub invalidation_reason: Option<String>,
     pub created_at_unix_ms: u64,
     pub resolved_at_unix_ms: Option<u64>,
 }
