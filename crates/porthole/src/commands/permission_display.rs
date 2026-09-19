@@ -109,7 +109,7 @@ pub(super) fn requester(id: &str, description: &PermissionDescription) -> String
 }
 
 pub(super) fn request_lines(r: &AgentPermissionRequestResponse) -> Vec<String> {
-    vec![
+    let mut lines = vec![
         format!("request_id: {}", clean(r.request_id.as_str())),
         format!("requester: {}", requester(r.agent_id.as_str(), &r.description)),
         format!("target: {}", target(&r.target, &r.description)),
@@ -118,7 +118,18 @@ pub(super) fn request_lines(r: &AgentPermissionRequestResponse) -> Vec<String> {
         format!("suggested duration: {}", duration(&default_duration(&r.target))),
         format!("status: {}", clean(&r.status)),
         format!("requested: {}", super::agents::format_unix_ms_utc(r.created_at_unix_ms)),
-    ]
+    ];
+    if let Some(reason) = &r.invalidation_reason {
+        lines.push(format!(
+            "retired: {}",
+            clean(match reason.as_str() {
+                "surface_unavailable" => "window unavailable; agent must find it again and retry",
+                "requester_unavailable" => "requester revoked or removed",
+                other => other,
+            })
+        ));
+    }
+    lines
 }
 
 pub(super) fn grant_lines(g: &AgentGrantResponse) -> Vec<String> {

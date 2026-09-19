@@ -15,7 +15,7 @@ use porthole_protocol::agent_permissions::{
 };
 
 use crate::{
-    agent_store::{StoredAgentIdentity, StoredGrant, StoredPermissionRequest},
+    agent_store::{PermissionRequestStatus, StoredAgentIdentity, StoredGrant, StoredPermissionRequest},
     events::AgentEvent,
     routes::errors::ApiError,
     state::AppState,
@@ -97,7 +97,10 @@ pub async fn get_requests(State(state): State<AppState>) -> Result<Json<Vec<Agen
     let requests = state.agent_store.list_pending_permission_requests().await?;
     let mut result = Vec::with_capacity(requests.len());
     for request in requests {
-        result.push(request_response(&state, request).await?);
+        let response = request_response(&state, request).await?;
+        if response.status == "pending" {
+            result.push(response);
+        }
     }
     Ok(Json(result))
 }
@@ -122,6 +125,9 @@ pub async fn post_approve_request(
     let Some(request) = state.agent_store.get_permission_request(&request_id).await? else {
         return Err(ApiError::from(crate::agent_store::AgentStoreError::PermissionRequestNotFound));
     };
+    if request_response(&state, request.clone()).await?.status != "pending" {
+        return Err(ApiError::from(crate::agent_store::AgentStoreError::PermissionRequestNotPending));
+    }
     let body_target: TargetSelector = body.target.into();
     let mut body_actions = body.actions;
     body_actions.sort();
@@ -202,8 +208,33 @@ fn identity_response(identity: StoredAgentIdentity) -> AgentIdentityResponse {
     }
 }
 
-async fn request_response(state: &AppState, request: StoredPermissionRequest) -> Result<AgentPermissionRequestResponse, ApiError> {
-    let description = describe(state, &request.agent_id, &request.target, request.context).await?;
+async fn request_response(state: &AppState, mut request: StoredPermissionRequest) -> Result<AgentPermissionRequestResponse, ApiError> {
+    let description = describe(state, &request.agent_id, &request.target, request.context.clone()).await?;
+    // Missing/dead handle IDs and revoked identities cannot become valid again.
+    // Only successful reads of local state reach here; connection/OS failures
+    // are never grounds for retiring a pending request.
+    if request.status == PermissionRequestStatus::Pending {
+        let reason = if description.agent_revoked {
+            Some("requester_unavailable")
+        } else if description.surface_available == Some(false) {
+            Some("surface_unavailable")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            let (updated, changed) = state
+                .agent_store
+                .invalidate_request(&request.request_id, reason, now_unix_ms())
+                .await?;
+            request = updated;
+            if changed {
+                state.events.publish(AgentEvent::AgentPermissionResolved {
+                    request_id: request.request_id.clone(),
+                    status: "invalidated".into(),
+                });
+            }
+        }
+    }
     Ok(AgentPermissionRequestResponse {
         description,
         request_id: request.request_id,
@@ -212,6 +243,7 @@ async fn request_response(state: &AppState, request: StoredPermissionRequest) ->
         actions: request.actions,
         reason: request.reason,
         status: request.status.as_str().to_string(),
+        invalidation_reason: request.invalidation_reason,
         created_at_unix_ms: request.created_at_unix_ms,
         resolved_at_unix_ms: request.resolved_at_unix_ms,
     })
@@ -374,6 +406,93 @@ mod tests {
         assert_eq!(old["description"]["surface"]["title"], "Project terminal");
         let (_, grants) = get(router, "/agent-permissions/grants").await;
         assert!(grants.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn inbox_retires_unavailable_windows_and_revoked_requesters_but_keeps_history() {
+        let state = test_state().await;
+        let agent = state.agent_store.create_identity("stale requester", None, NOW).await.unwrap();
+        let mut ids = Vec::new();
+        for surface in ["surf_1", "surf_from_previous_daemon"] {
+            let request = state
+                .agent_store
+                .create_pending_request(
+                    agent.agent_id.clone(),
+                    TargetSelector::Surface {
+                        surface_id: surface.into(),
+                    },
+                    vec![ActionClass::Observe],
+                    Some("inspect window".into()),
+                    NOW,
+                )
+                .await
+                .unwrap();
+            ids.push(request.request_id);
+        }
+        let broad = state
+            .agent_store
+            .create_pending_request(
+                agent.agent_id.clone(),
+                TargetSelector::AllSurfaces,
+                vec![ActionClass::Observe],
+                Some("search surfaces".into()),
+                NOW,
+            )
+            .await
+            .unwrap();
+        state.handles.mark_dead(&SurfaceId::from("surf_1")).await.unwrap();
+        let mut events = state.events.subscribe();
+        let router = build_router(state.clone());
+        let (_, pending) = get(router.clone(), "/agent-permissions/requests").await;
+        assert_eq!(pending.as_array().unwrap().len(), 1);
+        assert_eq!(pending[0]["request_id"], broad.request_id.to_string());
+        for id in ids {
+            let (_, detail) = get(router.clone(), &format!("/agent-permissions/requests/{id}")).await;
+            assert_eq!(detail["status"], "invalidated");
+            assert_eq!(detail["invalidation_reason"], "surface_unavailable");
+            assert_eq!(detail["reason"], "inspect window");
+            assert!(detail["resolved_at_unix_ms"].is_number());
+            assert!(matches!(events.try_recv().unwrap(), AgentEvent::AgentPermissionResolved { status, .. } if status == "invalidated"));
+        }
+        assert!(events.try_recv().is_err());
+        state.agent_store.revoke_identity(&agent.agent_id, NOW + 1).await.unwrap();
+        let (_, pending) = get(router.clone(), "/agent-permissions/requests").await;
+        assert!(pending.as_array().unwrap().is_empty());
+        let (_, detail) = get(router, &format!("/agent-permissions/requests/{}", broad.request_id)).await;
+        assert_eq!(detail["status"], "invalidated");
+        assert_eq!(detail["invalidation_reason"], "requester_unavailable");
+        assert!(matches!(events.try_recv().unwrap(), AgentEvent::AgentPermissionResolved { status, .. } if status == "invalidated"));
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn direct_approval_retires_missing_window_requests_without_creating_a_grant() {
+        let state = test_state().await;
+        let agent = state.agent_store.create_identity("old requester", None, NOW).await.unwrap();
+        let pending = state
+            .agent_store
+            .create_pending_request(
+                agent.agent_id,
+                TargetSelector::Surface {
+                    surface_id: "missing".into(),
+                },
+                vec![ActionClass::Observe],
+                None,
+                NOW,
+            )
+            .await
+            .unwrap();
+        let router = build_router(state.clone());
+        let (status, _) = post(
+            router.clone(),
+            &format!("/agent-permissions/requests/{}/approve", pending.request_id),
+            serde_json::json!({"duration":{"type":"once"},"target":surface_target("missing"),"actions":["observe"]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(state.agent_store.list_active_grants(NOW).await.unwrap().is_empty());
+        let (_, detail) = get(router, &format!("/agent-permissions/requests/{}", pending.request_id)).await;
+        assert_eq!(detail["status"], "invalidated");
     }
 
     async fn request(router: axum::Router, method: Method, uri: &str, body: Option<serde_json::Value>) -> (StatusCode, serde_json::Value) {

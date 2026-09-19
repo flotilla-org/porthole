@@ -79,6 +79,7 @@ pub enum PermissionRequestStatus {
     Pending,
     Approved,
     Denied,
+    Invalidated,
 }
 
 impl PermissionRequestStatus {
@@ -87,6 +88,7 @@ impl PermissionRequestStatus {
             Self::Pending => "pending",
             Self::Approved => "approved",
             Self::Denied => "denied",
+            Self::Invalidated => "invalidated",
         }
     }
 
@@ -95,6 +97,7 @@ impl PermissionRequestStatus {
             "pending" => Ok(Self::Pending),
             "approved" => Ok(Self::Approved),
             "denied" => Ok(Self::Denied),
+            "invalidated" => Ok(Self::Invalidated),
             other => Err(AgentStoreError::UnknownPermissionRequestStatus(other.to_string())),
         }
     }
@@ -109,6 +112,7 @@ pub struct StoredPermissionRequest {
     pub actions: Vec<ActionClass>,
     pub reason: Option<String>,
     pub status: PermissionRequestStatus,
+    pub invalidation_reason: Option<String>,
     pub created_at_unix_ms: u64,
     pub resolved_at_unix_ms: Option<u64>,
 }
@@ -414,6 +418,7 @@ impl AgentPolicyStore {
                 actions,
                 reason: stored_reason,
                 status: PermissionRequestStatus::Pending,
+                invalidation_reason: None,
                 created_at_unix_ms,
                 resolved_at_unix_ms: None,
             };
@@ -425,6 +430,36 @@ impl AgentPolicyStore {
     pub async fn get_permission_request(&self, request_id: &PermissionRequestId) -> StoreResult<Option<StoredPermissionRequest>> {
         let request_id = request_id.clone();
         self.with_conn(move |conn| select_request_by_id(conn, &request_id)).await
+    }
+
+    /// Terminal retirement, without granting access or remembering an operator denial.
+    /// Returns the current row unchanged if another decision already won the race.
+    pub async fn invalidate_request(
+        &self,
+        request_id: &PermissionRequestId,
+        reason: &str,
+        decided_at_unix_ms: u64,
+    ) -> StoreResult<(StoredPermissionRequest, bool)> {
+        let request_id = request_id.clone();
+        let reason = reason.to_owned();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction()?;
+            let mut request = select_request_by_id_tx(&tx, &request_id)?.ok_or(AgentStoreError::PermissionRequestNotFound)?;
+            if request.status != PermissionRequestStatus::Pending {
+                return Ok((request, false));
+            }
+            tx.execute(
+                "UPDATE agent_permission_requests SET status = 'invalidated', resolved_at_unix_ms = ?1, invalidation_reason = ?2 WHERE request_id = ?3 AND status = 'pending'",
+                params![decided_at_unix_ms, reason, request_id.as_str()],
+            )?;
+            insert_audit(&tx, &request.agent_id, Some(&request_id), None, &request.target, &request.actions,
+                "invalidated", None, None, None, Some(decided_at_unix_ms), None, None, Some(&reason))?;
+            tx.commit()?;
+            request.status = PermissionRequestStatus::Invalidated;
+            request.resolved_at_unix_ms = Some(decided_at_unix_ms);
+            request.invalidation_reason = Some(reason);
+            Ok((request, true))
+        }).await
     }
 
     pub async fn approve_request(
@@ -510,7 +545,7 @@ impl AgentPolicyStore {
     pub async fn list_pending_permission_requests(&self) -> StoreResult<Vec<StoredPermissionRequest>> {
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
+                "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json, invalidation_reason
                  FROM agent_permission_requests
                  WHERE status = 'pending'
                  ORDER BY created_at_unix_ms, request_id",
@@ -638,6 +673,7 @@ impl AgentPolicyStore {
                 actions,
                 reason: request.reason,
                 status: PermissionRequestStatus::Denied,
+                invalidation_reason: None,
                 created_at_unix_ms: request.created_at_unix_ms,
                 resolved_at_unix_ms: Some(decided_at_unix_ms),
             };
@@ -971,6 +1007,7 @@ fn init_schema(conn: &Connection) -> StoreResult<()> {
         "context_json",
         "context_json TEXT NOT NULL DEFAULT '{}'",
     )?;
+    add_column_if_missing(conn, "agent_permission_requests", "invalidation_reason", "invalidation_reason TEXT")?;
     add_column_if_missing(conn, "agent_permission_audit", "reason", "reason TEXT")?;
     Ok(())
 }
@@ -1021,7 +1058,7 @@ fn select_pending_request(
 ) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json, invalidation_reason
              FROM agent_permission_requests
              WHERE agent_id = ?1
                AND target_json = ?2
@@ -1037,7 +1074,7 @@ fn select_pending_request(
 fn select_request_by_id(conn: &Connection, request_id: &PermissionRequestId) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json, invalidation_reason
              FROM agent_permission_requests
              WHERE request_id = ?1",
             params![request_id.as_str()],
@@ -1053,7 +1090,7 @@ fn select_request_by_id_tx(
 ) -> StoreResult<Option<StoredPermissionRequest>> {
     let row = conn
         .query_row(
-            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json
+            "SELECT request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json, invalidation_reason
              FROM agent_permission_requests
              WHERE request_id = ?1",
             params![request_id.as_str()],
@@ -1063,7 +1100,18 @@ fn select_request_by_id_tx(
     row.map(stored_request_from_tuple).transpose()
 }
 
-type RequestTuple = (String, String, String, String, Option<String>, String, u64, Option<u64>, String);
+type RequestTuple = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    u64,
+    Option<u64>,
+    String,
+    Option<String>,
+);
 type IdentityTuple = (String, String, String, u64, Option<u64>);
 type GrantTuple = (
     String,
@@ -1163,11 +1211,23 @@ fn request_tuple_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestTu
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
     ))
 }
 
 fn stored_request_from_tuple(row: RequestTuple) -> StoreResult<StoredPermissionRequest> {
-    let (request_id, agent_id, target_json, actions_json, reason, status, created_at_unix_ms, resolved_at_unix_ms, context_json) = row;
+    let (
+        request_id,
+        agent_id,
+        target_json,
+        actions_json,
+        reason,
+        status,
+        created_at_unix_ms,
+        resolved_at_unix_ms,
+        context_json,
+        invalidation_reason,
+    ) = row;
     Ok(StoredPermissionRequest {
         context: from_json(&context_json)?,
         request_id: PermissionRequestId::from(request_id),
@@ -1176,6 +1236,7 @@ fn stored_request_from_tuple(row: RequestTuple) -> StoreResult<StoredPermissionR
         actions: from_json(&actions_json)?,
         reason,
         status: PermissionRequestStatus::parse(&status)?,
+        invalidation_reason,
         created_at_unix_ms,
         resolved_at_unix_ms,
     })
@@ -1314,6 +1375,91 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn invalidation_is_persistent_idempotent_and_does_not_remember_a_denial() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.sqlite");
+        let store = AgentPolicyStore::open_at_path(&path).await.unwrap();
+        let pending = pending_request(&store).await;
+        let (retired, changed) = store
+            .invalidate_request(&pending.request_id, "surface_unavailable", NOW + 2)
+            .await
+            .unwrap();
+        assert!(changed);
+        assert_eq!(retired.status, PermissionRequestStatus::Invalidated);
+        assert_eq!(retired.reason, pending.reason);
+        assert_eq!(retired.resolved_at_unix_ms, Some(NOW + 2));
+        let (again, changed) = store
+            .invalidate_request(&pending.request_id, "requester_unavailable", NOW + 3)
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert_eq!(again, retired);
+        let policy = store.load_policy_snapshot(&pending.agent_id).await.unwrap();
+        assert!(policy.grants.is_empty());
+        assert!(policy.denials.is_empty());
+        assert_eq!(store.debug_audit_decisions().await.unwrap(), vec!["requested", "invalidated"]);
+        drop(store);
+        let store = AgentPolicyStore::open_at_path(&path).await.unwrap();
+        let restored = store.get_permission_request(&pending.request_id).await.unwrap().unwrap();
+        assert_eq!(restored, retired);
+        assert_eq!(restored.invalidation_reason.as_deref(), Some("surface_unavailable"));
+        assert!(store.list_pending_permission_requests().await.unwrap().is_empty());
+        assert!(matches!(
+            store
+                .approve_request(&pending.request_id, DurationSpec::Once, vec![], NOW + 4)
+                .await,
+            Err(AgentStoreError::PermissionRequestNotPending)
+        ));
+        let retry = store
+            .create_pending_request(pending.agent_id, pending.target, pending.actions, None, NOW + 5)
+            .await
+            .unwrap();
+        assert_ne!(retry.request_id, pending.request_id);
+        store
+            .approve_request(&retry.request_id, DurationSpec::Once, vec![], NOW + 6)
+            .await
+            .unwrap();
+        let (approved, changed) = store
+            .invalidate_request(&retry.request_id, "surface_unavailable", NOW + 7)
+            .await
+            .unwrap();
+        assert!(!changed);
+        assert_eq!(approved.status, PermissionRequestStatus::Approved);
+        assert!(approved.invalidation_reason.is_none());
+        assert_eq!(
+            store
+                .debug_audit_decisions()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|s| *s == "invalidated")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_and_invalidation_have_only_one_winner() {
+        let store = AgentPolicyStore::open_in_memory().await.unwrap();
+        let pending = pending_request(&store).await;
+        let (approval, retirement) = tokio::join!(
+            store.approve_request(&pending.request_id, DurationSpec::Once, vec![], NOW + 2),
+            store.invalidate_request(&pending.request_id, "surface_unavailable", NOW + 2),
+        );
+        let (resolved, changed) = retirement.unwrap();
+        let grants = store.list_active_grants(NOW + 3).await.unwrap();
+        if changed {
+            assert!(matches!(approval, Err(AgentStoreError::PermissionRequestNotPending)));
+            assert!(grants.is_empty());
+            assert_eq!(resolved.status, PermissionRequestStatus::Invalidated);
+        } else {
+            assert_eq!(grants, vec![approval.unwrap()]);
+            assert_eq!(resolved.status, PermissionRequestStatus::Approved);
+        }
+        assert_eq!(store.debug_audit_decisions().await.unwrap().len(), 2);
     }
 
     #[tokio::test]

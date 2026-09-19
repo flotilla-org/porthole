@@ -149,6 +149,7 @@ When a protected route has no matching grant, the daemon returns `403 agent_perm
 `porthole agents review` opens an inline terminal UI (18 rows by default;
 `--height 12` changes it). Tab or Left/Right switches **Requests** and **Grants**. Use arrow
 keys to select, `/` to filter the current view, and Enter to open details.
+While filtering, Ctrl-U clears the text and Enter or Esc finishes editing.
 Each view retains its filter and selection as requests arrive.
 Tables show requester, target, permissions and the triggering operation; Grants also
 shows duration. Long cells wrap up to three lines; Enter shows the full details.
@@ -158,7 +159,15 @@ a denial rule. Choose duration with `1` for once, `2` for until the window close
 (window targets only), or `3` for persistent. The selected duration stays visible.
 Window requests default to until-window-closes; broader requests default to once.
 From the grant list or details, `r` revokes. Left or Esc returns from details
-to the list; `q` or Ctrl-C exits.
+to the list. Esc from the list, `q`, or Ctrl-C exits.
+Pending requests for missing/closed windows or revoked/missing requesters retire
+as `invalidated` when the daemon refreshes the inbox, inspects a request, or checks
+an approval. The original request, retirement reason and timestamp remain stored;
+`porthole agents request REQUEST_ID` can inspect them. Retirement creates no denial
+rule. Connection failures never retire requests. After a daemon restart, old window
+handles are unavailable; the requesting agent must find the window again and retry.
+If a displayed request becomes unavailable, action feedback explains why it cannot
+be approved.
 
 The Grants view, `porthole agents grants` (including `--json`), and
 `GET /agent-permissions/grants` list currently effective grants. They omit grants
