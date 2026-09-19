@@ -13,6 +13,7 @@ crates do, what was verified, and what was not.
 
 The bridge crate lives in Porthole and depends on the Jackstay libraries.
 Porthole exports and republications run as daemon-owned tasks by default.
+Worker spawning and launchd registration are also owned by Porthole.
 The separate executable remains an explicit worker mode and a standalone
 probe/loopback tool. Both modes use the same encode, decode and relay functions.
 See [ADR-0011](adr/0011-porthole-owned-bridge-runtime.md).

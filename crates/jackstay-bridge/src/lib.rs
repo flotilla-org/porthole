@@ -13,6 +13,8 @@
 //! later without change.
 
 pub mod clock;
+#[cfg(target_os = "macos")]
+pub mod launchd;
 #[cfg(all(target_os = "macos", feature = "backend-macos"))]
 mod run_scope;
 #[cfg(all(target_os = "macos", feature = "backend-macos"))]
@@ -20,6 +22,7 @@ pub mod task;
 /// The framing carries the arena's frame descriptor, and the arena is Unix-only.
 #[cfg(unix)]
 pub mod wire;
+pub mod worker;
 
 #[cfg(unix)]
 pub mod input_relay;

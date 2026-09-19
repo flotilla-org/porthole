@@ -10,11 +10,9 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use jackstay_graph::export::IngressSpec;
-use jackstay_graph::{
-    ChromaPolicy, Identities,
-    export::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, Phase},
-};
+use jackstay_bridge::worker::IngressSpec;
+use jackstay_bridge::worker::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, Phase};
+use jackstay_graph::{ChromaPolicy, Identities};
 use porthole_core::agent_policy::AgentId;
 #[cfg(target_os = "macos")]
 use porthole_protocol::{capture_sessions::NATIVE_ATTACH_TRANSPORT_MACOS_XPC, publications::PUBLICATION_KIND_REPUBLISHED};
@@ -83,7 +81,7 @@ impl ExportHandle {
         match execution {
             BridgeExecution::Worker => {
                 let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
-                jackstay_graph::export::spawn_egress(&bridge, &spec)
+                jackstay_bridge::worker::spawn_egress(&bridge, &spec)
                     .map(Self::Worker)
                     .map_err(ExportError::Spawn)
             }
@@ -127,7 +125,7 @@ impl ExportHandle {
 
 #[cfg(target_os = "macos")]
 enum RepublishHandle {
-    Worker(Box<jackstay_graph::export::IngressJob>),
+    Worker(Box<jackstay_bridge::worker::IngressJob>),
     InProcess(jackstay_bridge::task::Task),
 }
 #[cfg(target_os = "macos")]
@@ -136,7 +134,7 @@ impl RepublishHandle {
         match execution {
             BridgeExecution::Worker => {
                 let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
-                jackstay_graph::export::IngressJob::spawn(&bridge, &spec, directory)
+                jackstay_bridge::worker::IngressJob::spawn(&bridge, &spec, directory)
                     .map(|job| Self::Worker(Box::new(job)))
                     .map_err(|e| ExportError::RepublishFailed(e.to_string()))
             }

@@ -60,8 +60,8 @@ mod macos {
     type Error = Box<dyn std::error::Error + Send + Sync>;
 
     /// One machine-readable status line on stdout, for a coordinator
-    /// (`jackstay_graph::export`) watching this process.
-    fn event(e: &jackstay_graph::export::HalfEvent) {
+    /// (`jackstay_bridge::worker`) watching this process.
+    fn event(e: &jackstay_bridge::worker::HalfEvent) {
         use std::io::Write;
         if let Ok(line) = serde_json::to_string(e) {
             let mut out = std::io::stdout().lock();
@@ -674,7 +674,7 @@ mod macos {
 
     // ---- loopback with a launchd-registered ingress for the reference viewer ---------------------------
 
-    use jackstay_graph::launchd::LaunchdJob;
+    use jackstay_bridge::launchd::LaunchdJob;
 
     fn accept_with_timeout(listener: &UnixListener, timeout: Duration) -> Result<UnixStream, Error> {
         listener.set_nonblocking(true)?;
@@ -770,7 +770,7 @@ mod macos {
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
         eprintln!("listening on {path}");
-        event(&jackstay_graph::export::HalfEvent::Listening { path: path.clone() });
+        event(&jackstay_bridge::worker::HalfEvent::Listening { path: path.clone() });
         Ok((listener, path))
     }
 
@@ -902,7 +902,7 @@ mod macos {
                 .as_ref()
                 .map_or(String::new(), |p| format!("; controllers at --input-socket {p}"))
         );
-        let up = jackstay_graph::export::HalfEvent::PublicationUp {
+        let up = jackstay_bridge::worker::HalfEvent::PublicationUp {
             service: service.clone(),
             token: viewer_token.clone(),
             cpu_socket,
@@ -925,13 +925,13 @@ mod macos {
         match report {
             Ok(report) => {
                 eprintln!("ingress: {report:?}");
-                event(&jackstay_graph::export::HalfEvent::Report {
+                event(&jackstay_bridge::worker::HalfEvent::Report {
                     report: serde_json::to_value(&report)?,
                 });
                 Ok(())
             }
             Err(e) => {
-                event(&jackstay_graph::export::HalfEvent::Failed { message: e.to_string() });
+                event(&jackstay_bridge::worker::HalfEvent::Failed { message: e.to_string() });
                 Err(e.into())
             }
         }
@@ -959,7 +959,7 @@ mod macos {
             config,
             stop,
             Box::new(|decision| {
-                event(&jackstay_graph::export::HalfEvent::Ready {
+                event(&jackstay_bridge::worker::HalfEvent::Ready {
                     decision: decision.clone(),
                 })
             }),
@@ -967,13 +967,13 @@ mod macos {
         match report {
             Ok(report) => {
                 eprintln!("egress: {report:?}");
-                event(&jackstay_graph::export::HalfEvent::Report {
+                event(&jackstay_bridge::worker::HalfEvent::Report {
                     report: serde_json::to_value(&report)?,
                 });
                 Ok(())
             }
             Err(e) => {
-                event(&jackstay_graph::export::HalfEvent::Failed { message: e.to_string() });
+                event(&jackstay_bridge::worker::HalfEvent::Failed { message: e.to_string() });
                 Err(e.into())
             }
         }

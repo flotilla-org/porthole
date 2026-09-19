@@ -14,9 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use jackstay_graph::export::{EgressSpec, HalfStatus, IngressSpec, Phase};
-
-use crate::{egress, ingress};
+use crate::{
+    egress, ingress,
+    worker::{EgressSpec, HalfStatus, IngressSpec, Phase},
+};
 
 type State = Arc<(Mutex<HalfStatus>, Condvar)>;
 fn update(state: &State, change: impl FnOnce(&mut HalfStatus)) {
