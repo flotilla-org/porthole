@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 
 use xtask::{
     macos_bundle::{build_command_args, parse_apple_development_identity, profile_name, validate_sign_identity},
@@ -11,6 +11,34 @@ fn workspace_root() -> PathBuf {
         .and_then(|path| path.parent())
         .expect("xtask crate should live under crates/xtask")
         .to_path_buf()
+}
+
+#[test]
+fn refresh_requires_bridge_before_replacing_existing_bundle() {
+    let root = tempfile::tempdir().unwrap();
+    for path in [
+        PathBuf::from("target/debug/portholed"),
+        PathBuf::from("target/debug/porthole"),
+        xtask::macos_helper::built_helper_path(false),
+        PathBuf::from("target/debug/Porthole.app/keep-existing-bundle"),
+    ] {
+        let path = root.path().join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "existing").unwrap();
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["bundle", "--platform", "macos", "--refresh", "--sign", "test identity"])
+        .env_remove("JACKSTAY_BRIDGE_BIN")
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("missing binary:") && stderr.contains("jackstay-bridge"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(root.path().join("target/debug/Porthole.app/keep-existing-bundle")).unwrap(),
+        "existing"
+    );
 }
 
 #[test]

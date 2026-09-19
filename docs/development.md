@@ -31,7 +31,7 @@ Porthole's macOS adapter needs **Accessibility** and **Screen Recording** system
 git clone <repo>
 cd porthole
 cargo build --workspace --release
-./scripts/dev-bundle.sh --release      # JACKSTAY_BRIDGE_BIN=... to bundle the bridge for exports
+./scripts/dev-bundle.sh --release      # includes jackstay-bridge for exports
 open -R target/release/Porthole.app    # reveal in Finder
 ./target/release/Porthole.app/Contents/MacOS/porthole install --user --force
 porthole onboard
@@ -62,6 +62,14 @@ which builds the Rust binaries, builds the Swift helper, assembles
 `Porthole.app`, and signs it with a local Apple Development identity when one
 exists. That gives TCC a stable designated requirement across rebuilds. If no
 Apple Development identity is available, the script fails.
+The `jackstay-bridge` crate belongs to Porthole's workspace and depends on the
+pinned Jackstay libraries. Normal workspace builds enable its macOS backend,
+and bundling always includes the worker binary beside the daemon. Exports and
+republications run inside the daemon by default; `--worker` on the publication
+commands selects separate workers. `--refresh` requires
+the existing bridge binary too; build without `--refresh` if it is missing.
+`JACKSTAY_BRIDGE_BIN=/path/to/jackstay-bridge` is a development override.
+
 Ad-hoc signing is deliberately unsupported for the dev bundle: its designated
 requirement is cdhash-based and changes on every rebuild, which makes Privacy &
 Security grants look present while runtime checks report missing permissions.

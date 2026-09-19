@@ -457,6 +457,7 @@ fn request_response() -> AgentPermissionRequestResponse {
         actions: vec![ActionClass::Drive],
         reason: Some("drive".into()),
         status: "pending".into(),
+        invalidation_reason: None,
         created_at_unix_ms: 1_000,
         resolved_at_unix_ms: None,
     }
