@@ -117,6 +117,17 @@ fn unsigned_candidate_rejects_a_signing_identity_before_building() {
 }
 
 #[test]
+fn library_rejects_conflicting_signing_options_before_building() {
+    let result = xtask::macos_bundle::run(xtask::macos_bundle::BundleOptions {
+        release: false,
+        refresh: false,
+        sign: Some("Example".to_owned()),
+        unsigned: true,
+    });
+    assert!(matches!(result, Err(xtask::macos_bundle::BundleError::InvalidSigningIdentity(_))));
+}
+
+#[test]
 fn unsigned_refresh_assembles_without_security_or_codesign() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path();
