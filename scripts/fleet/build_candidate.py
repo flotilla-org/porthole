@@ -172,6 +172,8 @@ def main():
         run("cargo", "run", "--locked", "-p", "xtask", "--", "bundle", "--platform", "macos",
             "--release", "--unsigned", env=env)
     app = ROOT / "target/release/Porthole.app"
+    # Normalize the assembled candidate in place, including target/release's
+    # copy. This is not an installable app; central signing is still required.
     remove_swift_toolchain_rpaths(app)
     files = inventory(app)
     verify_linkage(app)
