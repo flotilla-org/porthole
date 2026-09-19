@@ -83,8 +83,10 @@ def inventory(app):
             raise ValueError(f"unexpected symlink in candidate: {relative}")
         if path.is_dir():
             continue
-        if relative not in expected or not path.is_file():
+        if relative not in expected:
             raise ValueError(f"unexpected candidate entry: {relative}")
+        if not path.is_file():
+            raise ValueError(f"invalid file type in candidate: {relative}")
         executable = relative.startswith("Contents/MacOS/")
         if executable and not path.stat().st_mode & 0o111:
             raise ValueError(f"candidate binary is not executable: {relative}")
@@ -190,11 +192,12 @@ def main():
         archive = args.output / f"{NAME}.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(bundle, arcname=NAME)
+    archive_sha = digest(archive)
     write_json(args.output / f"{NAME}.json", {
         **{key: value for key, value in manifest.items() if key != "files"},
-        "artifact": archive.name, "sha256": digest(archive), "size_bytes": archive.stat().st_size,
+        "artifact": archive.name, "sha256": archive_sha, "size_bytes": archive.stat().st_size,
     })
-    (args.output / f"{NAME}.sha256").write_text(f"{digest(archive)}  {archive.name}\n")
+    (args.output / f"{NAME}.sha256").write_text(f"{archive_sha}  {archive.name}\n")
     print(archive)
 
 
