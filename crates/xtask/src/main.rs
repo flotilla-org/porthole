@@ -20,7 +20,10 @@ struct BundleArgs {
     platform: Platform,
     #[arg(long, help = "Build release profile instead of debug")]
     release: bool,
-    #[arg(long, help = "Skip cargo build and rebuild/sign the app bundle from existing target binaries")]
+    #[arg(
+        long,
+        help = "Skip builds and rebuild/sign the app bundle from existing binaries (including jackstay-bridge)"
+    )]
     refresh: bool,
     #[arg(long, help = "Apple Development signing identity to use")]
     sign: Option<String>,

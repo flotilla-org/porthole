@@ -10,6 +10,7 @@ members = [
     "crates/porthole-adapter-kwin",
     "crates/porthole-adapter-windows",
     "crates/xtask",
+    "crates/jackstay-bridge",
 ]
 
 [workspace.package]
@@ -19,9 +20,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
-jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "fb0d67688c9015323551f942266b27d19133ca60" }
+jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "df4e529aace96f26884699e74d1d648774819298" }
 # Graph-manager vocabulary and bridge spawning.
-jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "fb0d67688c9015323551f942266b27d19133ca60" }
+jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "df4e529aace96f26884699e74d1d648774819298" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"
