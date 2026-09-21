@@ -998,7 +998,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jackstay"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=fb0d67688c9015323551f942266b27d19133ca60#fb0d67688c9015323551f942266b27d19133ca60"
+source = "git+https://github.com/flotilla-org/jackstay?rev=7eda143c73e4a6ab6b32545376cf8fcf53195cbf#7eda143c73e4a6ab6b32545376cf8fcf53195cbf"
 dependencies = [
  "cc",
  "libc",
@@ -1009,12 +1009,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "jackstay-graph"
+name = "jackstay-bridge"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=fb0d67688c9015323551f942266b27d19133ca60#fb0d67688c9015323551f942266b27d19133ca60"
 dependencies = [
+ "cc",
+ "jackstay",
+ "jackstay-graph",
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "jackstay-graph"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/jackstay?rev=7eda143c73e4a6ab6b32545376cf8fcf53195cbf#7eda143c73e4a6ab6b32545376cf8fcf53195cbf"
+dependencies = [
+ "serde",
  "thiserror",
 ]
 
@@ -1508,6 +1521,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jackstay",
+ "jackstay-bridge",
  "jackstay-graph",
  "porthole",
  "porthole-adapter-kwin",
@@ -2587,6 +2601,7 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "porthole-protocol",
+ "tempfile",
  "thiserror",
 ]
 

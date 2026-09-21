@@ -41,17 +41,21 @@ try {
     Invoke-DesktopCommand @('close',$surface) | Out-Null
     $surface = $null
     if (Test-Path -LiteralPath $pendingPath) { Remove-Item -LiteralPath $pendingPath }
-    @{result='PASS'; caller_pid=$PID; windows_session=(Get-Process -Id $PID).SessionId; agent_id=$env:PORTHOLE_AGENT_ID; png=$png; sha256=(Get-FileHash $png -Algorithm SHA256).Hash; completed_utc=[DateTime]::UtcNow.ToString('o')} |
-        ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $RunDirectory 'agent-desktop-result.json')
+    @{result='PASS'; caller_pid=$PID; windows_session=(Get-Process -Id $PID).SessionId; agent_id=$env:PORTHOLE_AGENT_ID; png=$png; sha256=(Get-FileHash -LiteralPath $png -Algorithm SHA256).Hash; completed_utc=[DateTime]::UtcNow.ToString('o')} |
+        ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $RunDirectory 'agent-desktop-result.json')
     Write-Output 'PASS: real Porthole launch/input/screenshot/close from the coding agent.'
 } catch {
     if ($surface -and $_.Exception.Message -match 'system_permission_needed') {
         $keepSurface = $true
         @{agent_id=$env:PORTHOLE_AGENT_ID; surface_id=$surface; reason=$_.Exception.Message} |
-            ConvertTo-Json | Set-Content -Encoding UTF8 $pendingPath
+            ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $pendingPath
         Write-Output 'BLOCKED: activate the test-owned editor in the Windows GUI, then rerun this script to resume the same surface.'
     }
     throw
 } finally {
-    if ($surface -and -not $keepSurface) { Invoke-DesktopCommand @('close',$surface) | Out-Null }
+    if ($surface -and -not $keepSurface) {
+        # This path follows a failed operation; cleanup must not replace it.
+        try { Invoke-DesktopCommand @('close',$surface) | Out-Null }
+        catch { Write-Warning "Could not close test-owned surface ${surface}: $_" }
+    }
 }

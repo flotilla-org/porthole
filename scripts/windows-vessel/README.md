@@ -30,6 +30,16 @@ environment explicitly inherits the token. The run's agent wrapper revokes the
 identity when Codex exits normally; forced termination requires explicit operator
 revocation with `porthole agents revoke <agent_id>`. Do not treat this prototype
 as having crash-safe credential cleanup.
+Environment narrowing and forced-exit cleanup are tracked in
+[issue #159](https://github.com/flotilla-org/porthole/issues/159).
+
+The console-launch grant persists for this identity until revocation. A new run
+creates a new identity and does not inherit that grant. Nested child invocations
+encode the script call to preserve literal paths across Cleat's `cmd.exe` boundary;
+the encoded command contains paths only, never a token. Run
+`powershell -NoProfile -File scripts/windows-vessel/test-launch-helpers.ps1` from
+the repository root to check path handling and cleanup error preservation without
+starting an agent or touching the desktop.
 
 The operator can run `approve-proof.ps1 -RunDirectory ... -Seconds 45` while the
 agent runs its assigned proof. It approves only this identity's requests for the

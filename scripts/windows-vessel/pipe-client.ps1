@@ -7,7 +7,8 @@ function Invoke-PortholeJson {
         $pipe.Connect(3000)
         $payload = if ($null -eq $Body) { '' } else { $Body | ConvertTo-Json -Depth 15 -Compress }
         $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
-        $header = "$Method $Path HTTP/1.1`r`nHost: localhost`r`nConnection: close`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`n"
+        $header = "$Method $Path HTTP/1.1`r`nHost: localhost`r`nConnection: close`r`nContent-Length: $($bytes.Length)`r`n"
+        if ($null -ne $Body) { $header += "Content-Type: application/json`r`n" }
         if ($Token) { $header += "Authorization: Bearer $Token`r`n" }
         $header += "`r`n"
         $prefix = [Text.Encoding]::ASCII.GetBytes($header)

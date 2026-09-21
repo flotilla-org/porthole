@@ -72,12 +72,18 @@ pub async fn export(
     chroma: ChromaPolicy,
     bitrate_bps: Option<u32>,
     input: bool,
+    worker: bool,
     json: bool,
 ) -> Result<(), ClientError> {
     let response: ExportResponse = client
         .post_json(
             &format!("/publications/{publication_id}/exports"),
             &CreateExportRequest {
+                execution: if worker {
+                    porthole_protocol::publications::BridgeExecution::Worker
+                } else {
+                    Default::default()
+                },
                 chroma,
                 bitrate_bps,
                 input,
@@ -171,6 +177,7 @@ pub struct AttachArgs {
     /// Carry an input channel back to the captured surface (needs Drive on
     /// the remote surface).
     pub input: bool,
+    pub worker: bool,
     pub json: bool,
     /// Keep the forwards and the republication alive until interrupted.
     pub hold: bool,
@@ -400,7 +407,13 @@ async fn attach_inner(
     // return agent_permission_needed just as the capture did; wait for the
     // operator the same way.
     let export_path = format!("/publications/{}/exports", session.session_id);
+    let execution = if args.worker {
+        porthole_protocol::publications::BridgeExecution::Worker
+    } else {
+        Default::default()
+    };
     let export_request = CreateExportRequest {
+        execution,
         chroma: args.chroma,
         bitrate_bps: args.bitrate_bps,
         input: args.input,
@@ -426,6 +439,7 @@ async fn attach_inner(
     let republished = republish(
         local,
         &RepublishRequest {
+            execution,
             media_socket: media_local.to_string_lossy().into_owned(),
             control_socket: control_link_local.to_string_lossy().into_owned(),
             link_token: export.link_token.clone(),
