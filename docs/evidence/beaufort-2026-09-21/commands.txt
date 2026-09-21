@@ -1,0 +1,366 @@
+UTC: 2026-09-21T13:06:35.7220067Z; session: 1; OS: Microsoft Windows NT 10.0.26200.0
+92b00db93020ea4e610d06a61b2bfef3c3e54e7c
+porthole info -> daemon_version: 0.0.0
+uptime_seconds: 0
+surface_count: 0
+adapter: windows (loaded=true) capabilities=launch_process,search,wait,focus,input_key,input_text,screenshot,close
+  system permission interactive_desktop: granted (desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation)
+porthole launch --app C:\dev\windows-parity-plan\implementation\target\debug\examples\desktop_fixture.exe --json -> agent_identity_required
+porthole launch --app C:\dev\windows-parity-plan\implementation\target\debug\examples\desktop_fixture.exe --json -> agent_permission_needed
+porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Windows #117 temporary validation",
+      "agent_revoked": false,
+      "surface": null,
+      "surface_available": null,
+      "operation": {
+        "kind": "launch",
+        "application": "C:\\dev\\windows-parity-plan\\implementation\\target\\debug\\examples\\desktop_fixture.exe"
+      }
+    },
+    "request_id": "apr_03b0830ad0384e0ead8390c90490bdf2",
+    "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+    "target": {
+      "type": "launched_by_agent"
+    },
+    "actions": [
+      "manage"
+    ],
+    "reason": "launch surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1789995997431,
+    "resolved_at_unix_ms": null
+  }
+]
+porthole agents approve apr_03b0830ad0384e0ead8390c90490bdf2 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Windows #117 temporary validation",
+    "agent_revoked": false,
+    "surface": null,
+    "surface_available": null,
+    "operation": {
+      "kind": "launch",
+      "application": "C:\\dev\\windows-parity-plan\\implementation\\target\\debug\\examples\\desktop_fixture.exe"
+    }
+  },
+  "grant_id": "grant_80a5492122ac41fea401b23e95223ebe",
+  "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+  "origin_request_id": "apr_03b0830ad0384e0ead8390c90490bdf2",
+  "origin_reason": "launch surface",
+  "target": {
+    "type": "launched_by_agent"
+  },
+  "actions": [
+    "manage"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1789995997500,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+porthole launch --app C:\dev\windows-parity-plan\implementation\target\debug\examples\desktop_fixture.exe --require-fresh-surface --json -> {
+  "launch_id": "launch_f5e9a1751e074e199b2727a663522da6",
+  "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "pid_tree",
+  "placement": {
+    "type": "not_requested"
+  }
+}
+porthole focus surf_3a2f09251e6440449e98bf8a1cc17ec1 -> agent_permission_needed
+porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Windows #117 temporary validation",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "desktop_fixture.exe",
+        "title": "Porthole #117 - test-owned editor",
+        "pid": 5444
+      },
+      "surface_available": true,
+      "operation": null
+    },
+    "request_id": "apr_017f680cf3024c9b9771341c9ffaba4d",
+    "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+    },
+    "actions": [
+      "drive"
+    ],
+    "reason": "focus surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1789995997667,
+    "resolved_at_unix_ms": null
+  }
+]
+porthole agents approve apr_017f680cf3024c9b9771341c9ffaba4d --duration persistent --json -> {
+  "description": {
+    "agent_name": "Windows #117 temporary validation",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "desktop_fixture.exe",
+      "title": "Porthole #117 - test-owned editor",
+      "pid": 5444
+    },
+    "surface_available": true,
+    "operation": null
+  },
+  "grant_id": "grant_12fa13670f274785bcfac6ad14dd6df1",
+  "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+  "origin_request_id": "apr_017f680cf3024c9b9771341c9ffaba4d",
+  "origin_reason": "focus surface",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+  },
+  "actions": [
+    "drive"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1789995997709,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+porthole focus surf_3a2f09251e6440449e98bf8a1cc17ec1 -> focused surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole text surf_3a2f09251e6440449e98bf8a1cc17ec1 Porthole #117: native Windows input -> sent 35 char(s) to surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole key surf_3a2f09251e6440449e98bf8a1cc17ec1 --key Enter -> sent 1 event(s) to surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole text surf_3a2f09251e6440449e98bf8a1cc17ec1 Named pipe + token/grant + HWND correlation + PNG -> sent 49 char(s) to surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole key surf_3a2f09251e6440449e98bf8a1cc17ec1 --key KeyA --mod ctrl -> sent 1 event(s) to surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole key surf_3a2f09251e6440449e98bf8a1cc17ec1 --key End -> sent 1 event(s) to surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole screenshot surf_3a2f09251e6440449e98bf8a1cc17ec1 --out C:\dev\windows-parity-plan\evidence\beaufort-desktop-20260921\smoke\visible-input.png -> agent_permission_needed
+porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Windows #117 temporary validation",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "desktop_fixture.exe",
+        "title": "Porthole #117 - test-owned editor",
+        "pid": 5444
+      },
+      "surface_available": true,
+      "operation": null
+    },
+    "request_id": "apr_783474c7cbfa4db88429534b4e128992",
+    "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+    },
+    "actions": [
+      "observe"
+    ],
+    "reason": "capture screenshot",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1789995997885,
+    "resolved_at_unix_ms": null
+  }
+]
+porthole agents approve apr_783474c7cbfa4db88429534b4e128992 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Windows #117 temporary validation",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "desktop_fixture.exe",
+      "title": "Porthole #117 - test-owned editor",
+      "pid": 5444
+    },
+    "surface_available": true,
+    "operation": null
+  },
+  "grant_id": "grant_841f1a2b526c4bbaa78f26b6ac1d4115",
+  "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+  "origin_request_id": "apr_783474c7cbfa4db88429534b4e128992",
+  "origin_reason": "capture screenshot",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+  },
+  "actions": [
+    "observe"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1789995997931,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+porthole screenshot surf_3a2f09251e6440449e98bf8a1cc17ec1 --out C:\dev\windows-parity-plan\evidence\beaufort-desktop-20260921\smoke\visible-input.png -> wrote C:\dev\windows-parity-plan\evidence\beaufort-desktop-20260921\smoke\visible-input.png (14747 bytes)
+window_bounds: 900x420 at 120,120
+scale: 1
+porthole wait surf_3a2f09251e6440449e98bf8a1cc17ec1 --condition stable --timeout-ms 100 -> adapter_unsupported
+porthole focus surf_missing_117 -> surface_not_found
+porthole launch --app C:\dev\windows-parity-plan\evidence\beaufort-desktop-20260921\smoke\does-not-exist.exe --json -> launch_correlation_failed
+porthole launch --app C:\dev\windows-parity-plan\implementation\target\debug\examples\desktop_fixture.exe --arg=--exit-without-window --json -> launch_correlation_failed
+porthole close surf_3a2f09251e6440449e98bf8a1cc17ec1 -> agent_permission_needed
+porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Windows #117 temporary validation",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "desktop_fixture.exe",
+        "title": "Porthole #117 - test-owned editor",
+        "pid": 5444
+      },
+      "surface_available": true,
+      "operation": null
+    },
+    "request_id": "apr_42f069dedeb54e3aa2ce15130ed27229",
+    "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+    },
+    "actions": [
+      "manage"
+    ],
+    "reason": "close surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1789996008513,
+    "resolved_at_unix_ms": null
+  }
+]
+porthole agents approve apr_42f069dedeb54e3aa2ce15130ed27229 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Windows #117 temporary validation",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "desktop_fixture.exe",
+      "title": "Porthole #117 - test-owned editor",
+      "pid": 5444
+    },
+    "surface_available": true,
+    "operation": null
+  },
+  "grant_id": "grant_d7452f329538416c8730102341078563",
+  "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+  "origin_request_id": "apr_42f069dedeb54e3aa2ce15130ed27229",
+  "origin_reason": "close surface",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_3a2f09251e6440449e98bf8a1cc17ec1"
+  },
+  "actions": [
+    "manage"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1789996008561,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+porthole close surf_3a2f09251e6440449e98bf8a1cc17ec1 -> closed surface surf_3a2f09251e6440449e98bf8a1cc17ec1
+porthole focus surf_3a2f09251e6440449e98bf8a1cc17ec1 -> surface_dead
+porthole launch --app C:\dev\windows-parity-plan\implementation\target\debug\examples\desktop_fixture.exe --json -> {
+  "launch_id": "launch_69979d11d13043648483776d841610a5",
+  "surface_id": "surf_fd562e4930b44f308921b398130f89b0",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "pid_tree",
+  "placement": {
+    "type": "not_requested"
+  }
+}
+porthole focus surf_fd562e4930b44f308921b398130f89b0 -> agent_permission_needed
+porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Windows #117 temporary validation",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "desktop_fixture.exe",
+        "title": "Porthole #117 - test-owned editor",
+        "pid": 13092
+      },
+      "surface_available": true,
+      "operation": null
+    },
+    "request_id": "apr_ae6560560e4840d38cf4dfe23e6b52f9",
+    "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_fd562e4930b44f308921b398130f89b0"
+    },
+    "actions": [
+      "drive"
+    ],
+    "reason": "focus surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1789996008783,
+    "resolved_at_unix_ms": null
+  }
+]
+porthole agents approve apr_ae6560560e4840d38cf4dfe23e6b52f9 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Windows #117 temporary validation",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "desktop_fixture.exe",
+      "title": "Porthole #117 - test-owned editor",
+      "pid": 13092
+    },
+    "surface_available": true,
+    "operation": null
+  },
+  "grant_id": "grant_14d16ea1990440f3a63f3af5736ad653",
+  "agent_id": "agent_f37c7ec342254dd7b6bdccebf5b3192f",
+  "origin_request_id": "apr_ae6560560e4840d38cf4dfe23e6b52f9",
+  "origin_reason": "focus surface",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_fd562e4930b44f308921b398130f89b0"
+  },
+  "actions": [
+    "drive"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1789996008841,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+porthole focus surf_fd562e4930b44f308921b398130f89b0 -> focused surface surf_fd562e4930b44f308921b398130f89b0
+porthole key surf_fd562e4930b44f308921b398130f89b0 --key F4 --mod alt -> sent 1 event(s) to surface surf_fd562e4930b44f308921b398130f89b0
+porthole focus surf_fd562e4930b44f308921b398130f89b0 -> surface_dead
+PNG SHA256: 33685B70AFCBBD5FF4ED1283896E3A98ADD0A2CD645269F818CAF249A794D6EA
+porthole agents revoke agent_f37c7ec342254dd7b6bdccebf5b3192f --json -> {
+  "revoked": true
+}
