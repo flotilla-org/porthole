@@ -49,8 +49,36 @@ identity without replacing the process. All four gates passed again.
 This is evidence of registration, manual task execution and daemon reuse. It is
 not evidence that the logon trigger fired, that a cold task start launched a new
 daemon, or that a newly launched agent reused the login-started daemon. Genuine
-logon, cold startup, and RDP disconnect/lock acceptance remain outstanding. No
-logout, lock or disconnect was performed for this validation.
+logon and cold startup remain outstanding. No logout, lock or disconnect was
+performed for the registration validation above.
+
+## RDP continuity, September 21
+
+The operator disconnected RDP and reconnected to the same Beaufort session.
+A separate observer sampled `/info`, process identity (PID plus start time),
+and Cleat's public session inspection about every two seconds. Across all 58
+samples, from `2026-09-21T19:04:52.1469799Z` through
+`2026-09-21T19:06:48.8280867Z`:
+
+- Porthole PID **8620** and agent wrapper PID **7320** retained their start times.
+- Cleat's session remained `running`, using `ghostty`, with leader PID **15888**.
+- `/info` returned HTTP 200 throughout. Its `interactive_desktop.granted` value
+  was false for 16 samples, first at `2026-09-21T19:05:24.9939746Z` and last at
+  `2026-09-21T19:05:55.6426160Z`. It returned to true at
+  `2026-09-21T19:05:57.7039411Z` and stayed true through the final sample.
+
+The identity remained `agent_0f5b0bd2f05940daafe3ac394b718bdc`, with recorded
+continuity marker `cf818517-cf41-49a3-9983-46648de71f2f`. The observer was then
+stopped after verifying its own PID and start time; the workload was untouched.
+Local evidence is in
+`C:\dev\windows-parity-plan\evidence\rdp-20260921-1905\samples.jsonl` and
+`result.json`.
+
+This proves process continuity and desktop-availability recovery through the
+operator's RDP interruption. It does not prove authenticated input/screenshot
+failure or recovery: those operations were not sampled across this interruption.
+A separate lock/unlock test, authenticated desktop-operation proof, genuine
+logon, and cold startup remain outstanding.
 
 ## Host tools
 
