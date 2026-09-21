@@ -2,6 +2,9 @@ param([Parameter(Mandatory=$true)][string]$RunDirectory)
 $ErrorActionPreference = 'Stop'
 $config = Get-Content -LiteralPath (Join-Path $RunDirectory 'config.json') -Raw | ConvertFrom-Json
 if (-not $env:PORTHOLE_AGENT_TOKEN) { throw 'Porthole token did not reach the Cleat child' }
+# This is an interactive terminal, not the automation harness's captured output.
+# Inheriting its NO_COLOR=1 makes Codex monochrome even with functional Ghostty VT.
+$env:NO_COLOR = $null
 $env:PARITY_RUN_DIR = $RunDirectory
 $env:PATH = (Split-Path $config.porthole) + ';' + (Split-Path $config.cleat) + ';' + $env:PATH
 $process = Get-Process -Id $PID
