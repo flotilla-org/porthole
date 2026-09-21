@@ -45,7 +45,7 @@ if ($UseExistingDaemon) {
     }
     $existingDaemon = $existingDaemons[0]
 } elseif ($existingDaemons.Count -gt 0) {
-    throw 'A Porthole daemon already exists; use -UseExistingDaemon to explicitly reuse the matching GUI-session daemon'
+    throw 'Porthole is already running; -UseExistingDaemon requires exactly one matching daemon in this GUI session. Inspect multiple or mismatched daemons first'
 }
 foreach ($file in @((Join-Path $PortholeBinDirectory 'porthole.exe'),(Join-Path $PortholeBinDirectory 'portholed.exe'),(Join-Path $PortholeBinDirectory 'examples\desktop_fixture.exe'),$CleatExecutable,$CodexCommand)) {
     if (-not (Test-Path -LiteralPath $file)) { throw "Missing prerequisite: $file" }

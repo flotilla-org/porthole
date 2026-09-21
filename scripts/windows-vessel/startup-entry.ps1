@@ -15,7 +15,7 @@ $mutex = [Threading.Mutex]::new($false, 'Local\PortholeVesselStartup')
 $locked = $false
 try {
     try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
-    if (-not $locked) { throw 'Another Porthole startup supervisor is already running' }
+    if (-not $locked) { throw 'Another Porthole startup is in progress; retry after it becomes ready' }
     $existing = @(Get-Process portholed -ErrorAction SilentlyContinue)
     $reused = $existing.Count -gt 0
     if ($reused) {
@@ -45,6 +45,10 @@ try {
     $state.status = 'ready'
     $state.ready_utc = [DateTime]::UtcNow.ToString('o')
     $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $StateDirectory 'startup.json') -Encoding UTF8
+    # Serialize discovery/start/readiness, not the lifetime of a reused daemon.
+    # A separate validation task may then supervise that same process safely.
+    $mutex.ReleaseMutex()
+    $locked = $false
     # Keep the scheduled action alive: IgnoreNew then prevents duplicate task
     # instances. Never restart a failed daemon or implicitly launch an agent.
     $daemon.WaitForExit()
@@ -53,6 +57,7 @@ try {
 } catch {
     if ($state) {
         $state.status = 'failed'
+        $state.error = $_.Exception.Message
         $state | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $StateDirectory 'startup.json') -Encoding UTF8
     }
     throw

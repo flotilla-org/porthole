@@ -44,6 +44,22 @@ try {
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Task registration remains' }
     $daemon.Refresh()
     if ($daemon.HasExited -or $daemon.StartTime.ToUniversalTime().ToString('o') -ne $started) { throw 'Unregistration stopped or replaced the daemon' }
+    # Exercise failure reporting through the real supervisor with a failing
+    # readiness collaborator. Reuse the existing daemon; do not launch another.
+    $failureScripts = Join-Path $root 'failure-scripts'
+    [IO.Directory]::CreateDirectory($failureScripts) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'startup-entry.ps1') -Destination (Join-Path $failureScripts 'startup-entry.ps1')
+    'function Invoke-PortholeJson { throw "test readiness unavailable" }' | Set-Content -LiteralPath (Join-Path $failureScripts 'pipe-client.ps1') -Encoding UTF8
+    $failureState = Join-Path $root 'failure-state'
+    try {
+        & (Join-Path $failureScripts 'startup-entry.ps1') -PortholeExecutable $PortholeExecutable -StateDirectory $failureState
+        throw 'Expected readiness failure'
+    } catch { if ($_.Exception.Message -notmatch 'did not become ready') { throw } }
+    $failed = Get-Content -LiteralPath (Join-Path $failureState 'startup.json') -Raw | ConvertFrom-Json
+    if ($failed.status -ne 'failed' -or $failed.error -notmatch 'did not become ready' -or $failed.portholed_pid -ne $daemon.Id) {
+        throw 'Readiness failure lost its error or daemon identity'
+    }
+    Write-Output 'PASS: failed readiness records its reason without replacing the daemon'
     Write-Output "PASS: idempotent registration, collision refusal, GUI reuse, duplicate prevention and safe removal; evidence: $stateDirectory"
 } finally {
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { & $register @registration -Remove }

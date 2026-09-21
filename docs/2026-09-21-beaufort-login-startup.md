@@ -37,6 +37,15 @@ The installed task was manually started and reported ready at
 **14372**, started `2026-09-21T18:44:01.5412025Z`. The existing coding-agent entry
 PID **7320** and unrelated RAD Cleat PID **13804** remained running.
 
+Review follow-up narrowed the session-local mutex to discovery/start/readiness,
+so a validation supervisor can observe the existing daemon while the installed
+supervisor keeps running. The installed supervisor alone was refreshed to PID
+**14652**, started `2026-09-21T18:49:38.6936897Z`, and reported ready at
+`2026-09-21T18:49:39.2626810Z`. Porthole PID/start time remained identical. The
+native test then passed alongside that live registration. An injected readiness
+failure also verified that `startup.json` retains the failure reason and daemon
+identity without replacing the process. All four gates passed again.
+
 This is evidence of registration, manual task execution and daemon reuse. It is
 not evidence that the logon trigger fired, that a cold task start launched a new
 daemon, or that a newly launched agent reused the login-started daemon. Genuine
