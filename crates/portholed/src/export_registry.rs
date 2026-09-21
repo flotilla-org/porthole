@@ -462,16 +462,8 @@ impl ExportRegistry {
             cpu_socket: cpu_socket.clone(),
             input_socket: input_socket.clone(),
         };
-        let remove_sockets_dir = || {
-            if let Some(d) = &sockets_dir {
-                let _ = std::fs::remove_dir_all(d);
-            }
-        };
         let viewer_token = spec.viewer_token.clone().unwrap_or_default();
-        let mut job = RepublishHandle::start(execution, spec, &dir).map_err(|e| {
-            remove_sockets_dir();
-            ExportError::RepublishFailed(e.to_string())
-        })?;
+        let mut job = RepublishHandle::start(execution, spec, &dir).map_err(|e| ExportError::RepublishFailed(e.to_string()))?;
         let status = job.wait_for_publication(Duration::from_secs(20));
         if status.publication.is_none() {
             let detail = status
@@ -484,7 +476,6 @@ impl ExportRegistry {
                 })
                 .unwrap_or_else(|| "no publication within 20 s".to_owned());
             let _ = job.stop();
-            remove_sockets_dir();
             return Err(ExportError::RepublishFailed(detail));
         }
         let native = NativeCaptureInfo {
@@ -496,9 +487,8 @@ impl ExportRegistry {
             owner,
             identities: identities.clone(),
             native: native.clone(),
-            // The paths portholed asked for and whose directory it owns; the
-            // half reports the same ones, and the directory cleanup keys off
-            // this shared parent.
+            // The paths portholed asked for; the half reports the same ones.
+            // The directory guard owns their cleanup.
             cpu_socket,
             input_socket,
             job,
@@ -574,15 +564,6 @@ impl ExportRegistry {
             let mut record = inner.republications.remove(publication_id).expect("checked above");
             drop(inner);
             let _ = record.job.stop();
-            // Both sockets live in one directory; remove it once.
-            let dir = record
-                .cpu_socket
-                .as_ref()
-                .or(record.input_socket.as_ref())
-                .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
-            if let Some(dir) = dir {
-                let _ = std::fs::remove_dir_all(dir);
-            }
             Ok(())
         }
         #[cfg(not(target_os = "macos"))]
