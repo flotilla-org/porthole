@@ -187,6 +187,48 @@ The local reproducer is
 `C:\dev\windows-parity-plan\debug\lock-desktop-proof.ps1`; it requires an
 operator-coordinated lock/unlock and exercises real authenticated routes.
 
+## Activation diagnosis: Search open on an unlocked desktop
+
+The timed lock diagnostic observed the desktop become usable at
+`2026-09-21T20:12:19.1779291Z`. Activation failed at 2, 5, 10, 20 and 40 seconds
+afterward. SearchHost PID 7768 held foreground before and after every attempt;
+all five captures succeeded and the editor stayed unchanged. A longer settling
+delay did not resolve this run. Evidence:
+`C:\dev\windows-parity-plan\evidence\lock-activation-diagnostic-20260921-210746`.
+
+The existing live-daemon foreground regression passed 12 switches after input
+from a separate process, so that input condition alone did not reproduce this
+failure. A smaller experiment then reproduced the activation failure without
+any lock, unlock or RDP transition:
+
+1. Launch a fresh test editor and verify baseline focus, text and capture.
+2. Open Windows Search with Win+S and verify SearchHost owns foreground.
+3. Request authenticated focus on the editor: the same 500 ms activation failure
+   occurs, while independent capture succeeds and SearchHost retains foreground.
+4. Dismiss Search with Escape only after confirming it still owns foreground.
+5. Repeat focus, text and capture on the same editor: all succeed immediately.
+
+Three independent runs produced that same failure/recovery sequence. Their
+artifacts are `C:\dev\windows-parity-plan\evidence\search-activation-20260921-a`,
+`-b` and `-c`; the local reproducer is
+`C:\dev\windows-parity-plan\debug\search-activation-proof.ps1`. Each run closed
+its test editor and revoked its temporary identity without cleanup errors.
+
+This establishes open Windows Search as a reproducible activation-blocking
+condition on Beaufort and accounts for the foreground owner observed after
+unlock. It does not establish which internal Windows mechanism Search uses, or
+prove that the earlier uninstrumented console-handoff failure had this cause.
+[Microsoft's activation contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)
+requires no active menus and permits the foreground process to disable external
+activation; meeting other eligibility conditions is not an unconditional grant.
+
+No production workaround was added. The diagnostic's Escape is an explicitly
+controlled experimental intervention, not a proposed generic fallback that
+silently dismisses user UI. The helper design should account for shell UI left
+open before handoff and report activation failure separately from desktop
+availability. Original lock/unlock acceptance remains partial until the agreed
+recovery behavior is implemented or demonstrated through the original path.
+
 ## Host tools
 
 The operator authorized standard tool installation. `Python.Python.3.13` was
