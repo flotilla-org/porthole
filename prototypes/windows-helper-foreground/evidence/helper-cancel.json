@@ -1,0 +1,39 @@
+﻿{
+    "status":  "CANCELLED",
+    "session_id":  1,
+    "started_utc":  "2026-09-21T20:55:59.5822216Z",
+    "phases":  [
+                   {
+                       "bounds":  {
+                                      "x":  120.0,
+                                      "y":  120.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  },
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "utc":  "2026-09-21T20:55:59.8548112Z",
+                       "phase":  "before",
+                       "focus_ok":  true,
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             2  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+                       "sha256":  "18F416B81A221D706D480C0FB2F0C417E140BD3C0EB04C0D995AE9444F0D9241",
+                       "png":  "C:\\dev\\windows-parity-plan\\evidence\\helper-cancel-native-20260921-215559\\before.png",
+                       "text_matches":  true
+                   }
+               ],
+    "agent_id":  "agent_36e85edcdf77412782580156bd484245",
+    "daemon_pid":  8620,
+    "daemon_started":  "2026-09-21T17:04:12.6326280Z",
+    "stage":  "requesting_elevation",
+    "native_error_code":  1223,
+    "error":  "Exception calling \"Start\" with \"1\" argument(s): \"The operation was canceled by the user\"",
+    "cleanup_errors":  [
+
+                       ],
+    "completed_utc":  "2026-09-21T20:56:12.6485678Z"
+}

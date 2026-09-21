@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][int]$HelperPid,
     [Parameter(Mandatory=$true)][string]$HelperStarted,
     [Parameter(Mandatory=$true)][int]$SessionId,
-    [Parameter(Mandatory=$true)][string]$EvidenceDirectory
+    [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
+    [switch]$CancellationProbe
 )
 # THROWAWAY elevated worker: current-session console handoff only, exits once.
 $ErrorActionPreference = 'Stop'
@@ -15,6 +16,7 @@ try {
     if ($SessionId -eq 0 -or $SessionId -ne $ownSession) { throw 'Worker must use its own interactive session' }
     $helper = Get-Process -Id $HelperPid
     if ($helper.SessionId -ne $ownSession -or $helper.StartTime.ToUniversalTime().ToString('o') -ne $HelperStarted) { throw 'Helper identity changed' }
+    if ($CancellationProbe) { throw 'UAC was approved during cancellation test; handoff is disabled in this mode' }
     $gate = [Threading.EventWaitHandle]::OpenExisting($EventName)
     $result.status = 'armed'
     $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'worker.json')

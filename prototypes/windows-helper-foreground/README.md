@@ -78,12 +78,47 @@ All four repository gates passed after the prototype update.
 
 This demonstrates one complete menu/UAC/grant/console-transfer sequence; it does
 not prove the grant is necessary or guarantee repeated-handoff reliability.
-Cancellation, negative-path cleanup and concurrent input still need acceptance.
+Broader negative-path cleanup and concurrent input still need acceptance.
 This script prototype uses user-writable source and evidence paths; it is not
 the trust boundary for an installed privileged helper. Production packaging,
 caller authentication and tightly bounded authority remain design work. No
 persistent elevated service, automatic login, or Search-dismissal fallback was
 installed. The helper decision remains open pending the operator's design choice.
+
+## Cancellation and failure observations
+
+The operator approved another handoff while a cancellation check was intended.
+That run completed successfully at `2026-09-21T20:50:22.9561489Z`, with input,
+capture, worker exit and cleanup passing again. It is a second handoff success,
+not cancellation evidence (`evidence/helper-console-repeat.json`).
+
+For cancellation checks, use `-CancellationTest`. Its menu explicitly asks the
+operator to select **No** on UAC. Actual handoff is disabled in both the parent
+and worker in this mode, even if elevation is approved accidentally. This flag
+is prototype test machinery, not a proposed product option.
+
+The first cancellation behaved safely but was labelled FAIL: PowerShell's
+`Start-Process` flattened the native cancellation exception. The launcher now
+uses `System.Diagnostics.Process.Start`, preserving `Win32Exception` and its
+native error code rather than matching localized message text.
+
+The operator repeated cancellation at `2026-09-21T20:56:12.6485678Z`:
+
+- Result `CANCELLED`, stage `requesting_elevation`, native error code **1223**.
+- No worker PID or worker result was created; no foreground grant or handoff ran.
+- RDP stayed connected. Test editor and identity cleanup succeeded.
+- Original agent wrapper, Porthole and Cleat retained their start times/session.
+
+Public evidence: `evidence/helper-cancel.json`; original artifacts:
+`C:\dev\windows-parity-plan\evidence\helper-cancel-native-20260921-215559`.
+An unelevated worker invocation with Session 0 also rejected the request before
+opening a gate or attempting tscon (`evidence/worker-session-rejection.json`).
+That tests one session guard, not a production caller-authentication boundary.
+
+All four repository gates pass. The successful handoff runs above used the
+previous PowerShell launcher; cancellation is the native validation of the new
+.NET launcher so far. Its approve-and-handoff path still needs a repeat before
+claiming the revised prototype has full end-to-end coverage.
 
 [Windows API contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow):
 the grantor must already be eligible, and later user input can revoke eligibility.

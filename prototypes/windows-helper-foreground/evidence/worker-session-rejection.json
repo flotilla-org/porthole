@@ -1,0 +1,6 @@
+{
+    "completed_utc":  "2026-09-21T20:49:37.2489650Z",
+    "status":  "failed",
+    "utc":  "2026-09-21T20:49:37.2347305Z",
+    "error":  "Worker must use its own interactive session"
+}

@@ -1,6 +1,7 @@
-param([Parameter(Mandatory=$true)][string]$EvidenceDirectory, [switch]$ConsoleHandoff)
+param([Parameter(Mandatory=$true)][string]$EvidenceDirectory, [switch]$ConsoleHandoff, [switch]$CancellationTest)
 # THROWAWAY: real menu-to-daemon foreground grant experiment, not installed UI.
 $ErrorActionPreference = 'Stop'
+if ($CancellationTest) { $ConsoleHandoff = $true }
 . (Join-Path $PSScriptRoot '..\..\scripts\windows-vessel\pipe-client.ps1')
 $fixture = 'C:\dev\windows-parity-plan\agent-launch-target\debug\examples\desktop_fixture.exe'
 $sessionId = (Get-Process -Id $PID).SessionId
@@ -106,6 +107,11 @@ try {
         $label.Text = 'Choose Disconnect RDP in the helper menu, then approve UAC. Stay disconnected for 30 seconds. This leaves your local desktop unlocked.'
         $item.Text = 'Disconnect RDP - keep automation running'
     }
+    if ($CancellationTest) {
+        $form.Text = 'Porthole prototype - CANCEL UAC TEST'
+        $label.Text = 'Choose the test menu action, then select NO on UAC. This test cannot disconnect RDP, even if you approve by mistake.'
+        $item.Text = 'Test cancellation - choose NO on UAC'
+    }
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 150
     $button.Add_Click({ $menu.Show($button, (New-Object System.Drawing.Point(0,$button.Height))) })
@@ -128,9 +134,22 @@ try {
                 $quotedWorker = "'" + $workerPath.Replace("'","''") + "'"
                 $quotedEvidence = "'" + $EvidenceDirectory.Replace("'","''") + "'"
                 $command = "& $quotedWorker -EventName '$eventName' -HelperPid $PID -HelperStarted '$helperStarted' -SessionId $sessionId -EvidenceDirectory $quotedEvidence"
+                if ($CancellationTest) { $command += ' -CancellationProbe' }
                 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-                $worker = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -Verb RunAs -WindowStyle Hidden -PassThru
+                $result.stage = 'requesting_elevation'
+                Save-State
+                # Process.Start retains Win32Exception.NativeErrorCode; the
+                # PowerShell Start-Process cmdlet flattened cancellation here.
+                $startInfo = [Diagnostics.ProcessStartInfo]::new()
+                $startInfo.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+                $startInfo.Arguments = "-NoProfile -EncodedCommand $encoded"
+                $startInfo.UseShellExecute = $true
+                $startInfo.Verb = 'runas'
+                $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+                $worker = [Diagnostics.Process]::Start($startInfo)
                 $result.worker_pid = $worker.Id
+                if ($CancellationTest) { throw 'UAC was approved; cancellation not tested. Handoff is disabled in this mode.' }
+                $result.stage = 'waiting_for_worker'
                 $readyDeadline = [DateTime]::UtcNow.AddSeconds(10)
                 do {
                     Start-Sleep -Milliseconds 100
@@ -144,6 +163,7 @@ try {
                 if ($workerState.status -ne 'armed') { throw 'Elevated worker did not become ready' }
             }
             $form.Activate()
+            $result.stage = 'granting_foreground'
             $result.helper_foreground = [ConsoleDesktopProof]::GetForegroundWindow() -eq $form.Handle
             if (-not $result.helper_foreground) { throw 'Helper does not own foreground; no grant attempted' }
             $live = Get-Process -Id $result.daemon_pid
@@ -153,6 +173,7 @@ try {
             if ($ConsoleHandoff) {
                 $result.grant_utc = [DateTime]::UtcNow.ToString('o')
                 Save-State
+                $result.stage = 'handoff_signalled'
                 $script:handoffGate.Set() | Out-Null
                 $deadline = [DateTime]::UtcNow.AddSeconds(15)
                 do {
@@ -166,7 +187,17 @@ try {
                 Test-Desktop 'console-grant' 'before;console-grant;'
             } else { Test-Desktop 'helper-grant' 'before;helper-grant;' }
             $result.status = 'PASS'
-        } catch { $result.status = 'FAIL'; $result.error = $_.Exception.Message }
+        } catch {
+            $cancelled = $false
+            $exception = $_.Exception
+            while ($exception) {
+                if ($exception -is [ComponentModel.Win32Exception]) { $result.native_error_code = $exception.NativeErrorCode }
+                if ($exception -is [ComponentModel.Win32Exception] -and $exception.NativeErrorCode -eq 1223) { $cancelled = $true }
+                $exception = $exception.InnerException
+            }
+            $result.status = if ($cancelled -and $result.stage -eq 'requesting_elevation') { 'CANCELLED' } else { 'FAIL' }
+            $result.error = $_.Exception.Message
+        }
         Save-State
         $form.Close()
     })
