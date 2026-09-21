@@ -12,17 +12,23 @@ if (Test-Path -LiteralPath $EvidenceDirectory) { throw 'Use a fresh evidence dir
 New-Item -ItemType Directory -Path $EvidenceDirectory | Out-Null
 $suffix = [guid]::NewGuid().ToString('N')
 $server = $null
+$proofExit = 1
+$stderrPath = Join-Path $EvidenceDirectory 'stderr.log'
 try {
-    $server = Start-Process -FilePath $ServerExecutable -ArgumentList $suffix -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $EvidenceDirectory 'stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'stderr.log')
+    $server = Start-Process -FilePath $ServerExecutable -ArgumentList $suffix -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $EvidenceDirectory 'stdout.log') -RedirectStandardError $stderrPath
     $started = $server.StartTime.ToUniversalTime().ToString('o')
     @{portholed_pid=$server.Id; portholed_started=$started} | ConvertTo-Json | Set-Content (Join-Path $EvidenceDirectory 'state.json')
     @{fixture=$FixtureExecutable} | ConvertTo-Json | Set-Content (Join-Path $EvidenceDirectory 'config.json')
     . (Join-Path $PSScriptRoot 'pipe-client.ps1')
     $ready = $false
     foreach ($attempt in 1..20) {
+        if ($server.HasExited) {
+            $exitDetail = if ($null -ne $server.ExitCode) { " (exit $($server.ExitCode))" } else { '' }
+            throw "Test server exited before readiness$exitDetail; inspect $stderrPath"
+        }
         try { $info = Invoke-PortholeJson GET '/info' -PipeName "porthole-foreground-$suffix"; if ($info.Status -eq 200) { $ready=$true; break } } catch { Start-Sleep -Milliseconds 100 }
     }
-    if (-not $ready) { throw 'Test server did not become ready' }
+    if (-not $ready) { throw "Test server did not become ready; inspect $stderrPath" }
     & powershell.exe -NoProfile -File (Join-Path $PSScriptRoot 'foreground-proof.ps1') -RunDirectory $EvidenceDirectory -PipeName "porthole-foreground-$suffix" -EvidencePath (Join-Path $EvidenceDirectory 'result.json') -InterveningInput -SeparateInputProcess -Iterations $Iterations
     $proofExit = $LASTEXITCODE
 } finally {

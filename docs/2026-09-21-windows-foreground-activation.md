@@ -86,6 +86,21 @@ all-target Clippy, and pinned-nightly formatting. PowerShell parser validation
 and the native regression also passed. The native probe is separate from headless
 CI because it intentionally changes foreground windows on a real desktop.
 
+Review follow-up verified early server-exit reporting and preservation of both
+an injected launch failure and a subsequent revocation failure. Startup errors
+exit with status 1. The exit-status default is now explicit; an uncaught PowerShell
+`throw` already terminated the original script before its final `exit` statement.
+The restore/activation ordering is documented in the adapter: asynchronous
+restore can cause a redundant bounded retry, and the final foreground poll is
+authoritative. Minimized-window behavior remains unverified.
+
+The six-step native review rerun passed. The preceding run passed every focus
+and text check but detected changed cursor position during one step, correctly
+failing the overall result. Its evidence is retained under
+`C:\dev\windows-parity-plan\evidence\shepherd-foreground`; the passing rerun is
+under `shepherd-foreground-recheck`. The probe cannot distinguish concurrent
+human cursor movement from movement caused by automation.
+
 ## Reference implementations
 
 - [PowerToys WindowHelpers.cs at 1716aa14](https://github.com/microsoft/PowerToys/blob/1716aa14ec3b873de97a5ba0b318988e38b8b9a1/src/common/ManagedCommon/WindowHelpers.cs)

@@ -71,6 +71,7 @@ $identity = $null
 $windows = @()
 $steps = @()
 $failure = $null
+$cleanupFailures = @()
 function Invoke-Owned([string]$Path, $Body) {
     $response = Invoke-ProofJson POST $Path $Body $identity.token
     if ($response.Status -eq 403 -and $response.Body.code -eq 'agent_permission_needed') {
@@ -143,16 +144,16 @@ try {
     }
 } catch { $failure = $_.Exception.Message } finally {
     foreach ($window in $windows) {
-        try { $closed = Invoke-Owned "/surfaces/$($window.surface)/close" @{}; if ($closed.Status -ne 200) { throw 'Close failed' } } catch { $failure = "Cleanup failed: $($_.Exception.Message)" }
+        try { $closed = Invoke-Owned "/surfaces/$($window.surface)/close" @{}; if ($closed.Status -ne 200) { throw 'Close failed' } } catch { $cleanupFailures += "Close $($window.surface): $($_.Exception.Message)" }
     }
     if ($identity) {
         try {
             $revoked = Invoke-ProofJson POST "/agent-identities/$($identity.agent_id)/revoke" @{}
             if ($revoked.Status -ne 200) { throw 'Identity revocation failed' }
-        } catch { $failure = "Cleanup failed: $($_.Exception.Message)" }
+        } catch { $cleanupFailures += "Identity revocation: $($_.Exception.Message)" }
     }
 }
-$passed = -not $failure -and $steps.Count -eq $Iterations -and @($steps | Where-Object { $_.focus_status -ne 200 -or $_.input_status -ne 200 -or -not $_.foreground_matches -or -not $_.cursor_unchanged -or -not $_.modifiers_unchanged -or $false -in $_.text_matches }).Count -eq 0 -and @($steps | Where-Object switched).Count -ge ($Iterations - 1)
-@{passed=$passed; caller_pid=$PID; grant_from_caller=[bool]$GrantFromCaller; input_assist=[bool]$InputAssist; intervening_input=[bool]$InterveningInput; separate_input_process=[bool]$SeparateInputProcess; steps=$steps; failure=$failure; utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 $EvidencePath
+$passed = -not $failure -and $cleanupFailures.Count -eq 0 -and $steps.Count -eq $Iterations -and @($steps | Where-Object { $_.focus_status -ne 200 -or $_.input_status -ne 200 -or -not $_.foreground_matches -or -not $_.cursor_unchanged -or -not $_.modifiers_unchanged -or $false -in $_.text_matches }).Count -eq 0 -and @($steps | Where-Object switched).Count -ge ($Iterations - 1)
+@{passed=$passed; caller_pid=$PID; grant_from_caller=[bool]$GrantFromCaller; input_assist=[bool]$InputAssist; intervening_input=[bool]$InterveningInput; separate_input_process=[bool]$SeparateInputProcess; steps=$steps; failure=$failure; cleanup_failures=$cleanupFailures; utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 $EvidencePath
 Write-Output "Foreground switching passed: $passed; evidence: $EvidencePath"
 if (-not $passed) { exit 1 }

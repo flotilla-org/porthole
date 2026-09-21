@@ -210,6 +210,9 @@ impl WindowsAdapter {
         unsafe {
             let hwnd = self.resolve(surface)?;
             if IsIconic(hwnd) != 0 {
+                // Restore is asynchronous: activation can race it and use the
+                // bounded retry below. The final foreground poll is authoritative;
+                // avoid a second wait budget or blocking another window's thread.
                 ShowWindowAsync(hwnd, SW_RESTORE);
             }
             if GetForegroundWindow() != hwnd && SetForegroundWindow(hwnd) == 0 {
@@ -229,6 +232,7 @@ impl WindowsAdapter {
                         "Windows blocked input-assisted foreground activation",
                     ));
                 }
+                // The poll below checks the actual foreground outcome.
                 SetForegroundWindow(hwnd);
             }
         }
