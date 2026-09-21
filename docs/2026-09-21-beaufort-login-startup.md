@@ -77,8 +77,51 @@ Local evidence is in
 This proves process continuity and desktop-availability recovery through the
 operator's RDP interruption. It does not prove authenticated input/screenshot
 failure or recovery: those operations were not sampled across this interruption.
-A separate lock/unlock test, authenticated desktop-operation proof, genuine
-logon, and cold startup remain outstanding.
+A separate lock/unlock test and authenticated desktop-operation failure/recovery
+across an ordinary RDP disconnect remain outstanding. The console-handoff
+experiment below addresses operating without an RDP viewer after explicit handoff.
+
+## Console handoff: input and capture without an RDP viewer
+
+The operator clarified that manual login is acceptable; automatic login and
+boot-to-desktop provisioning can wait. The immediate requirement is to keep
+desktop automation usable without a person at the desk or a connected RDP client.
+
+Two native experiments used a temporary authenticated identity and a fresh
+`desktop_fixture` editor. The probe approved only its own fixture operations,
+kept the token in memory, verified editor text through the native edit control,
+and saved a Porthole screenshot. The operator handed Session 1 to the console
+using elevated `tscon 1 /dest:console`. The operator's shell required the
+`$env:SystemRoot\Sysnative\tscon.exe` path. The probe waited for Session 1 to
+become `console ... Active`, then waited another ten seconds and rechecked it.
+
+The first experiment failed at foreground activation, reporting HTTP 403
+`system_permission_needed` after the 500 ms activation poll. It completed at
+`2026-09-21T19:18:46.6806691Z`; input and capture were not reached. Evidence:
+`C:\dev\windows-parity-plan\evidence\console-handoff-20260921\result.json`.
+
+The second experiment recorded desktop availability before acting and attempted
+capture independently of focus. It passed at `2026-09-21T19:21:35Z` while Session
+1 was the active console session and no active RDP session was listed:
+
+- `interactive_desktop.granted` remained true at the disconnected probe.
+- Authenticated focus and text input succeeded; the editor contained exactly
+  `before;without-rdp;`.
+- A 900 by 420 PNG captured the expected editor text, confirmed by visual review.
+  Its SHA-256 is
+  `936B59AECCFDEEB36B2B73189FF6F259ACF11036F91C656C3BA14CEC650240FD`.
+- The test editor closed and its temporary identity was revoked without cleanup
+  errors. Porthole PID 8620, the original agent wrapper PID 7320, and Cleat PID
+  14800 retained their start times after reconnect.
+
+Evidence is in
+`C:\dev\windows-parity-plan\evidence\console-handoff-independent-20260921-202109`,
+including `result.json` and `without-rdp.png`. This demonstrates authenticated
+Porthole input and capture without an RDP viewer on this host. The previous
+activation failure remains unexplained: one successful repeat is not evidence
+of reliable unattended operation. No production code changed between runs.
+This does not validate Jackstay streaming, a headless/virtual display setup,
+genuine logon-trigger firing, or cold startup.
 
 ## Host tools
 
