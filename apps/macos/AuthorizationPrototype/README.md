@@ -67,7 +67,9 @@ or remote host access is implemented or started by this prototype.
 Installation is a separate, privileged experiment. First inspect and sign the
 built plug-in and broker with the development identity chosen for the test host.
 Install only into an isolated test machine/account environment with a recovery
-path. macOS code-loading behavior of this bundle has not yet been verified.
+path. Loading and completing the custom right through both automatic policy and
+a Secure Enclave signature from kiwi were verified on comte (macOS 26.5.1);
+see NOTES.md for remaining checks.
 
 The intended installation consists of:
 
@@ -88,8 +90,12 @@ its peer is root, and asks the broker for a decision. The application reports
 to exercise the standing-policy path. Denial, timeout and cancellation should
 be exercised too; successful signatures alone do not prove OS integration.
 
-No install script is supplied until the host and signing/install choices are
-settled. Rollback removes only this named right and these prototype files after
+`install-comte.sh` stages the agreed comte experiment: it refuses existing
+prototype paths/rights, verifies the signing team, installs the custom right and
+root broker, runs the automatic path as robert, then leaves the broker in human
+mode. It requires an administrator to invoke it explicitly. The installer also
+compares taskport policy before and after. Rollback removes only this named
+right and these prototype files after
 stopping the broker and finishing outstanding authorization calls. A loaded
 plug-in can remain in its host process until that process exits.
 
