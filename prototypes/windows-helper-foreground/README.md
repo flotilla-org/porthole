@@ -44,9 +44,46 @@ Screenshot SHA-256:
 This is one connected-session end-to-end success. It does not prove that the
 grant was necessary, survives subsequent user input/UAC, or solves Search-held
 foreground after unlock. No RDP disconnect, elevation, policy change, or
-unrelated-UI dismissal occurred in this run. The next experiment must include
-elevation and console transfer, with explicit ordering around the foreground
-grant and readiness checks after transfer. No production workaround is ratified.
+unrelated-UI dismissal occurred in that first run. The follow-up below adds
+elevation and console transfer. No production workaround is ratified.
+
+## UAC and console handoff follow-up
+
+Add `-ConsoleHandoff` to the command above. The menu action becomes
+**Disconnect RDP - keep automation running**. Approving UAC starts a temporary
+elevated worker that validates its own nonzero session and the helper's
+PID/start time. It opens a unique session-local event and waits at most 30 seconds.
+After the worker is armed, the helper activates its own window, verifies foreground,
+grants the unchanged Porthole daemon eligibility, and signals that event. The
+worker runs `tscon` for its own session with `/dest:console` and exits. The helper
+waits for console-active state, waits ten seconds, then tests input and capture.
+
+The operator ran this sequence on September 21. It passed:
+
+- Worker armed after UAC at `2026-09-21T20:41:44Z`.
+- Foreground grant succeeded at `2026-09-21T20:41:45.1760448Z`.
+- Worker began handoff at `2026-09-21T20:41:45.1817132Z`; tscon exited 0.
+- At `2026-09-21T20:41:55.9031122Z`, Session 1 was `console ... Active`.
+  Authenticated focus, exact text verification and capture succeeded.
+- The PNG visibly contains `before;console-grant;`. SHA-256:
+  `6F0E9D62B1A601C06A4286CA6639703F7AAE65C7D314635D951980ABE499E418`.
+- The helper/editor closed, the temporary identity was revoked without cleanup
+  errors, and the elevated worker exited. Original Porthole PID 8620, agent
+  wrapper PID 7320 and Cleat PID 14800 retained their start times afterward.
+
+Public evidence: `evidence/helper-console.json` and
+`evidence/helper-console-worker.json`. Original artifacts remain under
+`C:\dev\windows-parity-plan\evidence\helper-console-20260921-214129`.
+All four repository gates passed after the prototype update.
+
+This demonstrates one complete menu/UAC/grant/console-transfer sequence; it does
+not prove the grant is necessary or guarantee repeated-handoff reliability.
+Cancellation, negative-path cleanup and concurrent input still need acceptance.
+This script prototype uses user-writable source and evidence paths; it is not
+the trust boundary for an installed privileged helper. Production packaging,
+caller authentication and tightly bounded authority remain design work. No
+persistent elevated service, automatic login, or Search-dismissal fallback was
+installed. The helper decision remains open pending the operator's design choice.
 
 [Windows API contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow):
 the grantor must already be eligible, and later user input can revoke eligibility.

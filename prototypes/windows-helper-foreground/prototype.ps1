@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$EvidenceDirectory)
+param([Parameter(Mandatory=$true)][string]$EvidenceDirectory, [switch]$ConsoleHandoff)
 # THROWAWAY: real menu-to-daemon foreground grant experiment, not installed UI.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\..\scripts\windows-vessel\pipe-client.ps1')
@@ -26,6 +26,7 @@ public static class ConsoleDesktopProof {
 $identity = $null
 $surface = $null
 $ownedProcess = $null
+$handoffGate = $null
 $result = [ordered]@{status='starting'; session_id=$sessionId; started_utc=[DateTime]::UtcNow.ToString('o'); phases=@()}
 function Save-State { $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding UTF8 }
 function Invoke-Owned([string]$Path, $Body) {
@@ -101,6 +102,10 @@ try {
     $button.Text = 'Open helper menu'
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
     $item = $menu.Items.Add('Test foreground handoff')
+    if ($ConsoleHandoff) {
+        $label.Text = 'Choose Disconnect RDP in the helper menu, then approve UAC. Stay disconnected for 30 seconds. This leaves your local desktop unlocked.'
+        $item.Text = 'Disconnect RDP - keep automation running'
+    }
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 150
     $button.Add_Click({ $menu.Show($button, (New-Object System.Drawing.Point(0,$button.Height))) })
@@ -114,6 +119,30 @@ try {
         $timer.Stop()
         try {
             if ($menu.Visible) { throw 'Helper menu is still active' }
+            if ($ConsoleHandoff) {
+                $eventName = 'Local\PortholeHelperPrototype-' + [Guid]::NewGuid().ToString('N')
+                $script:handoffGate = [Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$eventName)
+                $workerPath = Join-Path $PSScriptRoot 'handoff-worker.ps1'
+                $helperStarted = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+                # Pass literal paths through a UTF-16 encoded command; no tokens.
+                $quotedWorker = "'" + $workerPath.Replace("'","''") + "'"
+                $quotedEvidence = "'" + $EvidenceDirectory.Replace("'","''") + "'"
+                $command = "& $quotedWorker -EventName '$eventName' -HelperPid $PID -HelperStarted '$helperStarted' -SessionId $sessionId -EvidenceDirectory $quotedEvidence"
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+                $worker = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -Verb RunAs -WindowStyle Hidden -PassThru
+                $result.worker_pid = $worker.Id
+                $readyDeadline = [DateTime]::UtcNow.AddSeconds(10)
+                do {
+                    Start-Sleep -Milliseconds 100
+                    $workerState = $null
+                    if (Test-Path -LiteralPath (Join-Path $EvidenceDirectory 'worker.json')) {
+                        try { $workerState = Get-Content -LiteralPath (Join-Path $EvidenceDirectory 'worker.json') -Raw | ConvertFrom-Json } catch { }
+                    }
+                    if ($workerState.status -eq 'armed') { break }
+                    if ($workerState.status -eq 'failed') { throw $workerState.error }
+                } while ([DateTime]::UtcNow -lt $readyDeadline)
+                if ($workerState.status -ne 'armed') { throw 'Elevated worker did not become ready' }
+            }
             $form.Activate()
             $result.helper_foreground = [ConsoleDesktopProof]::GetForegroundWindow() -eq $form.Handle
             if (-not $result.helper_foreground) { throw 'Helper does not own foreground; no grant attempted' }
@@ -121,7 +150,21 @@ try {
             if ($live.StartTime.ToUniversalTime().ToString('o') -ne $result.daemon_started) { throw 'Daemon identity changed' }
             $result.grant_succeeded = [ConsoleDesktopProof]::AllowSetForegroundWindow([uint32]$live.Id)
             if (-not $result.grant_succeeded) { throw "Foreground grant failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
-            Test-Desktop 'helper-grant' 'before;helper-grant;'
+            if ($ConsoleHandoff) {
+                $result.grant_utc = [DateTime]::UtcNow.ToString('o')
+                Save-State
+                $script:handoffGate.Set() | Out-Null
+                $deadline = [DateTime]::UtcNow.AddSeconds(15)
+                do {
+                    $listing = @(& "$env:SystemRoot\System32\query.exe" session)
+                    $console = @($listing | Where-Object { $_ -match "^>?\s*console\s+\S+\s+$sessionId\s+Active\b" })
+                    if ($console.Count -eq 1) { break }
+                    Start-Sleep -Milliseconds 200
+                } while ([DateTime]::UtcNow -lt $deadline)
+                if ($console.Count -ne 1) { throw 'Session did not transfer to console' }
+                Start-Sleep -Seconds 10
+                Test-Desktop 'console-grant' 'before;console-grant;'
+            } else { Test-Desktop 'helper-grant' 'before;helper-grant;' }
             $result.status = 'PASS'
         } catch { $result.status = 'FAIL'; $result.error = $_.Exception.Message }
         Save-State
@@ -137,6 +180,7 @@ try {
     if ($result.status -eq 'waiting_for_helper_menu_click') { $result.status = 'CANCELLED' }
 } catch { $result.status = 'FAIL'; $result.error = $_.Exception.Message }
 finally {
+    if ($handoffGate) { $handoffGate.Dispose() }
     $result.cleanup_errors = @()
     if ($surface) { try { Invoke-Owned "/surfaces/$surface/close" @{} | Out-Null } catch { $result.cleanup_errors += $_.Exception.Message } }
     if ($identity) {
