@@ -34,6 +34,12 @@ environment explicitly inherits the token. The run's agent wrapper revokes the
 identity when Codex exits normally; forced termination requires explicit operator
 revocation with `porthole agents revoke <agent_id>`. Do not treat this prototype
 as having crash-safe credential cleanup.
+
+The interactive agent wrapper clears the automation harness's `NO_COLOR` value
+before starting Codex. Cleat still supplies the terminal type; no capability is
+inferred from the SSH client. An already-running Codex retains its startup
+environment, so reattaching alone cannot enable its colors.
+
 Environment narrowing and forced-exit cleanup are tracked in
 [issue #159](https://github.com/flotilla-org/porthole/issues/159).
 
