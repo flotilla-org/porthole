@@ -1,8 +1,8 @@
 # JSON-only client for the existing HTTP-over-named-pipe API. Request bodies
 # (including launch environment and tokens) are never printed or written to disk.
 function Invoke-PortholeJson {
-    param([string]$Method, [string]$Path, $Body = $null, [string]$Token = '')
-    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', "porthole-$env:USERNAME", [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
+    param([string]$Method, [string]$Path, $Body = $null, [string]$Token = '', [string]$PipeName = "porthole-$env:USERNAME")
+    $pipe = [IO.Pipes.NamedPipeClientStream]::new('.', $PipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
     try {
         $pipe.Connect(3000)
         $payload = if ($null -eq $Body) { '' } else { $Body | ConvertTo-Json -Depth 15 -Compress }

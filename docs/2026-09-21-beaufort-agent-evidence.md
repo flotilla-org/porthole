@@ -99,6 +99,11 @@ does not overwrite a loaded DLL or running daemon executable.
 
 ## Required foreground-switching acceptance
 
+Follow-up: [the foreground activation change and native regression](2026-09-21-windows-foreground-activation.md)
+now pass 20 switches after simulated input from a separate process. The original
+vessel has not been restarted onto that binary; physical-input and remote/lifecycle
+acceptance remain open.
+
 Reliable unattended window switching is an explicit Windows parity requirement.
 The successful manual-activation recovery above does not satisfy it. On an
 unlocked, usable desktop, the agent must be able to switch between two test-owned

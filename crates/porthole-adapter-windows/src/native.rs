@@ -212,7 +212,25 @@ impl WindowsAdapter {
             if IsIconic(hwnd) != 0 {
                 ShowWindowAsync(hwnd, SW_RESTORE);
             }
-            SetForegroundWindow(hwnd);
+            if GetForegroundWindow() != hwnd && SetForegroundWindow(hwnd) == 0 {
+                // A background automation process can lose foreground eligibility
+                // after another process supplies input. PowerToys' ManagedCommon
+                // activation helper uses an empty mouse event before retrying.
+                // No movement, button, wheel or keyboard flags are set. Keep this
+                // bounded and subject to SendInput's normal integrity restrictions;
+                // never attach another application's input queue or change policy.
+                let input = INPUT {
+                    r#type: INPUT_MOUSE,
+                    ..zeroed()
+                };
+                if SendInput(1, &input, size_of::<INPUT>() as i32) != 1 {
+                    return Err(PortholeError::new(
+                        ErrorCode::SystemPermissionNeeded,
+                        "Windows blocked input-assisted foreground activation",
+                    ));
+                }
+                SetForegroundWindow(hwnd);
+            }
         }
         // Keep input serialized while yielding the worker during activation.
         for _ in 0..50 {
@@ -226,7 +244,7 @@ impl WindowsAdapter {
         }
         Err(PortholeError::new(
             ErrorCode::SystemPermissionNeeded,
-            "Windows denied foreground activation; activate the test window in the GUI session and retry",
+            "Windows did not activate the target window within 500 ms; desktop or foreground restrictions may still apply",
         ))
     }
 
