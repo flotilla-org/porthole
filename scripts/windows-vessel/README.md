@@ -1,0 +1,46 @@
+# Beaufort agent launch experiment
+
+Run from the existing Windows GUI login. This packet is still under validation;
+it does not install a login task or establish SSH access. Use a dedicated run
+directory and workspace. It refuses to replace an existing Porthole daemon.
+
+Prerequisites: built Porthole CLI/daemon and `desktop_fixture` example; functional
+Ghostty-enabled Cleat; authenticated Codex CLI. Cleat needs the pending-read EOF
+fix described in `docs/2026-09-21-beaufort-agent-evidence.md` for reliable attach.
+
+```powershell
+.\start.ps1 -RunDirectory C:\dev\vessel-run `
+  -PortholeBinDirectory C:\dev\porthole\target\debug `
+  -CleatExecutable C:\dev\cleat\target\debug\cleat.exe `
+  -CodexCommand "$env:APPDATA\npm\codex.cmd" `
+  -Workspace C:\dev\vessel-workspace
+```
+
+The launcher creates a fresh identity and passes its token only in the process
+environment through the named-pipe launch API. Run files contain public identity
+and process metadata, not the token. Codex uses the operator's existing login and
+full-access execution settings for this authorized acceptance task. Its shell
+environment explicitly inherits the token. The run's agent wrapper revokes the
+identity when Codex exits normally; forced termination requires explicit operator
+revocation with `porthole agents revoke <agent_id>`. Do not treat this prototype
+as having crash-safe credential cleanup.
+
+The operator can run `approve-proof.ps1 -RunDirectory ... -Seconds 45` while the
+agent runs its assigned proof. It approves only this identity's requests for the
+test editor. The agent does not grant itself permissions.
+
+If Windows denies foreground activation, the proof preserves the editor and
+writes `agent-desktop-pending.json`. Activate that editor in the GUI, then ask the
+same agent to rerun the script. It resumes that surface. Do not interpret the
+pending artifact as a passing result. Successful completion writes
+`agent-desktop-result.json`, a PNG, and closes the editor.
+
+Repeating `start.ps1` inspects and reuses the existing run; it does not attach a
+new local terminal. Run `attach.ps1 -RunDirectory ...` in a console to attach.
+An optional `-CleatExecutable` selects a corrected client without restarting the
+daemon. Detach with Cleat's Ctrl-] then d sequence.
+
+On failed startup, inspect the public state and any owned processes before
+cleanup. The launcher revokes a newly created identity on launch failure, but
+retains daemon logs and state. It deliberately does not delete prior runs or
+terminate an unrelated session.
