@@ -97,6 +97,26 @@ replace the outstanding live acceptance steps below.
 Corrected client binaries are isolated under `cleat-client-bin` so rebuilding
 does not overwrite a loaded DLL or running daemon executable.
 
-Outstanding: a clean full launch with the corrected Cleat client; forced-stop
+## Required foreground-switching acceptance
+
+Reliable unattended window switching is an explicit Windows parity requirement.
+The successful manual-activation recovery above does not satisfy it. On an
+unlocked, usable desktop, the agent must be able to switch between two test-owned
+application windows and type into the intended target without a human click for
+each switch. Verify the actual foreground window and resulting input, including
+after intervening human input and local/SSH terminal reattachment.
+
+Investigate the supported `AllowSetForegroundWindow` handoff and its lifetime
+before choosing an implementation. It requires an already eligible caller and
+can expire after user input; a one-time launch grant is not sufficient evidence
+for a long-running agent. The current adapter's `SetForegroundWindow` call and
+bounded foreground check do not establish that handoff.
+
+Keep locked/disconnected desktop behavior distinct: the agent and terminal must
+persist, while desktop actions may wait boundedly or fail clearly. Activation
+failure must never allow typing into the wrong window. Record the native outcome
+and desktop state rather than treating every failure as a user-grantable permission.
+
+Outstanding: unattended foreground switching; a clean full launch with the corrected Cleat client; forced-stop
 cleanup; kiwi SSH attach; login startup;
 RDP disconnect/lock continuity. Jackstay Direct3D work is outside this packet.
