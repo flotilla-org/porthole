@@ -62,6 +62,9 @@ stopped; the unrelated RAD daemon was preserved. No token values were printed.
 
 ## Reconnect to the colored run
 
+This command records the client and run paths used for this experiment. They are
+operator-specific and may change in later runs; it is not a permanent endpoint.
+
 ```bash
 ssh -t rober@beaufort 'C:\dev\windows-parity-plan\cleat-safe-attach-bin\cleat.exe --runtime-root C:\dev\windows-parity-plan\vessel-color\cleat-state --server beaufort-color attach coding-agent --no-create --identity kiwi --take'
 ```
@@ -69,3 +72,12 @@ ssh -t rober@beaufort 'C:\dev\windows-parity-plan\cleat-safe-attach-bin\cleat.ex
 Detach with Ctrl-] then d. The previous command names the previous, now stopped
 run and should fail rather than start a replacement. RDP/lock continuity and
 login startup registration remain outstanding.
+
+## Subsequent row-flash validation
+
+The operator supplied an idle-screen recording that exposed a partial row erase
+above the composer. [Cleat #222](https://github.com/flotilla-org/cleat/pull/222)
+removes the erase before repainting retained cells. After reattaching with its
+staged client, the operator reported that the previous flicker pattern was no
+longer occurring. A slight cursor flicker was also observed in direct Windows
+Codex and remains separate from this fix. No ConPTY runtime change was made.
