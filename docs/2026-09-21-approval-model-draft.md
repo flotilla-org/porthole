@@ -1,5 +1,10 @@
 # Cross-host approval model: working draft
 
+The decision process now lives in the
+[Unified agent and system approvals across hosts](https://github.com/flotilla-org/porthole/issues/163)
+wayfinder map and its child tickets. This draft is starting material, not a
+second store of ticket resolutions. Follow the map for current decisions.
+
 Status: proposed for discussion, 2026-09-21. This follows the successful
 [custom-right experiment](../apps/macos/AuthorizationPrototype/NOTES.md).
 It does not adopt an authority service, change taskport policy, or supersede
