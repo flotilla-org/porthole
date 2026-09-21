@@ -155,6 +155,32 @@ one capture host; a compositor or desktop environment may also host Jackstay.
 For PipeWire, the host supplies an already-open connection and stream identity.
 This responsibility does not require Jackstay to adopt the host's token model.
 
+### Approval authority
+
+**Operator enrollment**:
+An execution host administrator's registration of an operator identity and the
+authority that operator may exercise on that host. Enrollment bounds which
+requests the operator may approve and which standing permissions they may create.
+
+**Host enrollment**:
+An explicit trust relationship identifying an execution host to a reviewing
+device. A host's asserted display name alone does not establish this identity.
+
+**Run identity**:
+The principal for one execution of a workload, distinct from the agent that
+initiated it. Its delegated authority can continue after the initiating agent
+disconnects and can be revoked independently of other runs.
+
+**Run delegation**:
+Bounded permission assigned to a run identity through existing policy or an
+explicit human decision. It permits the run's workload, targets and actions
+without giving the run authority to widen those permissions.
+
+**Run binding**:
+A trusted association of a participant or target with one workload execution.
+A participant's claimed run name or a target's current focus does not by itself
+establish that association.
+
 ### Coordinate units
 
 **Logical point**:
