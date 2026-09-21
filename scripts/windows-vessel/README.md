@@ -13,6 +13,10 @@ directory and workspace. It refuses to replace an existing Porthole daemon.
 Prerequisites: built Porthole CLI/daemon and `desktop_fixture` example; functional
 Ghostty-enabled Cleat; authenticated Codex CLI. Cleat needs the pending-read EOF
 fix described in `docs/2026-09-21-beaufort-agent-evidence.md` for reliable attach.
+Fresh-daemon launch also needs the handle-inheritance fix in
+[Cleat #220](https://github.com/flotilla-org/cleat/pull/220), otherwise capturing
+the launch result can hang before the visible console attaches. See the
+[clean-launch evidence](../../docs/2026-09-21-beaufort-clean-launch.md).
 
 ```powershell
 .\start.ps1 -RunDirectory C:\dev\vessel-run `
