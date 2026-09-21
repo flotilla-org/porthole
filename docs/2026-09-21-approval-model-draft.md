@@ -12,6 +12,9 @@ recording a new window, should be addressed as part of this design.
 Bounded future targets are accepted: a target satisfying the approved selection
 rule can be bound when it appears without another approval. Notifications,
 the TUI and native helpers should be considered together as approval surfaces.
+Approval requirements are policy-controlled: standing delegation, explicit
+confirmation through an authenticated operator session, or fresh authentication.
+The executor's trusted policy sets the minimum; the requester cannot lower it.
 
 ## What the experiment establishes
 
@@ -190,6 +193,15 @@ to be specified; neither an unrelated launch nor an ambiguous match inherits
 the approval automatically.
 
 ## Approval surfaces and remote execution
+
+The agreed policy direction separates approval strength from UI choice.
+Standing delegation permits qualifying operations without a fresh human decision;
+explicit confirmation uses an authenticated operator session; fresh authentication
+adds a required local authentication step. For a combined request, satisfy the
+strongest applicable requirement once where the requirements are compatible and
+the decision binds every effect. Mandatory platform interactions remain required.
+Authentication does not widen the approved scope. Creating a standing delegation
+is itself an authorization operation whose required strength must be decided.
 
 The operation and its authorization requirements outlive any particular UI.
 Proposed roles:
