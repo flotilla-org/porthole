@@ -1,5 +1,9 @@
 # Beaufort explicit agent launch: partial acceptance
 
+Later evidence: [clean launch and local continuity](2026-09-21-beaufort-clean-launch.md)
+now pass with merged foreground handling and two pending Cleat fixes. The
+observations below describe the earlier run and its limitations at that time.
+
 Packet 2 of the Windows parity execution plan. The agent is alive in GUI Session
 1. Its native typing/screenshot/close proof passed after the human activated the
 preserved editor. Clean-launch and lifecycle acceptance remain outstanding.

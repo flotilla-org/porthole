@@ -1,0 +1,46 @@
+{
+    "attachments":  [
+                        {
+                            "role":  "controller",
+                            "identity":  {
+                                             "kind":  "principal",
+                                             "name":  "beaufort-local"
+                                         }
+                        }
+                    ],
+    "preserved_rad_pid":  13804,
+    "entry":  {
+                  "started":  "2026-09-21T16:13:09.4358780Z",
+                  "continuity":  "7a7d612e-de0b-4e23-b2bf-f65b49b9b4e4",
+                  "pid":  3656,
+                  "session_id":  1,
+                  "token_present":  true,
+                  "agent_id":  "agent_580b19e4bc2f4158a1c1ed567ee718f0"
+              },
+    "session_state":  "running",
+    "result":  {
+                   "sha256":  "261F7F4E45FAD52B3E7960B819BDA2D9618EB863A14CB9479773667045F7578A",
+                   "completed_utc":  "2026-09-21T16:13:24.1986819Z",
+                   "caller_pid":  11500,
+                   "png":  "C:\\dev\\windows-parity-plan\\vessel-clean-daemon\\agent-visible-input.png",
+                   "windows_session":  1,
+                   "result":  "PASS",
+                   "agent_id":  "agent_580b19e4bc2f4158a1c1ed567ee718f0"
+               },
+    "porthole_revision":  "423cddf2861fd651a4a00c77d642f5c29cd98536",
+    "daemon":  {
+                   "portholed_pid":  6928,
+                   "windows_session":  1,
+                   "portholed_started":  "2026-09-21T16:13:05.6059279Z",
+                   "agent_id":  "agent_580b19e4bc2f4158a1c1ed567ee718f0",
+                   "created_utc":  "2026-09-21T16:13:05.7159108Z"
+               },
+    "local_detach_reattach":  true,
+    "leader_pid":  1460,
+    "captured_utc":  "2026-09-21T16:15:45.7788747Z",
+    "codex_pid":  5476,
+    "manual_editor_activation":  false,
+    "cleat_pid":  1816,
+    "reused":  true,
+    "cleat_revision":  "148a16f967ea0cf74839ab4770c620a2c30e5099"
+}
