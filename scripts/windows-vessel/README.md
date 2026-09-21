@@ -1,5 +1,11 @@
 # Beaufort agent launch experiment
 
+For the separate two-window native foreground regression, see
+[`2026-09-21-windows-foreground-activation.md`](../../docs/2026-09-21-windows-foreground-activation.md).
+`test-foreground.ps1` starts an isolated test server and cleans it up; it does
+not replace the running vessel daemon. `foreground-proof.ps1` is its lower-level
+probe and also supports caller-handoff comparisons against an existing test run.
+
 Run from the existing Windows GUI login. This packet is still under validation;
 it does not install a login task or establish SSH access. Use a dedicated run
 directory and workspace. It refuses to replace an existing Porthole daemon.
