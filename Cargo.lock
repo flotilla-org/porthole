@@ -998,7 +998,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jackstay"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=df4e529aace96f26884699e74d1d648774819298#df4e529aace96f26884699e74d1d648774819298"
+source = "git+https://github.com/flotilla-org/jackstay?rev=b1b95caba7a1f4c97c604295754c7f571ff2c623#b1b95caba7a1f4c97c604295754c7f571ff2c623"
 dependencies = [
  "cc",
  "libc",
@@ -1025,7 +1025,7 @@ dependencies = [
 [[package]]
 name = "jackstay-graph"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=df4e529aace96f26884699e74d1d648774819298#df4e529aace96f26884699e74d1d648774819298"
+source = "git+https://github.com/flotilla-org/jackstay?rev=b1b95caba7a1f4c97c604295754c7f571ff2c623#b1b95caba7a1f4c97c604295754c7f571ff2c623"
 dependencies = [
  "serde",
  "serde_json",

@@ -65,6 +65,19 @@ struct ExportRecord {
 }
 
 struct RuntimeDirectory(PathBuf);
+impl RuntimeDirectory {
+    fn create(path: PathBuf) -> std::io::Result<Self> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
+        Ok(Self(path))
+    }
+}
 impl Drop for RuntimeDirectory {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -287,13 +300,16 @@ impl ExportRegistry {
         frame: (u32, u32),
         execution: BridgeExecution,
     ) -> Result<ExportResponse, ExportError> {
+        let runtime_dir = self.runtime_dir()?;
+        if !cfg!(target_os = "macos") {
+            return Err(ExportError::Unsupported);
+        }
         let export_id = format!("exp_{}", Uuid::new_v4().simple());
         // Unix socket paths are limited to 104 bytes on macOS and the runtime
         // directory under the per-user temp dir is already long, so keep the
         // export's directory and socket names short.
-        let dir = self.runtime_dir()?.join("x").join(&export_id[4..16]);
-        std::fs::create_dir_all(&dir).map_err(ExportError::Io)?;
-        let directory = RuntimeDirectory(dir.clone());
+        let dir = runtime_dir.join("x").join(&export_id[4..16]);
+        let directory = RuntimeDirectory::create(dir.clone()).map_err(ExportError::Io)?;
         // Start the input executor first, if asked, so its socket is on the
         // egress command line.
         #[cfg(unix)]
@@ -315,13 +331,7 @@ impl ExportRegistry {
             bitrate_bps,
             input_socket,
         };
-        let handle = match ExportHandle::start(execution, spec.clone()) {
-            Ok(handle) => handle,
-            Err(error) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                return Err(error);
-            }
-        };
+        let handle = ExportHandle::start(execution, spec.clone())?;
         let mut record = ExportRecord {
             publication_id: publication_id.to_owned(),
             owner,
@@ -398,9 +408,6 @@ impl ExportRegistry {
         drop(inner);
         let status = record.handle.stop();
         let response = export_response(export_id, &record, &status);
-        if let Some(dir) = record.media_socket.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
         Ok(response)
     }
 
@@ -444,10 +451,11 @@ impl ExportRegistry {
         let sockets_dir = (cpu || input)
             .then(|| self.runtime_dir().map(|r| r.join("r").join(&publication_id[4..16])))
             .transpose()?;
-        if let Some(d) = &sockets_dir {
-            std::fs::create_dir_all(d).map_err(ExportError::Io)?;
-        }
-        let sockets_directory = sockets_dir.clone().map(RuntimeDirectory);
+        let sockets_directory = sockets_dir
+            .clone()
+            .map(RuntimeDirectory::create)
+            .transpose()
+            .map_err(ExportError::Io)?;
         let cpu_socket = sockets_dir.as_ref().filter(|_| cpu).map(|d| d.join("s"));
         let input_socket = sockets_dir.as_ref().filter(|_| input).map(|d| d.join("i"));
         let spec = IngressSpec {
@@ -642,6 +650,35 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn unsupported_exports_reject_both_execution_modes_before_creating_resources() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = ExportRegistry::new(Some(root.path().join("unused")));
+        for execution in [BridgeExecution::InProcess, BridgeExecution::Worker] {
+            let result = registry.create_export(
+                "capture",
+                AgentId::from("owner"),
+                Identities {
+                    source: "surface".into(),
+                    publication: "capture".into(),
+                },
+                &NativeCaptureInfo {
+                    transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+                    endpoint: "unused".into(),
+                    attach_token: "unused".into(),
+                },
+                Default::default(),
+                None,
+                true,
+                (128, 128),
+                execution,
+            );
+            assert!(matches!(result, Err(ExportError::Unsupported)), "{result:?}");
+            assert!(!root.path().join("unused").exists());
+        }
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn in_process_exports_are_independent_and_registry_drop_cleans_them_up() {
@@ -674,6 +711,11 @@ mod tests {
         let second = create();
         assert_eq!(first.status, "listening");
         assert_eq!(second.status, "listening");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = Path::new(&first.media_socket).parent().unwrap();
+            assert_eq!(std::fs::metadata(directory).unwrap().permissions().mode() & 0o777, 0o700);
+        }
         assert!(matches!(
             registry.inner.lock().unwrap().exports[&first.export_id].handle,
             ExportHandle::InProcess(_)

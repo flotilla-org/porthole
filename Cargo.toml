@@ -20,9 +20,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
-jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "df4e529aace96f26884699e74d1d648774819298" }
+jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "b1b95caba7a1f4c97c604295754c7f571ff2c623" }
 # Graph-manager vocabulary and bridge spawning.
-jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "df4e529aace96f26884699e74d1d648774819298" }
+jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "b1b95caba7a1f4c97c604295754c7f571ff2c623" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"

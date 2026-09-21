@@ -317,8 +317,8 @@ mod tests {
         )
         .await;
         assert_eq!(error_code(&json), Some(ErrorCode::AgentPermissionDenied), "{status} {json}");
-        // The owner passes the ownership check; without a bridge binary the
-        // registry then reports it unsupported, and with one it would spawn.
+        // The owner passes the ownership check. Native bridge tasks start on
+        // macOS; other platforms reject the operation before resource setup.
         let (status, json) = call(
             h.router.clone(),
             Method::POST,
@@ -332,6 +332,8 @@ mod tests {
             status == StatusCode::CREATED || error_code(&json) == Some(ErrorCode::AdapterUnsupported),
             "{status} {json}"
         );
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(error_code(&json), Some(ErrorCode::AdapterUnsupported), "{json}");
         #[cfg(unix)]
         {
             let (_, json) = call(
