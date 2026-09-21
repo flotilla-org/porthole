@@ -2,7 +2,7 @@ param([Parameter(Mandatory=$true)][string]$PortholeExecutable)
 $ErrorActionPreference = 'Stop'
 $PortholeExecutable = (Get-Item -LiteralPath $PortholeExecutable).FullName
 $daemons = @(Get-Process portholed -ErrorAction SilentlyContinue)
-if ($daemons.Count -ne 1 -or $daemons[0].Path -ne $PortholeExecutable) { throw 'Test requires the existing GUI Porthole daemon at the requested path' }
+if ($daemons.Count -ne 1 -or $daemons[0].Path -ne $PortholeExecutable -or $daemons[0].SessionId -ne (Get-Process -Id $PID).SessionId) { throw 'Test requires the existing GUI Porthole daemon at the requested path in this Windows session' }
 $daemon = $daemons[0]
 $started = $daemon.StartTime.ToUniversalTime().ToString('o')
 $root = Join-Path ([IO.Path]::GetTempPath()) ('porthole-startup-test-' + [Guid]::NewGuid().ToString('N'))
