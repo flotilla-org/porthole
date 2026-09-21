@@ -7,7 +7,7 @@ not replace the running vessel daemon. `foreground-proof.ps1` is its lower-level
 probe and also supports caller-handoff comparisons against an existing test run.
 
 Run from the existing Windows GUI login. This packet is still under validation;
-it does not install a login task or establish SSH access. Use a dedicated run
+login registration is a separate explicit step below. Use a dedicated run
 directory and workspace. It refuses to replace an existing Porthole daemon.
 
 Prerequisites: built Porthole CLI/daemon and `desktop_fixture` example; functional
@@ -70,3 +70,56 @@ On failed startup, inspect the public state and any owned processes before
 cleanup. The launcher revokes a newly created identity on launch failure, but
 retains daemon logs and state. It deliberately does not delete prior runs or
 terminate an unrelated session.
+
+## Porthole at GUI login
+
+From the operator's Windows account, register the per-user interactive task:
+
+```powershell
+.\scripts\windows-vessel\register-startup.ps1 -PortholeExecutable C:\dev\windows-parity-plan\agent-launch-target\debug\portholed.exe
+```
+
+Keep the script checkout and executable at those absolute paths. The default
+task name includes the current user's SID; state is stored under
+`$env:LOCALAPPDATA\Porthole\startup`. `-TaskName` and `-StateDirectory` select
+separate test registrations. Registering twice is idempotent. A name collision
+or configuration drift fails instead of silently replacing an existing task.
+
+The task uses the logged-in user's interactive token at limited run level, no
+password, no execution time limit, no battery/idle requirement, and `IgnoreNew`
+instance policy. Its hidden supervisor stays alive while Porthole runs. It
+reuses only a matching executable in the same GUI session and refuses a
+different daemon. It never launches an agent or restarts a failed daemon.
+`startup.json` records public process identity and readiness; inspect it and
+the daemon logs if the task fails.
+
+When Porthole is already running from this task, add `-UseExistingDaemon` to the
+explicit `start.ps1` agent-launch command above. This requires exactly one
+matching Porthole executable in the same GUI session. Without that flag, the
+launcher continues to refuse an existing daemon. Reconnecting to an existing
+run still preserves its agent identity and process.
+
+Manual validation, with a matching Porthole daemon already running:
+
+```powershell
+.\scripts\windows-vessel\test-startup.ps1 -PortholeExecutable C:\dev\windows-parity-plan\agent-launch-target\debug\portholed.exe
+```
+
+This creates a temporary task, checks literal paths, repeated registration,
+collision refusal, same-GUI daemon reuse, duplicate-start prevention and safe
+unregistration, then stops only its verified test supervisor. The daemon and
+agent remain running. Test evidence stays in the reported temporary directory.
+Manual task startup is not proof that the logon trigger fired. A cold startup,
+genuine next-logon trigger, and RDP disconnect/lock continuity still require
+separate acceptance evidence; do not log out an active agent merely to test them.
+
+Remove the registration using the same arguments plus `-Remove`:
+
+```powershell
+.\scripts\windows-vessel\register-startup.ps1 -PortholeExecutable C:\dev\windows-parity-plan\agent-launch-target\debug\portholed.exe -Remove
+```
+
+Removal does not stop running processes. An existing supervisor may continue
+waiting for its daemon until that daemon exits. Do not use `Stop-ScheduledTask`
+as daemon cleanup: it can terminate the task's process tree. Before changing
+paths/settings, remove the matching registration and inspect its live processes.
