@@ -1,8 +1,8 @@
 # Beaufort explicit agent launch: partial acceptance
 
 Packet 2 of the Windows parity execution plan. The agent is alive in GUI Session
-1, but the typing/screenshot acceptance is waiting for native foreground access.
-This is not a completed desktop proof.
+1. Its native typing/screenshot/close proof passed after the human activated the
+preserved editor. Clean-launch and lifecycle acceptance remain outstanding.
 
 ## Observed
 
@@ -14,7 +14,8 @@ This is not a completed desktop proof.
   never command arguments or persisted session environment overrides.
 - Windows returned `system_permission_needed` on foreground activation. The
   agent stopped and reported the failure. A second attempt preserved the editor
-  for human activation. No successful typing or screenshot is claimed.
+  for human activation. After the human confirmed activation, the same agent
+  resumed that surface, typed both expected lines, captured a PNG and closed it.
 - Repeating start returned `REUSED` with the same agent entry PID and identity.
 - A corrected Cleat client attached as controller `beaufort-local` to the original
   running agent. The daemon and Codex were not restarted.
@@ -25,6 +26,26 @@ Live run: `C:\dev\windows-parity-plan\vessel-beaufort`. Public identity:
 `agent_98533e4e98d3425981bf1ca230d879a3`. Agent entry PID 12884; Codex PID 12296;
 Porthole PID 10008; dedicated Cleat daemon PID 11612. Agent continuity marker:
 `50e6eeff-46cf-41cf-9470-4284da334439`.
+
+## Resumed desktop proof
+
+Passed at `2026-09-21T14:37:30.8622353Z`, from agent tool process PID 6968 in
+Windows Session 1. Visual inspection confirmed both lines in the screenshot:
+
+```text
+Beaufort: a Cleat-hosted Codex agent typed this.
+Porthole token inherited; native Windows input and PNG.
+```
+
+![Agent-produced native Windows screenshot](evidence/beaufort-agent-visible-input.png)
+
+PNG SHA-256: `261F7F4E45FAD52B3E7960B819BDA2D9618EB863A14CB9479773667045F7578A`.
+The result is recorded in the live run's `agent-desktop-result.json`.
+The pending-surface artifact was removed by successful completion. The original
+agent entry, Codex, dedicated Cleat daemon and Porthole process IDs and start
+times remained unchanged. Codex reported success and remains available.
+This proves recovery after manual foreground activation; it does not prove
+unattended foreground activation or RDP/lock recovery.
 
 ## Console launch diagnosis
 
@@ -76,6 +97,6 @@ replace the outstanding live acceptance steps below.
 Corrected client binaries are isolated under `cleat-client-bin` so rebuilding
 does not overwrite a loaded DLL or running daemon executable.
 
-Outstanding: foreground activation and resulting PNG; a clean full launch with
-the corrected Cleat client; forced-stop cleanup; kiwi SSH attach; login startup;
+Outstanding: a clean full launch with the corrected Cleat client; forced-stop
+cleanup; kiwi SSH attach; login startup;
 RDP disconnect/lock continuity. Jackstay Direct3D work is outside this packet.
