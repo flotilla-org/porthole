@@ -300,17 +300,39 @@ impl Inbox {
             None => false,
         }
     }
-    fn decision(&self, key: char) -> Option<Decision> {
-        if !self.actionable() {
-            return None;
+    fn decision(&self, key: char) -> Result<Decision, &'static str> {
+        if !self.connected {
+            return Err("offline; waiting to reconnect.");
         }
-        match (&self.active_detail(), key) {
-            (Some(Detail::Request(r, duration)), 'a') if !r.description.agent_revoked && r.description.surface_available != Some(false) => {
-                Some(Decision::Approve(r.clone(), duration.clone()))
+        if self.busy {
+            return Err("a decision is already in progress.");
+        }
+        let detail = self.active_detail().ok_or("no entry selected.")?;
+        if !self.actionable() {
+            return Err("entry changed or was resolved; return to the list to refresh it.");
+        }
+        match (detail, key) {
+            (Detail::Request(r, duration), 'a') => {
+                if r.description.agent_revoked {
+                    return Err("requester unavailable; it was revoked or removed.");
+                }
+                if r.description.surface_available == Some(false) {
+                    return Err("window unavailable; the agent must find it again and retry.");
+                }
+                Ok(Decision::Approve(r, duration))
             }
-            (Some(Detail::Request(r, _)), 'd') => Some(Decision::Deny(r.clone())),
-            (Some(Detail::Grant(g)), 'r') => Some(Decision::Revoke(g.grant_id.to_string())),
-            _ => None,
+            (Detail::Request(r, _), 'd') => Ok(Decision::Deny(r)),
+            (Detail::Grant(g), 'r') => Ok(Decision::Revoke(g.grant_id.to_string())),
+            _ => Err("action does not apply to this entry."),
+        }
+    }
+    /// Escape leaves the current nested interaction, then exits from the list.
+    fn escape(&mut self) -> bool {
+        if self.filtering {
+            self.filtering = false;
+            false
+        } else {
+            self.detail.take().is_none()
         }
     }
 }
@@ -475,8 +497,11 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         areas[0],
     );
-    let context = match app.active_detail() {
-        Some(Detail::Request(_, duration)) if !app.filtering => {
+    let context = match (app.active_detail(), app.decision('a')) {
+        (Some(Detail::Request(..)), Err(reason)) if !app.filtering => {
+            format!("Cannot approve: {reason}")
+        }
+        (Some(Detail::Request(_, duration)), _) if !app.filtering => {
             let filter = &app.scopes[app.index()].filter;
             format!(
                 "APPROVE FOR: {}{}",
@@ -608,6 +633,15 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
         }
     }
     let actions = match app.active_detail() {
+        _ if app.filtering => "Type to filter  Ctrl-U clear  Enter/Esc finish",
+        Some(Detail::Request(..)) if app.decision('a').is_err() => {
+            if app.decision('d').is_ok() {
+                "d deny request"
+            } else {
+                "Actions unavailable"
+            }
+        }
+        Some(Detail::Grant(..)) if app.decision('r').is_err() => "Actions unavailable",
         Some(Detail::Request(ref r, _)) if matches!(r.target, AgentPermissionTarget::Surface { .. }) => {
             "a approve  d deny  1 once  2 until window closes  3 persistent"
         }
@@ -618,7 +652,7 @@ fn draw(frame: &mut ratatui::Frame, app: &mut Inbox) {
     let navigation = if app.detail.is_some() {
         "↑↓ scroll  ←/Esc back  q/Ctrl-C quit"
     } else {
-        "↑↓ select  ←→/Tab tabs  Enter details  / filter  Esc clear  q quit"
+        "↑↓ select  ←→/Tab tabs  Enter details  / filter  Esc/q quit"
     };
     let help = format!("{actions}\n{navigation}");
     frame.render_widget(Paragraph::new(help), areas[3]);
@@ -684,9 +718,16 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
                 // Ignore repeat events from terminals that report them; busy also prevents overlapping decisions.
                 if key.kind != KeyEventKind::Press { continue; }
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) { break; }
+                if key.code == KeyCode::Esc {
+                    if app.escape() { break; }
+                    continue;
+                }
                 if app.filtering {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter => app.filtering = false,
+                        KeyCode::Enter => app.filtering = false,
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            let index = app.index(); app.scopes[index].filter.clear(); app.reconcile();
+                        }
                         KeyCode::Backspace => { let index = app.index(); app.scopes[index].filter.pop(); app.reconcile(); }
                         KeyCode::Char(c) if !c.is_control() => { let index = app.index(); app.scopes[index].filter.push(c); app.reconcile(); }
                         _ => {}
@@ -695,7 +736,6 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
                 }
                 match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Esc => { if app.detail.take().is_none() { let index = app.index(); app.scopes[index].filter.clear(); app.reconcile(); } }
                     KeyCode::Tab | KeyCode::BackTab if app.detail.is_none() => { app.grants = !app.grants; app.reconcile(); }
                     KeyCode::Left => app.horizontal(false),
                     KeyCode::Right => app.horizontal(true),
@@ -704,12 +744,16 @@ pub(super) async fn run(client: &DaemonClient, height: u16) -> Result<(), Client
                     KeyCode::Up | KeyCode::Char('k') => app.navigate(false),
                     KeyCode::Enter if app.detail.is_none() => app.open(),
                     KeyCode::Char(c @ ('1' | '2' | '3')) => app.choose_duration(c),
-                    KeyCode::Char(c) => {
-                        if let Some(decision) = app.decision(c) {
-                            match commands.try_send(decision) {
+                    KeyCode::Char(c @ ('a' | 'd' | 'r')) => {
+                        match app.decision(c) {
+                            Ok(decision) => match commands.try_send(decision) {
                                 Ok(()) => { app.busy = true; app.message = "Sending decision...".into(); }
                                 Err(mpsc::error::TrySendError::Full(_)) => app.message = "Not sent: another decision is queued. Try again after it completes.".into(),
                                 Err(mpsc::error::TrySendError::Closed(_)) => app.message = "Not sent: approval worker stopped. Reopen the inbox.".into(),
+                            },
+                            Err(reason) => {
+                                let action = match c { 'a' => "approve", 'd' => "deny", _ => "revoke" };
+                                app.message = format!("Cannot {action}: {reason}");
                             }
                         }
                     }
@@ -743,6 +787,7 @@ mod tests {
             actions: vec![ActionClass::Drive],
             reason: Some(id.into()),
             status: "pending".into(),
+            invalidation_reason: None,
             created_at_unix_ms: 1000,
             resolved_at_unix_ms: None,
         }
@@ -763,11 +808,11 @@ mod tests {
         inbox.update(live(vec![request("new"), request("a"), request("b")]));
         assert_eq!(inbox.scopes[0].selected.as_deref(), Some("b"));
         assert!(
-            matches!(inbox.decision('a'), Some(Decision::Approve(r, AgentPermissionDuration::UntilSurfaceGone)) if r.request_id.as_str() == "b")
+            matches!(inbox.decision('a'), Ok(Decision::Approve(r, AgentPermissionDuration::UntilSurfaceGone)) if r.request_id.as_str() == "b")
         );
         inbox.update(live(vec![request("new"), request("a")]));
-        assert!(inbox.decision('a').is_none());
-        assert!(inbox.decision('d').is_none());
+        assert!(inbox.decision('a').is_err());
+        assert!(inbox.decision('d').is_err());
     }
     #[test]
     fn changed_scope_and_disconnect_disable_actions_but_closed_requests_can_be_denied() {
@@ -778,18 +823,18 @@ mod tests {
             connected: false,
             ..Default::default()
         });
-        assert!(inbox.decision('a').is_none());
+        assert!(inbox.decision('a').is_err());
         inbox.update(live(vec![request("a")]));
         let mut changed = request("a");
         changed.actions = vec![ActionClass::Manage];
         inbox.update(live(vec![changed]));
-        assert!(inbox.decision('a').is_none());
+        assert!(inbox.decision('a').is_err());
         let mut closed = request("a");
         closed.description.surface_available = Some(false);
         inbox.update(live(vec![closed]));
         inbox.open();
-        assert!(inbox.decision('a').is_none());
-        assert!(matches!(inbox.decision('d'), Some(Decision::Deny(_))));
+        assert!(inbox.decision('a').is_err());
+        assert!(matches!(inbox.decision('d'), Ok(Decision::Deny(_))));
     }
     #[test]
     fn open_details_explain_window_closure_without_replacing_the_reviewed_request() {
@@ -804,7 +849,7 @@ mod tests {
         let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
         assert!(screen.contains("requester revoked or window unavailable"));
         assert!(matches!(inbox.detail, Some(Detail::Request(ref r, _)) if r.description.surface_available.is_none()));
-        assert!(inbox.decision('a').is_none());
+        assert!(inbox.decision('a').is_err());
     }
 
     #[test]
@@ -814,7 +859,7 @@ mod tests {
         broad.target = AgentPermissionTarget::AllSurfaces;
         inbox.update(live(vec![request("window"), broad]));
         assert!(
-            matches!(inbox.decision('a'), Some(Decision::Approve(r, AgentPermissionDuration::UntilSurfaceGone)) if r.request_id.as_str() == "window")
+            matches!(inbox.decision('a'), Ok(Decision::Approve(r, AgentPermissionDuration::UntilSurfaceGone)) if r.request_id.as_str() == "window")
         );
         inbox.choose_duration('3');
         inbox.open();
@@ -822,19 +867,17 @@ mod tests {
         assert!(inbox.detail.is_none());
         assert!(matches!(
             inbox.decision('a'),
-            Some(Decision::Approve(_, AgentPermissionDuration::Persistent))
+            Ok(Decision::Approve(_, AgentPermissionDuration::Persistent))
         ));
         inbox.navigate(true);
         inbox.choose_duration('2'); // Invalid for all windows; retain its default.
-        assert!(
-            matches!(inbox.decision('a'), Some(Decision::Approve(r, AgentPermissionDuration::Once)) if r.request_id.as_str() == "broad")
-        );
-        assert!(matches!(inbox.decision('d'), Some(Decision::Deny(r)) if r.request_id.as_str() == "broad"));
+        assert!(matches!(inbox.decision('a'), Ok(Decision::Approve(r, AgentPermissionDuration::Once)) if r.request_id.as_str() == "broad"));
+        assert!(matches!(inbox.decision('d'), Ok(Decision::Deny(r)) if r.request_id.as_str() == "broad"));
         inbox.busy = true;
-        assert!(inbox.decision('a').is_none());
+        assert!(inbox.decision('a').is_err());
         inbox.busy = false;
         inbox.connected = false;
-        assert!(inbox.decision('d').is_none());
+        assert!(inbox.decision('d').is_err());
     }
 
     #[test]
@@ -847,19 +890,19 @@ mod tests {
         inbox.navigate(false);
         assert!(matches!(
             inbox.decision('a'),
-            Some(Decision::Approve(_, AgentPermissionDuration::Persistent))
+            Ok(Decision::Approve(_, AgentPermissionDuration::Persistent))
         ));
         let mut changed = request("a");
         changed.actions = vec![ActionClass::Observe];
         inbox.update(live(vec![changed, request("b")]));
         assert!(matches!(
             inbox.decision('a'),
-            Some(Decision::Approve(_, AgentPermissionDuration::UntilSurfaceGone))
+            Ok(Decision::Approve(_, AgentPermissionDuration::UntilSurfaceGone))
         ));
         inbox.navigate(true);
         assert!(matches!(
             inbox.decision('a'),
-            Some(Decision::Approve(_, AgentPermissionDuration::Once))
+            Ok(Decision::Approve(_, AgentPermissionDuration::Once))
         ));
         inbox.update(live(vec![]));
         assert!(inbox.list_durations.is_empty());
@@ -886,7 +929,7 @@ mod tests {
         });
         inbox.horizontal(true);
         assert!(inbox.grants);
-        assert!(matches!(inbox.decision('r'), Some(Decision::Revoke(id)) if id == "grant_1"));
+        assert!(matches!(inbox.decision('r'), Ok(Decision::Revoke(id)) if id == "grant_1"));
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(110, 18)).unwrap();
         terminal.draw(|frame| draw(frame, &mut inbox)).unwrap();
         let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
@@ -942,6 +985,38 @@ mod tests {
             ),
             "Kitty: project"
         );
+    }
+
+    #[test]
+    fn unavailable_request_explains_why_approval_is_blocked_and_only_offers_denial() {
+        let mut inbox = Inbox::default();
+        let mut unavailable = request("old_request");
+        unavailable.description.surface_available = Some(false);
+        inbox.update(live(vec![unavailable]));
+        assert!(inbox.decision('a').is_err());
+        assert!(matches!(inbox.decision('d'), Ok(Decision::Deny(_))));
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(110, 18)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut inbox)).unwrap();
+        let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+        assert!(screen.contains("Cannot approve: window unavailable"), "{screen}");
+        assert!(!screen.contains("a approve"));
+        assert!(screen.contains("d deny"));
+    }
+
+    #[test]
+    fn escape_leaves_filter_or_details_then_quits_even_with_a_filter() {
+        let mut inbox = Inbox::default();
+        inbox.update(live(vec![request("a")]));
+        inbox.scopes[0].filter = "a".into();
+        inbox.filtering = true;
+        assert!(!inbox.escape());
+        assert!(!inbox.filtering);
+        assert_eq!(inbox.scopes[0].filter, "a");
+        inbox.open();
+        assert!(!inbox.escape());
+        assert!(inbox.detail.is_none());
+        assert!(inbox.escape());
+        assert_eq!(inbox.scopes[0].filter, "a");
     }
 
     #[test]
