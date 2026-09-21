@@ -16,6 +16,14 @@ use crate::capture_sessions::NativeCaptureInfo;
 pub const PUBLICATION_KIND_CAPTURE: &str = "capture";
 pub const PUBLICATION_KIND_REPUBLISHED: &str = "republished";
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BridgeExecution {
+    #[default]
+    InProcess,
+    Worker,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicationResponse {
     /// The capture session id for captures; a fresh id for republications.
@@ -48,6 +56,8 @@ pub struct ListPublicationsResponse {
 #[serde(deny_unknown_fields)]
 pub struct CreateExportRequest {
     #[serde(default)]
+    pub execution: BridgeExecution,
+    #[serde(default)]
     pub chroma: ChromaPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bitrate_bps: Option<u32>,
@@ -79,6 +89,8 @@ pub struct ExportResponse {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RepublishRequest {
+    #[serde(default)]
+    pub execution: BridgeExecution,
     /// Local ends of the forwarded export sockets.
     pub media_socket: String,
     pub control_socket: String,
@@ -110,6 +122,10 @@ mod tests {
     fn create_export_request_defaults_and_rejects_unknown_fields() {
         let r: CreateExportRequest = serde_json::from_str("{}").unwrap();
         assert_eq!(r.chroma, ChromaPolicy::Prefer444);
+        assert_eq!(r.execution, BridgeExecution::InProcess);
+        let worker: CreateExportRequest = serde_json::from_str(r#"{"execution":"worker"}"#).unwrap();
+        assert_eq!(worker.execution, BridgeExecution::Worker);
+        assert!(serde_json::from_str::<CreateExportRequest>(r#"{"execution":"typo"}"#).is_err());
         assert!(!r.input);
         assert!(serde_json::from_str::<CreateExportRequest>(r#"{"carrier":"x"}"#).is_err());
     }
@@ -117,6 +133,7 @@ mod tests {
     #[test]
     fn republish_request_round_trips() {
         let r = RepublishRequest {
+            execution: BridgeExecution::default(),
             media_socket: "/m".into(),
             control_socket: "/c".into(),
             link_token: "L".into(),
@@ -136,5 +153,6 @@ mod tests {
         .unwrap();
         assert!(!without.cpu);
         assert!(!without.input);
+        assert_eq!(without.execution, BridgeExecution::InProcess);
     }
 }

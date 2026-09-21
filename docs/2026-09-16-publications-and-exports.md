@@ -4,20 +4,24 @@ Evidence note, 2026-09-16. Porthole on the `feat/shared-native-acquisition`
 working tree plus the uncommitted publications work, jackstay on the
 `bridge-slice-one` working tree. Design and measurements in the project-map
 report `reports/jackstay-remoting-research-2026-09-16.md`; the bridge itself in
-jackstay `docs/design/bridge.md`.
+[the bridge design note](jackstay-bridge.md). The bridge implementation now
+lives in Porthole's `crates/jackstay-bridge`, consuming the Jackstay libraries.
 
 ## What was added
 
 portholed is the graph manager for cross-host bridges. A *publication* is a
 running frame stream with a local endpoint: every capture session is one, and a
-*republication* is the local end of a bridge. An *export* spawns the
-producer-side bridge half (`jackstay-bridge egress --listen`) for a native
-capture session; it attaches to portholed's own attach service with the
-session's token and listens on two Unix sockets under the runtime directory.
-A republication runs the consumer-side half (`jackstay-bridge ingress`) as a
-launchd job with its own Mach service name, because only a launchd-registered
-job can vend one, and reports it as a native publication viewers attach to
-exactly as they attach to a local capture.
+*republication* is the local end of a bridge. The bridge implementation now
+belongs to Porthole. Export and republication halves run as daemon-owned tasks
+by default. Native republications share the daemon's registered Mach service,
+with a distinct attach token selecting each publication.
+
+`execution: "worker"` on either request selects the separate worker mode;
+`porthole publications export`, `republish` and `attach` expose this as
+`--worker`. Worker egress runs as a child process, and worker ingress runs as a
+launchd job with its own Mach service. The binary remains bundled for this mode.
+The transport, codec, input relay and permission checks are the same in both
+modes. See [ADR-0011](adr/0011-porthole-owned-bridge-runtime.md).
 
 Routes, all requiring an authenticated agent: `GET /publications`,
 `GET /publications/{id}`, `POST /publications/{id}/exports` (session owner
@@ -58,13 +62,15 @@ request from `porthole agents requests`. Tender will replace the SSH forwarding;
 nothing in the daemon depends on how the sockets got there.
 
 The bridge executable is located from `JACKSTAY_BRIDGE_BIN`, then as a sibling
-of the daemon binary, then on the PATH. The bundle builder copies it in as that
-sibling when `JACKSTAY_BRIDGE_BIN` is set at bundle time or a `jackstay-bridge`
-sits in the target profile, so an installed daemon needs no environment: a
+of the daemon binary, then on the PATH. The bundle builder now requires and
+copies the workspace-built bridge in as that sibling by default;
+`JACKSTAY_BRIDGE_BIN` at bundle time can override it. An installed daemon needs no environment: a
 launchd-managed daemon only sees launchd's environment, and `launchctl setenv`
 from an SSH session lands in the wrong domain.
 
 ## Evidence
+
+The measurements below used the original separate-worker implementation.
 
 Consumer side alone, kiwi (M4, macOS 26.6), a development daemon under
 `PORTHOLE_RUNTIME_DIR=/tmp/pdev-kiwi`: `porthole publications republish` for a

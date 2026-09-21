@@ -615,6 +615,9 @@ enum PublicationsCommand {
         /// Carry an input channel back to the surface (needs Drive on it).
         #[arg(long)]
         input: bool,
+        /// Run the bridge in a separate worker process instead of the daemon.
+        #[arg(long)]
+        worker: bool,
         #[arg(long)]
         json: bool,
     },
@@ -650,6 +653,9 @@ enum PublicationsCommand {
         /// Also accept input controllers and relay them to the producer.
         #[arg(long)]
         input: bool,
+        /// Run the bridge in a separate worker process instead of the daemon.
+        #[arg(long)]
+        worker: bool,
         #[arg(long)]
         json: bool,
     },
@@ -683,6 +689,9 @@ enum PublicationsCommand {
         /// remote surface); a controller drives it through the local socket.
         #[arg(long)]
         input: bool,
+        /// Run the bridge in a separate worker process instead of the daemon.
+        #[arg(long)]
+        worker: bool,
         /// Keep the SSH forwards up until interrupted, then tear everything down.
         #[arg(long)]
         hold: bool,
@@ -1227,8 +1236,9 @@ async fn async_main() -> std::process::ExitCode {
                     chroma,
                     bitrate_bps,
                     input,
+                    worker,
                     json,
-                } => pubs::export(&client, &publication_id, chroma.into(), bitrate_bps, input, json).await,
+                } => pubs::export(&client, &publication_id, chroma.into(), bitrate_bps, input, worker, json).await,
                 PublicationsCommand::ExportStatus {
                     publication_id,
                     export_id,
@@ -1246,6 +1256,7 @@ async fn async_main() -> std::process::ExitCode {
                     chroma,
                     cpu,
                     input,
+                    worker,
                     json,
                 } => pubs::republish(
                     &client,
@@ -1257,6 +1268,11 @@ async fn async_main() -> std::process::ExitCode {
                         chroma: chroma.into(),
                         cpu,
                         input,
+                        execution: if worker {
+                            porthole_protocol::publications::BridgeExecution::Worker
+                        } else {
+                            Default::default()
+                        },
                     },
                     json,
                 )
@@ -1273,6 +1289,7 @@ async fn async_main() -> std::process::ExitCode {
                     bitrate_bps,
                     cpu,
                     input,
+                    worker,
                     hold,
                     json,
                 } => {
@@ -1288,6 +1305,7 @@ async fn async_main() -> std::process::ExitCode {
                             bitrate_bps,
                             cpu,
                             input,
+                            worker,
                             json,
                             hold,
                         },

@@ -1,13 +1,6 @@
-//! Exports and republications: the coordinator role for cross-host bridges.
-//!
-//! portholed is the graph manager here. An export spawns an egress half
-//! (`jackstay-bridge egress --listen`) for a native capture session; the half
-//! attaches to portholed's own attach service with the session's token and
-//! listens on two Unix sockets under the runtime directory for the peer the
-//! consumer side forwards. A republication runs an ingress half as a launchd
-//! job with its own Mach service name and reports it as a publication viewers
-//! attach to natively. Both are tracked here with the status lines the halves
-//! print; nothing about frames passes through the daemon.
+//! Exports and republications owned by the daemon. Bridge tasks run in process
+//! by default; separate child/launchd workers remain an explicit execution mode.
+//! In-process republications share the daemon's token-routed native attach service.
 
 use std::{
     collections::HashMap,
@@ -17,17 +10,15 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use jackstay_graph::export::IngressSpec;
-use jackstay_graph::{
-    ChromaPolicy, Identities,
-    export::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, Phase},
-};
+use jackstay_bridge::worker::IngressSpec;
+use jackstay_bridge::worker::{BridgeBinary, EgressSpec, HalfHandle, HalfStatus, Phase};
+use jackstay_graph::{ChromaPolicy, Identities};
 use porthole_core::agent_policy::AgentId;
 #[cfg(target_os = "macos")]
 use porthole_protocol::{capture_sessions::NATIVE_ATTACH_TRANSPORT_MACOS_XPC, publications::PUBLICATION_KIND_REPUBLISHED};
 use porthole_protocol::{
     capture_sessions::NativeCaptureInfo,
-    publications::{ExportResponse, PublicationResponse, RepublishRequest, RepublishResponse},
+    publications::{BridgeExecution, ExportResponse, PublicationResponse, RepublishRequest, RepublishResponse},
 };
 use uuid::Uuid;
 
@@ -51,7 +42,7 @@ pub enum ExportError {
     Poisoned,
     #[error("republication did not come up: {0}")]
     RepublishFailed(String),
-    #[error("republications need launchd on macOS")]
+    #[error("native bridges currently require macOS")]
     Unsupported,
     #[error("this daemon has no input pipeline for a remote input channel")]
     InputUnavailable,
@@ -64,12 +55,134 @@ struct ExportRecord {
     link_token: String,
     media_socket: PathBuf,
     control_socket: PathBuf,
-    handle: HalfHandle,
+    handle: ExportHandle,
     /// The input executor bound for this export, when it carries input. Held
     /// so it lives as long as the export and is torn down with it on drop.
     #[cfg(unix)]
     #[allow(dead_code, reason = "kept for its Drop; not read")]
     executor: Option<crate::input_executor::InputExecutor>,
+    _directory: RuntimeDirectory,
+}
+
+struct RuntimeDirectory(PathBuf);
+impl RuntimeDirectory {
+    fn create(path: PathBuf) -> std::io::Result<Self> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
+        Ok(Self(path))
+    }
+}
+impl Drop for RuntimeDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+enum ExportHandle {
+    Worker(HalfHandle),
+    #[cfg(target_os = "macos")]
+    InProcess(jackstay_bridge::task::Task),
+}
+impl ExportHandle {
+    fn start(execution: BridgeExecution, spec: EgressSpec) -> Result<Self, ExportError> {
+        match execution {
+            BridgeExecution::Worker => {
+                let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
+                jackstay_bridge::worker::spawn_egress(&bridge, &spec)
+                    .map(Self::Worker)
+                    .map_err(ExportError::Spawn)
+            }
+            BridgeExecution::InProcess => {
+                #[cfg(target_os = "macos")]
+                {
+                    jackstay_bridge::task::Task::egress(spec)
+                        .map(Self::InProcess)
+                        .map_err(ExportError::Spawn)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = spec;
+                    Err(ExportError::Unsupported)
+                }
+            }
+        }
+    }
+    fn status(&mut self) -> HalfStatus {
+        match self {
+            Self::Worker(worker) => worker.status(),
+            #[cfg(target_os = "macos")]
+            Self::InProcess(task) => task.status(),
+        }
+    }
+    fn wait_ready(&mut self, timeout: Duration) -> HalfStatus {
+        match self {
+            Self::Worker(worker) => worker.wait_for(Phase::Listening, timeout),
+            #[cfg(target_os = "macos")]
+            Self::InProcess(task) => task.wait_for(|s| matches!(s.phase, Some(Phase::Listening | Phase::Running)), timeout),
+        }
+    }
+    fn stop(&mut self) -> HalfStatus {
+        match self {
+            Self::Worker(worker) => worker.stop(),
+            #[cfg(target_os = "macos")]
+            Self::InProcess(task) => task.stop(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+enum RepublishHandle {
+    Worker(Box<jackstay_bridge::worker::IngressJob>),
+    InProcess(jackstay_bridge::task::Task),
+}
+#[cfg(target_os = "macos")]
+impl RepublishHandle {
+    fn start(execution: BridgeExecution, spec: IngressSpec, directory: &Path) -> Result<Self, ExportError> {
+        match execution {
+            BridgeExecution::Worker => {
+                let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
+                jackstay_bridge::worker::IngressJob::spawn(&bridge, &spec, directory)
+                    .map(|job| Self::Worker(Box::new(job)))
+                    .map_err(|e| ExportError::RepublishFailed(e.to_string()))
+            }
+            BridgeExecution::InProcess => jackstay_bridge::task::Task::ingress(spec)
+                .map(Self::InProcess)
+                .map_err(ExportError::Spawn),
+        }
+    }
+    fn status(&mut self) -> HalfStatus {
+        match self {
+            Self::Worker(job) => job.status(),
+            Self::InProcess(task) => task.status(),
+        }
+    }
+    fn wait_for_publication(&mut self, timeout: Duration) -> HalfStatus {
+        match self {
+            Self::Worker(job) => job.wait_for_publication(timeout),
+            Self::InProcess(task) => task.wait_for(|s| s.publication.is_some(), timeout),
+        }
+    }
+    fn stderr_path(&self) -> Option<PathBuf> {
+        match self {
+            Self::Worker(job) => Some(job.stderr_path()),
+            Self::InProcess(_) => None,
+        }
+    }
+    fn stop(&mut self) -> Result<(), ExportError> {
+        match self {
+            Self::Worker(job) => job.stop().map_err(|e| ExportError::RepublishFailed(e.to_string())),
+            Self::InProcess(task) => {
+                task.stop();
+                Ok(())
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -81,7 +194,8 @@ struct RepublishRecord {
     cpu_socket: Option<PathBuf>,
     /// The input socket the half accepts controllers on, when requested.
     input_socket: Option<PathBuf>,
-    job: jackstay_graph::export::IngressJob,
+    job: RepublishHandle,
+    _sockets_directory: Option<RuntimeDirectory>,
 }
 
 #[derive(Default)]
@@ -127,11 +241,8 @@ fn status_message(status: &HalfStatus) -> Option<String> {
 /// Finds the bridge executable: `JACKSTAY_BRIDGE_BIN`, then a sibling of the
 /// running daemon (the bundled deployment), then the PATH.
 fn locate_bridge() -> Option<BridgeBinary> {
-    if let Some(b) = BridgeBinary::locate(None) {
-        return Some(b);
-    }
-    let sibling = std::env::current_exe().ok()?.with_file_name("jackstay-bridge");
-    sibling.is_file().then_some(BridgeBinary(sibling))
+    let sibling = std::env::current_exe().ok().map(|path| path.with_file_name("jackstay-bridge"));
+    BridgeBinary::locate(sibling.as_deref())
 }
 
 impl ExportRegistry {
@@ -181,14 +292,18 @@ impl ExportRegistry {
         bitrate_bps: Option<u32>,
         input: bool,
         frame: (u32, u32),
+        execution: BridgeExecution,
     ) -> Result<ExportResponse, ExportError> {
-        let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
+        let runtime_dir = self.runtime_dir()?;
+        if !cfg!(target_os = "macos") {
+            return Err(ExportError::Unsupported);
+        }
         let export_id = format!("exp_{}", Uuid::new_v4().simple());
         // Unix socket paths are limited to 104 bytes on macOS and the runtime
         // directory under the per-user temp dir is already long, so keep the
         // export's directory and socket names short.
-        let dir = self.runtime_dir()?.join("x").join(&export_id[4..16]);
-        std::fs::create_dir_all(&dir).map_err(ExportError::Io)?;
+        let dir = runtime_dir.join("x").join(&export_id[4..16]);
+        let directory = RuntimeDirectory::create(dir.clone()).map_err(ExportError::Io)?;
         // Start the input executor first, if asked, so its socket is on the
         // egress command line.
         #[cfg(unix)]
@@ -210,7 +325,7 @@ impl ExportRegistry {
             bitrate_bps,
             input_socket,
         };
-        let handle = jackstay_graph::export::spawn_egress(&bridge, &spec).map_err(ExportError::Spawn)?;
+        let handle = ExportHandle::start(execution, spec.clone())?;
         let mut record = ExportRecord {
             publication_id: publication_id.to_owned(),
             owner,
@@ -221,9 +336,10 @@ impl ExportRegistry {
             handle,
             #[cfg(unix)]
             executor,
+            _directory: directory,
         };
         // The peer cannot connect before the sockets exist; wait briefly for them.
-        let status = record.handle.wait_for(Phase::Listening, Duration::from_secs(5));
+        let status = record.handle.wait_ready(Duration::from_secs(5));
         let response = export_response(&export_id, &record, &status);
         self.inner
             .lock()
@@ -283,11 +399,9 @@ impl ExportRegistry {
             return Err(ExportError::NotOwner);
         }
         let mut record = inner.exports.remove(export_id).expect("checked above");
+        drop(inner);
         let status = record.handle.stop();
         let response = export_response(export_id, &record, &status);
-        if let Some(dir) = record.media_socket.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
         Ok(response)
     }
 
@@ -311,6 +425,7 @@ impl ExportRegistry {
     #[cfg(target_os = "macos")]
     pub fn republish(&self, owner: AgentId, request: RepublishRequest) -> Result<RepublishResponse, ExportError> {
         let RepublishRequest {
+            execution,
             media_socket,
             control_socket,
             link_token,
@@ -319,18 +434,22 @@ impl ExportRegistry {
             cpu,
             input,
         } = request;
-        let bridge = locate_bridge().ok_or(ExportError::BridgeMissing)?;
         let publication_id = format!("rep_{}", Uuid::new_v4().simple());
-        let service = format!("work.flotilla.porthole.republish.{}", &publication_id[4..20]);
+        let service = match execution {
+            BridgeExecution::InProcess => porthole_protocol::capture_sessions::MACOS_NATIVE_ATTACH_MACH_SERVICE.to_owned(),
+            BridgeExecution::Worker => format!("work.flotilla.porthole.republish.{}", &publication_id[4..20]),
+        };
         let dir = self.runtime_dir()?.join("republications").join(&publication_id);
         // Short, like export sockets: Unix socket paths are limited to 104 bytes.
         // The CPU and input sockets share one short directory owned by portholed.
         let sockets_dir = (cpu || input)
             .then(|| self.runtime_dir().map(|r| r.join("r").join(&publication_id[4..16])))
             .transpose()?;
-        if let Some(d) = &sockets_dir {
-            std::fs::create_dir_all(d).map_err(ExportError::Io)?;
-        }
+        let sockets_directory = sockets_dir
+            .clone()
+            .map(RuntimeDirectory::create)
+            .transpose()
+            .map_err(ExportError::Io)?;
         let cpu_socket = sockets_dir.as_ref().filter(|_| cpu).map(|d| d.join("s"));
         let input_socket = sockets_dir.as_ref().filter(|_| input).map(|d| d.join("i"));
         let spec = IngressSpec {
@@ -343,45 +462,37 @@ impl ExportRegistry {
             cpu_socket: cpu_socket.clone(),
             input_socket: input_socket.clone(),
         };
-        let remove_sockets_dir = || {
-            if let Some(d) = &sockets_dir {
-                let _ = std::fs::remove_dir_all(d);
-            }
-        };
-        let mut job = jackstay_graph::export::IngressJob::spawn(&bridge, &spec, &dir).map_err(|e| {
-            remove_sockets_dir();
-            ExportError::RepublishFailed(e.to_string())
-        })?;
+        let viewer_token = spec.viewer_token.clone().unwrap_or_default();
+        let mut job = RepublishHandle::start(execution, spec, &dir).map_err(|e| ExportError::RepublishFailed(e.to_string()))?;
         let status = job.wait_for_publication(Duration::from_secs(20));
         if status.publication.is_none() {
             let detail = status
                 .failure
                 .clone()
                 .or_else(|| {
-                    std::fs::read_to_string(job.stderr_path())
-                        .ok()
+                    job.stderr_path()
+                        .and_then(|path| std::fs::read_to_string(path).ok())
                         .map(|s| s.lines().last().unwrap_or("").to_owned())
                 })
                 .unwrap_or_else(|| "no publication within 20 s".to_owned());
             let _ = job.stop();
-            remove_sockets_dir();
             return Err(ExportError::RepublishFailed(detail));
         }
         let native = NativeCaptureInfo {
             transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
             endpoint: service,
-            attach_token: spec.viewer_token.clone().unwrap_or_default(),
+            attach_token: viewer_token,
         };
         let record = RepublishRecord {
             owner,
             identities: identities.clone(),
             native: native.clone(),
-            // The paths portholed asked for and whose directory it owns; the
-            // half reports the same ones, and the directory cleanup keys off
-            // this shared parent.
+            // The paths portholed asked for; the half reports the same ones.
+            // The directory guard owns their cleanup.
             cpu_socket,
             input_socket,
             job,
+            _sockets_directory: sockets_directory,
         };
         let response = RepublishResponse {
             publication: republish_publication(&publication_id, &record, &status),
@@ -451,16 +562,8 @@ impl ExportRegistry {
                 return Err(ExportError::NotOwner);
             }
             let mut record = inner.republications.remove(publication_id).expect("checked above");
+            drop(inner);
             let _ = record.job.stop();
-            // Both sockets live in one directory; remove it once.
-            let dir = record
-                .cpu_socket
-                .as_ref()
-                .or(record.input_socket.as_ref())
-                .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
-            if let Some(dir) = dir {
-                let _ = std::fs::remove_dir_all(dir);
-            }
             Ok(())
         }
         #[cfg(not(target_os = "macos"))]
@@ -522,6 +625,87 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn unsupported_exports_reject_both_execution_modes_before_creating_resources() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = ExportRegistry::new(Some(root.path().join("unused")));
+        for execution in [BridgeExecution::InProcess, BridgeExecution::Worker] {
+            let result = registry.create_export(
+                "capture",
+                AgentId::from("owner"),
+                Identities {
+                    source: "surface".into(),
+                    publication: "capture".into(),
+                },
+                &NativeCaptureInfo {
+                    transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+                    endpoint: "unused".into(),
+                    attach_token: "unused".into(),
+                },
+                Default::default(),
+                None,
+                true,
+                (128, 128),
+                execution,
+            );
+            assert!(matches!(result, Err(ExportError::Unsupported)), "{result:?}");
+            assert!(!root.path().join("unused").exists());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn in_process_exports_are_independent_and_registry_drop_cleans_them_up() {
+        let root = tempfile::tempdir_in("/tmp").unwrap();
+        let registry = ExportRegistry::new(Some(root.path().to_path_buf()));
+        let owner = AgentId::from("owner");
+        let create = || {
+            registry
+                .create_export(
+                    "capture",
+                    owner.clone(),
+                    Identities {
+                        source: "surface".into(),
+                        publication: "capture".into(),
+                    },
+                    &NativeCaptureInfo {
+                        transport_kind: NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+                        endpoint: "unused-until-peer-connects".into(),
+                        attach_token: "token".into(),
+                    },
+                    Default::default(),
+                    None,
+                    false,
+                    (1, 1),
+                    BridgeExecution::default(),
+                )
+                .unwrap()
+        };
+        let first = create();
+        let second = create();
+        assert_eq!(first.status, "listening");
+        assert_eq!(second.status, "listening");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = Path::new(&first.media_socket).parent().unwrap();
+            assert_eq!(std::fs::metadata(directory).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        assert!(matches!(
+            registry.inner.lock().unwrap().exports[&first.export_id].handle,
+            ExportHandle::InProcess(_)
+        ));
+        assert!(matches!(
+            registry.close_export("capture", &first.export_id, &AgentId::from("other")),
+            Err(ExportError::NotOwner)
+        ));
+        registry.close_export("capture", &first.export_id, &owner).unwrap();
+        assert!(!Path::new(&first.media_socket).exists());
+        assert!(Path::new(&second.media_socket).exists());
+        drop(registry);
+        assert!(!Path::new(&second.media_socket).parent().unwrap().exists());
+    }
+
     #[test]
     fn phases_map_to_status_names() {
         let mut s = HalfStatus::default();
@@ -554,6 +738,7 @@ mod tests {
                 None,
                 false,
                 (0, 0),
+                BridgeExecution::default(),
             )
             .unwrap_err();
         assert!(matches!(err, ExportError::Io(_) | ExportError::BridgeMissing), "{err}");

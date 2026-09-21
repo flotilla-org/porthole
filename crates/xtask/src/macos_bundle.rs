@@ -85,20 +85,17 @@ pub fn validate_sign_identity(sign: Option<&str>) -> Result<Option<String>, Bund
     }
 }
 
-/// The cross-host bridge half is optional in a bundle. It is taken from
-/// `JACKSTAY_BRIDGE_BIN` when set, else from the target profile when a
-/// `jackstay-bridge` was built there; portholed finds it as a sibling and the
-/// bundle signature covers it, so no environment is needed at run time.
-pub fn bridge_binary(profile: &str) -> Option<PathBuf> {
+/// The bridge is a required workspace binary. Portholed finds it as a sibling
+/// in the signed bundle; JACKSTAY_BRIDGE_BIN is a development override.
+pub fn bridge_binary(profile: &str) -> PathBuf {
     bridge_binary_from(std::env::var_os("JACKSTAY_BRIDGE_BIN"), profile)
 }
 
-fn bridge_binary_from(env: Option<std::ffi::OsString>, profile: &str) -> Option<PathBuf> {
+fn bridge_binary_from(env: Option<std::ffi::OsString>, profile: &str) -> PathBuf {
     if let Some(path) = env.filter(|p| !p.is_empty()) {
-        return Some(PathBuf::from(path));
+        return PathBuf::from(path);
     }
-    let local = Path::new("target").join(profile).join("jackstay-bridge");
-    local.is_file().then_some(local)
+    Path::new("target").join(profile).join("jackstay-bridge")
 }
 
 pub fn run(options: BundleOptions) -> Result<(), BundleError> {
@@ -117,9 +114,7 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     ensure_file(&daemon_bin)?;
     ensure_file(&cli_bin)?;
     ensure_file(&helper_bin)?;
-    if let Some(bridge) = &bridge_bin {
-        ensure_file(bridge)?;
-    }
+    ensure_file(&bridge_bin)?;
 
     let app = app_path(profile);
     if app.exists() {
@@ -145,9 +140,7 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     copy_executable(&helper_bin, &macos_dir.join("PortholeHelper"))?;
     copy_executable(&daemon_bin, &macos_dir.join("portholed"))?;
     copy_executable(&cli_bin, &macos_dir.join("porthole"))?;
-    if let Some(bridge) = &bridge_bin {
-        copy_executable(bridge, &macos_dir.join("jackstay-bridge"))?;
-    }
+    copy_executable(&bridge_bin, &macos_dir.join("jackstay-bridge"))?;
 
     let app_arg = app.to_string_lossy().to_string();
     let sign_args = ["-s", identity.as_str(), "--force", "--deep", app_arg.as_str()];
@@ -159,10 +152,7 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     println!("bundle mode: helper app");
     println!("bundle built: {}", app.display());
     println!("signed with:      {identity}");
-    match &bridge_bin {
-        Some(bridge) => println!("bridge:           {} (bundled as jackstay-bridge)", bridge.display()),
-        None => println!("bridge:           none; set JACKSTAY_BRIDGE_BIN to bundle jackstay-bridge for exports"),
-    }
+    println!("bridge:           {} (bundled as jackstay-bridge)", bridge_bin.display());
     println!(
         "install/restart:   \"{}\" install --user --force",
         macos_dir.join("porthole").display()
@@ -281,12 +271,13 @@ mod tests {
     fn bridge_binary_prefers_the_environment_and_ignores_an_empty_value() {
         assert_eq!(
             bridge_binary_from(Some("/opt/jackstay-bridge".into()), "debug"),
-            Some(PathBuf::from("/opt/jackstay-bridge"))
+            PathBuf::from("/opt/jackstay-bridge")
         );
-        // Empty means unset; the target profile is then consulted and, in a
-        // test working directory without a build, yields nothing.
-        assert_eq!(bridge_binary_from(Some("".into()), "no-such-profile"), None);
-        assert_eq!(bridge_binary_from(None, "no-such-profile"), None);
+        // Missing builds must still resolve to a required path, not silently
+        // turn into a bundle without a bridge.
+        let missing = Path::new("target").join("no-such-profile").join("jackstay-bridge");
+        assert_eq!(bridge_binary_from(Some("".into()), "no-such-profile"), missing);
+        assert_eq!(bridge_binary_from(None, "no-such-profile"), missing);
     }
 
     /// Drift guard: the bundled daemon plist declares the attach MachService by

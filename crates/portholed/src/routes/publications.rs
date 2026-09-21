@@ -132,6 +132,7 @@ pub async fn post_export(
             request.bitrate_bps,
             input,
             frame,
+            request.execution,
         )
     })
     .await
@@ -165,12 +166,12 @@ pub async fn delete_export(
     Path((id, export_id)): Path<(String, String)>,
 ) -> Result<Json<ExportResponse>, ApiError> {
     let agent_id = authenticated_agent_id(&state, &headers).await?;
-    Ok(Json(
-        state
-            .exports
-            .close_export(&id, &export_id, &agent_id)
-            .map_err(export_error_to_api)?,
-    ))
+    let exports = state.exports.clone();
+    let response = tokio::task::spawn_blocking(move || exports.close_export(&id, &export_id, &agent_id))
+        .await
+        .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("stop export: {e}")).into()))?
+        .map_err(export_error_to_api)?;
+    Ok(Json(response))
 }
 
 pub async fn post_republish(
@@ -193,7 +194,11 @@ pub async fn delete_republication(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let agent_id = authenticated_agent_id(&state, &headers).await?;
-    state.exports.close_republication(&id, &agent_id).map_err(export_error_to_api)?;
+    let exports = state.exports.clone();
+    tokio::task::spawn_blocking(move || exports.close_republication(&id, &agent_id))
+        .await
+        .map_err(|e| ApiError(PortholeError::new(ErrorCode::InternalError, format!("stop republication: {e}")).into()))?
+        .map_err(export_error_to_api)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -312,8 +317,8 @@ mod tests {
         )
         .await;
         assert_eq!(error_code(&json), Some(ErrorCode::AgentPermissionDenied), "{status} {json}");
-        // The owner passes the ownership check; without a bridge binary the
-        // registry then reports it unsupported, and with one it would spawn.
+        // The owner passes the ownership check. Native bridge tasks start on
+        // macOS; other platforms reject the operation before resource setup.
         let (status, json) = call(
             h.router.clone(),
             Method::POST,
@@ -327,6 +332,8 @@ mod tests {
             status == StatusCode::CREATED || error_code(&json) == Some(ErrorCode::AdapterUnsupported),
             "{status} {json}"
         );
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(error_code(&json), Some(ErrorCode::AdapterUnsupported), "{json}");
         #[cfg(unix)]
         {
             let (_, json) = call(
