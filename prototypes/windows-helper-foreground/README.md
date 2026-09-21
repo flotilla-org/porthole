@@ -115,10 +115,25 @@ An unelevated worker invocation with Session 0 also rejected the request before
 opening a gate or attempting tscon (`evidence/worker-session-rejection.json`).
 That tests one session guard, not a production caller-authentication boundary.
 
-All four repository gates pass. The successful handoff runs above used the
-previous PowerShell launcher; cancellation is the native validation of the new
-.NET launcher so far. Its approve-and-handoff path still needs a repeat before
-claiming the revised prototype has full end-to-end coverage.
+All four repository gates pass. The initial successful handoff runs above used
+the previous PowerShell launcher. The revised .NET launcher's approval path was
+then verified in a further operator-driven run:
+
+- Foreground grant: `2026-09-21T20:58:35.9699206Z`.
+- Worker started handoff at `2026-09-21T20:58:35.9749483Z`; tscon exited 0.
+- Focus, exact text and capture passed at `2026-09-21T20:58:46.7123306Z`, with
+  Session 1 console-active and no active RDP viewer listed.
+- Cleanup completed at `2026-09-21T20:58:47.4453290Z` without errors. Original
+  agent wrapper, Porthole and Cleat retained their start times and session.
+- Screenshot SHA-256 matched the previously verified console-grant image:
+  `6F0E9D62B1A601C06A4286CA6639703F7AAE65C7D314635D951980ABE499E418`.
+
+Public evidence is `evidence/helper-native-handoff.json` and
+`evidence/helper-native-handoff-worker.json`. Original artifacts:
+`C:\dev\windows-parity-plan\evidence\helper-native-handoff-20260921-215817`.
+Both operator approval and cancellation are now verified for the revised
+launcher. This answers the prototype's basic sequence question; it does not
+complete production privilege design or the broader failure/concurrency matrix.
 
 [Windows API contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow):
 the grantor must already be eligible, and later user input can revoke eligibility.
