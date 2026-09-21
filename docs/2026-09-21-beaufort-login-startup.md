@@ -123,6 +123,36 @@ of reliable unattended operation. No production code changed between runs.
 This does not validate Jackstay streaming, a headless/virtual display setup,
 genuine logon-trigger firing, or cold startup.
 
+### Thirty-cycle console run
+
+A follow-up alternated focus, authenticated text input and capture between two
+fresh test editors for 30 cycles. Before handoff, six alternating cycles passed
+as a connected baseline. The console run then passed all 30 cycles from
+`2026-09-21T19:25:37.0154705Z` through
+`2026-09-21T19:26:53.0681600Z`, completing cleanup at
+`2026-09-21T19:26:55.8547391Z`.
+
+- Session 1 was `console ... Active` both before and after every cycle.
+- Every focus ended with the target editor's PID in the foreground. Subsequent
+  cycles switched from the other editor; the first switched from PID 13108.
+- Every input matched the target's expected accumulated text. After each cycle,
+  both editors were checked to catch input delivered to the wrong window.
+- All 30 captures succeeded. Visual inspection of the final two PNGs confirmed
+  that one editor contained only odd-numbered steps and the other only even
+  steps. Desktop availability was reported as granted throughout the probe.
+- Both editors closed and the temporary identity was revoked without cleanup
+  errors. The original Porthole, agent wrapper and Cleat processes retained
+  their start times after reconnect.
+
+Local evidence is in
+`C:\dev\windows-parity-plan\evidence\console-reliability-20260921-202508`,
+including `result.json`, `step29.png` and `step30.png`. The reusable local probe
+is `C:\dev\windows-parity-plan\debug\console-reliability-proof.ps1`.
+This is a successful short sustained run after one console handoff, not 30
+independent handoffs or a long-duration unattended soak. It strengthens the
+evidence for the manually logged-in, no-viewer workflow without explaining the
+first experiment's activation failure. The deferred coverage above is unchanged.
+
 ## Host tools
 
 The operator authorized standard tool installation. `Python.Python.3.13` was
