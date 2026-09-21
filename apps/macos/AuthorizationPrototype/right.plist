@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>class</key><string>evaluate-mechanisms</string>
+<key>mechanisms</key><array><string>PortholeAuthorizationPrototype:approve,privileged</string></array>
+<key>shared</key><false/>
+<key>comment</key><string>THROWAWAY: proves approval of a custom right; no privileged operation.</string>
+</dict></plist>
