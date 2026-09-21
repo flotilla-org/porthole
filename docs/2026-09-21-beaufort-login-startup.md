@@ -77,8 +77,9 @@ Local evidence is in
 This proves process continuity and desktop-availability recovery through the
 operator's RDP interruption. It does not prove authenticated input/screenshot
 failure or recovery: those operations were not sampled across this interruption.
-A separate lock/unlock test and authenticated desktop-operation failure/recovery
-across an ordinary RDP disconnect remain outstanding. The console-handoff
+Authenticated desktop-operation failure/recovery across an ordinary RDP
+disconnect remains outstanding. The lock/unlock result below records partial
+recovery and an activation failure. The console-handoff
 experiment below addresses operating without an RDP viewer after explicit handoff.
 
 ## Console handoff: input and capture without an RDP viewer
@@ -152,6 +153,39 @@ This is a successful short sustained run after one console handoff, not 30
 independent handoffs or a long-duration unattended soak. It strengthens the
 evidence for the manually logged-in, no-viewer workflow without explaining the
 first experiment's activation failure. The deferred coverage above is unchanged.
+
+## Lock/unlock: explicit failure, partial recovery
+
+On September 21 the operator locked and unlocked the existing Beaufort session.
+The authenticated probe used a fresh test editor and temporary identity.
+
+- Baseline focus, text verification and screenshot passed at
+  `2026-09-21T20:03:49.2562132Z`.
+- At `2026-09-21T20:04:14.0834358Z`, desktop availability was false. Focus and
+  capture both failed with HTTP 403 `system_permission_needed`, reporting that
+  the interactive input desktop was unavailable (Windows access denied).
+  The probe verified that the editor still contained only `before;`.
+- At `2026-09-21T20:04:36.2694774Z`, after unlock and a two-second settling
+  delay, desktop availability was true. Foreground activation nevertheless
+  failed after the 500 ms poll, so text input was not reached.
+- The independent capture succeeded after unlock. Visual inspection confirmed
+  a valid editor image containing the unchanged `before;` text. Its SHA-256 is
+  `121D32BE1C1A6B17A476481ECA2865C7409F1C8B940EFCB861A148410B9AFD5B`.
+- Porthole PID 8620, agent wrapper PID 7320 and Cleat PID 14800 retained their
+  recorded start times and Windows session. The test editor closed and its
+  identity was revoked without cleanup errors.
+
+The overall probe verdict is **FAIL**, because automatic input recovery did not
+pass. Process persistence, explicit locked-desktop errors and capture recovery
+did pass. The repeated activation error resembles the first console-handoff
+failure, but a common root cause has not been established. Do not mark the
+desktop-transition acceptance complete on this evidence.
+
+Local evidence: `C:\dev\windows-parity-plan\evidence\lock-unlock-20260921-210348`
+contains `result.json`, `process-baseline.json` and `after-unlock.png`.
+The local reproducer is
+`C:\dev\windows-parity-plan\debug\lock-desktop-proof.ps1`; it requires an
+operator-coordinated lock/unlock and exercises real authenticated routes.
 
 ## Host tools
 
