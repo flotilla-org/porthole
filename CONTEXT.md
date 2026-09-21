@@ -181,6 +181,23 @@ A trusted association of a participant or target with one workload execution.
 A participant's claimed run name or a target's current focus does not by itself
 establish that association.
 
+### Operation preparation
+
+**Prepared scope**:
+The fixed, reviewable description of a workload's allowed parameters, actions,
+target-selection rules and authority effects. Runtime choices may vary within
+those bounds; changing the bounds requires a revised request.
+
+**Target binding**:
+The association of a concrete target with an approved selection rule, after
+establishing that the target satisfies the rule. Binding a future target does
+not itself enlarge the approved scope.
+
+**Deferred check**:
+A readiness check that can only complete after an authorized earlier step,
+such as establishing that a launched application's intended window exists.
+A declared deferred check does not mean that a known permission gap is satisfied.
+
 ### Coordinate units
 
 **Logical point**:
