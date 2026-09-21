@@ -1,0 +1,60 @@
+﻿{
+    "status":  "PASS",
+    "session_id":  1,
+    "started_utc":  "2026-09-21T20:24:54.5702225Z",
+    "phases":  [
+                   {
+                       "bounds":  {
+                                      "x":  120.0,
+                                      "y":  120.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  },
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "utc":  "2026-09-21T20:24:54.8570561Z",
+                       "phase":  "before",
+                       "focus_ok":  true,
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             2  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+                       "sha256":  "18F416B81A221D706D480C0FB2F0C417E140BD3C0EB04C0D995AE9444F0D9241",
+                       "png":  "C:\\dev\\windows-parity-plan\\evidence\\helper-grant-20260921-212454\\before.png",
+                       "text_matches":  true
+                   },
+                   {
+                       "bounds":  {
+                                      "x":  165.0,
+                                      "y":  236.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  },
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "utc":  "2026-09-21T20:26:56.6060095Z",
+                       "phase":  "helper-grant",
+                       "focus_ok":  true,
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             2  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+                       "sha256":  "4040AFB1C20CE35BD52B3CD8819090CF83A086AA31DE805206CC8F23FA7C89BD",
+                       "png":  "C:\\dev\\windows-parity-plan\\evidence\\helper-grant-20260921-212454\\helper-grant.png",
+                       "text_matches":  true
+                   }
+               ],
+    "agent_id":  "agent_0c7a6b52524844889dc779254ab66d6c",
+    "daemon_pid":  8620,
+    "daemon_started":  "2026-09-21T17:04:12.6326280Z",
+    "helper_foreground":  true,
+    "grant_succeeded":  true,
+    "cleanup_errors":  [
+
+                       ],
+    "completed_utc":  "2026-09-21T20:26:57.2762875Z"
+}
