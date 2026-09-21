@@ -241,14 +241,8 @@ fn status_message(status: &HalfStatus) -> Option<String> {
 /// Finds the bridge executable: `JACKSTAY_BRIDGE_BIN`, then a sibling of the
 /// running daemon (the bundled deployment), then the PATH.
 fn locate_bridge() -> Option<BridgeBinary> {
-    if let Some(path) = std::env::var_os("JACKSTAY_BRIDGE_BIN").filter(|path| !path.is_empty()) {
-        return Some(BridgeBinary(path.into()));
-    }
-    let sibling = std::env::current_exe().ok()?.with_file_name("jackstay-bridge");
-    sibling
-        .is_file()
-        .then_some(BridgeBinary(sibling))
-        .or_else(|| BridgeBinary::locate(None))
+    let sibling = std::env::current_exe().ok().map(|path| path.with_file_name("jackstay-bridge"));
+    BridgeBinary::locate(sibling.as_deref())
 }
 
 impl ExportRegistry {

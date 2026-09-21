@@ -96,18 +96,18 @@ impl HalfStatus {
     }
 }
 
-/// Where the `jackstay-bridge` executable is. Explicit path, then the
-/// `JACKSTAY_BRIDGE_BIN` variable, then the PATH.
+/// Where the `jackstay-bridge` executable is. A nonempty
+/// `JACKSTAY_BRIDGE_BIN` override, then an existing sibling, then the PATH.
 #[derive(Debug, Clone)]
 pub struct BridgeBinary(pub PathBuf);
 
 impl BridgeBinary {
-    pub fn locate(explicit: Option<&Path>) -> Option<Self> {
-        if let Some(p) = explicit {
-            return Some(Self(p.to_path_buf()));
+    pub fn locate(sibling: Option<&Path>) -> Option<Self> {
+        if let Some(path) = std::env::var_os("JACKSTAY_BRIDGE_BIN").filter(|path| !path.is_empty()) {
+            return Some(Self(path.into()));
         }
-        if let Ok(p) = std::env::var("JACKSTAY_BRIDGE_BIN") {
-            return Some(Self(PathBuf::from(p)));
+        if let Some(path) = sibling.filter(|path| path.is_file()) {
+            return Some(Self(path.to_path_buf()));
         }
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path)
@@ -305,12 +305,9 @@ impl HalfHandle {
         }
         #[cfg(unix)]
         {
-            unsafe extern "C" {
-                fn kill(pid: i32, sig: i32) -> i32;
-            }
             // SAFETY: signalling our own child.
             unsafe {
-                kill(self.child.id() as i32, 15);
+                libc::kill(self.child.id() as i32, libc::SIGTERM);
             }
         }
         let deadline = Instant::now() + Duration::from_secs(5);

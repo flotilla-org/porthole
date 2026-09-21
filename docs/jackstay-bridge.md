@@ -18,8 +18,10 @@ The separate executable remains an explicit worker mode and a standalone
 probe/loopback tool. Both modes use the same encode, decode and relay functions.
 See [ADR-0011](adr/0011-porthole-owned-bridge-runtime.md).
 
-The historical measurements below exercised separate workers. They do not
-constitute live validation of the in-process mode.
+The installed in-process and worker paths passed local acceptance on kiwi on
+2026-09-21. See [the acceptance report](reports/2026-09-21-bridge-runtime-acceptance.md)
+for concurrent publications, consumer checks, cleanup and remaining limits.
+The historical cross-host measurements below exercised separate workers.
 
 ## Crates
 
@@ -195,9 +197,9 @@ test set and skips itself on a machine without hardware 4:4:4.
 - Any machine other than M4. The probe decides at session start, so other
   chips will get a recorded fallback rather than a surprise, but no fallback
   path has been exercised.
-- A capture with motion: the real-capture run showed an idle simulator. A
-  scrolling or animating app on comte would exercise the sender's drop policy
-  and the rate cap over the forward.
+- Motion over a remote forward. Local acceptance exercised an animated test
+  window; the cross-host run showed an idle simulator. A scrolling or animating
+  app on comte would exercise the sender's drop policy and rate cap over SSH.
 - The staging ring reuses a surface after `staging_depth` frames without
   confirming that the pool blit reading it has completed. On this hardware the
   blit finishes within a frame period; a completion check belongs in the
