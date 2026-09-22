@@ -1,0 +1,45 @@
+﻿{
+    "observed_utc":  "2026-09-22T22:26:44.4314787Z",
+    "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             3  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+    "handoff":  {
+                    "status":  "handoff_ready",
+                    "unresolved":  false,
+                    "error":  null,
+                    "worker_result":  "DONE",
+                    "utc":  "2026-09-22T22:25:52.398016Z",
+                    "daemon_pid":  8620,
+                    "daemon_started":  "2026-09-21T17:04:12.632628Z"
+                },
+    "processes":  [
+                      {
+                          "pid":  8620,
+                          "name":  "portholed",
+                          "started_utc":  "2026-09-21T17:04:12.6326280Z",
+                          "session_id":  1
+                      },
+                      {
+                          "pid":  7320,
+                          "name":  "powershell",
+                          "started_utc":  "2026-09-21T17:04:14.9827857Z",
+                          "session_id":  1
+                      },
+                      {
+                          "pid":  14800,
+                          "name":  "cleat",
+                          "started_utc":  "2026-09-21T17:04:14.4365622Z",
+                          "session_id":  1
+                      },
+                      {
+                          "pid":  10936,
+                          "name":  "PortholeHelper",
+                          "started_utc":  "2026-09-22T22:25:13.7457704Z",
+                          "session_id":  1
+                      }
+                  ],
+    "porthole_http_status":  200,
+    "interactive_desktop_granted":  true,
+    "acceptance_status":  "PASS",
+    "cleanup_errors":  [
+
+                       ]
+}
