@@ -43,8 +43,11 @@ prototype's `evidence/console-desktop-20260922` records the native run.
 clean branch. It narrows the visible UI to handoff and retains the guarded
 worker protocol. Its installed development build passed the same native
 console focus/text/capture and reconnect test. A subsequent source update added
-a notification-area icon and close-to-tray behavior; shell interaction still
-needs native acceptance. This is an unsigned development build;
+a notification-area icon and close-to-tray behavior. Native UI Automation
+confirmed that its hidden-icons button reopens the same helper process and that
+right-click Quit ends only the helper; accessibility and Explorer restart still
+need acceptance.
+This is an unsigned development build;
 installer/signing, startup, accessibility checks and a production privilege
 review remain open.
 

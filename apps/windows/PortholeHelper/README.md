@@ -15,7 +15,10 @@ typed into and captured a test-owned editor. The original workload persisted
 after reconnect. See `docs/evidence/windows-helper-20260922-attempt2`.
 
 The helper has a notification-area icon with Open and Quit actions. Closing its
-WinUI status window hides it while the helper stays running. Like the macOS menu
+WinUI status window hides it while the helper stays running. Native UI Automation
+confirmed that clicking the icon in Explorer's hidden-icons flyout reopens the
+same process's window. The right-click Quit action ended only the helper while
+Porthole, Cleat and the agent stayed running. Like the macOS menu
 bar helper, it should eventually present the same host concepts as permissions
 and agent request review are added; shell and OS operations remain native to
 each platform. Tray accessibility and Explorer restart behavior still need
