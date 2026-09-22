@@ -181,6 +181,31 @@ A trusted association of a participant or target with one workload execution.
 A participant's claimed run name or a target's current focus does not by itself
 establish that association.
 
+**Standing delegation**:
+Previously established authority permitting qualifying operations without a new
+human decision. It remains bounded by its permitted principals, actions, targets
+and other policy conditions.
+
+**Standing rule**:
+A persistent policy authorizing future operations that meet its conditions.
+It can issue separate bounded run grants; the rule's expiry is independent of
+the lifetime of any individual run grant.
+
+**Operator approval session**:
+A period in which an authenticated operator may issue confirmations without
+unlocking approval authority again, subject to policy. Its duration is distinct
+from the lifetime of grants issued through it.
+
+**Operator confirmation**:
+An explicit human decision made within an authenticated operator session.
+Confirmation approves the reviewed scope; it does not itself require a new
+authentication step unless policy demands one.
+
+**Fresh authentication**:
+A new authentication step required by policy for the decision being reviewed.
+It may satisfy compatible requirements within that decision, but does not cover
+later decisions or enlarge approved scope.
+
 ### Operation preparation
 
 **Prepared scope**:
