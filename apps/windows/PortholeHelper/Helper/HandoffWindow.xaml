@@ -1,0 +1,24 @@
+<Window
+    x:Class="Porthole.WindowsHelper.HandoffWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Porthole helper">
+    <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="FlyoutContent" Spacing="14" Padding="20" KeyDown="OnFlyoutKeyDown">
+                <TextBlock Text="Porthole" FontSize="22" FontWeight="SemiBold" />
+                <TextBlock Text="Keep this desktop available after disconnecting RDP." TextWrapping="Wrap" />
+                <Button x:Name="Handoff" x:FieldModifier="internal" AutomationProperties.Name="Disconnect RDP — keep automation running; requires administrator approval">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE72E;" />
+                        <TextBlock Text="Disconnect RDP — keep automation running" />
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="You stay signed in and the local desktop stays unlocked." TextWrapping="Wrap" />
+                <Button x:Name="CancelAttempt" x:FieldModifier="internal" Content="Cancel handoff" IsEnabled="False" Visibility="Collapsed" />
+                <InfoBar x:Name="Status" x:FieldModifier="internal" IsOpen="True" IsClosable="False" Title="Ready"
+                         Message="Disconnect RDP when this desktop is available." Severity="Informational" />
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</Window>

@@ -1,0 +1,41 @@
+﻿{
+    "status":  "FAIL",
+    "started_utc":  "2026-09-22T22:24:11.4392032Z",
+    "session_id":  1,
+    "after_handoff_utc":  "2026-09-22T22:24:10.7107296Z",
+    "phases":  [
+                   {
+                       "phase":  "rdp",
+                       "utc":  "2026-09-22T22:24:11.6885063Z",
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             2  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "focus_ok":  true,
+                       "text_matches":  false,
+                       "capture_ok":  true,
+                       "observed_text":  "rd",
+                       "input_error":  "Test editor text mismatch",
+                       "png":  "C:\\dev\\windows-parity-plan\\helper-production\\docs\\evidence\\windows-helper-20260922\\rdp.png",
+                       "sha256":  "C6C8716CD373EC3951FAD6022919C2B7CC38F25D92FE268022A67923AF12FF2A",
+                       "bounds":  {
+                                      "x":  120.0,
+                                      "y":  120.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  }
+                   }
+               ],
+    "agent_id":  "agent_e8cde3912f4d435d91a54c302e49d416",
+    "fixture_pid":  18604,
+    "surface_id":  "surf_51d074965e49491c8014382664ddc3cc",
+    "error":  "Desktop probe failed in rdp",
+    "cleanup_errors":  [
+
+                       ],
+    "completed_utc":  "2026-09-22T22:24:12.3494306Z"
+}
