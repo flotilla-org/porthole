@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory=$true)][string]$CodexCommand,
     [Parameter(Mandatory=$true)][string]$Workspace,
     [string]$Server = 'beaufort-parity',
-    [string]$Session = 'coding-agent'
+    [string]$Session = 'coding-agent',
+    [switch]$UseExistingDaemon
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'pipe-client.ps1')
@@ -35,7 +36,17 @@ if (Test-Path -LiteralPath $statePath) {
 if (Test-Path -LiteralPath (Join-Path $RunDirectory 'config.json')) { throw 'Incomplete prior run exists; inspect and clean it up first' }
 $sessionId = (Get-Process -Id $PID).SessionId
 if ($sessionId -eq 0 -or -not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $sessionId)) { throw 'Start from the existing GUI login' }
-if (Get-Process portholed -ErrorAction SilentlyContinue) { throw 'A Porthole daemon already exists; do not replace it' }
+$existingDaemons = @(Get-Process portholed -ErrorAction SilentlyContinue)
+$existingDaemon = $null
+if ($UseExistingDaemon) {
+    if ($existingDaemons.Count -ne 1 -or $existingDaemons[0].SessionId -ne $sessionId -or
+        $existingDaemons[0].Path -ne (Join-Path $PortholeBinDirectory 'portholed.exe')) {
+        throw 'Expected exactly one Porthole daemon from the requested binary directory in this GUI session'
+    }
+    $existingDaemon = $existingDaemons[0]
+} elseif ($existingDaemons.Count -gt 0) {
+    throw 'Porthole is already running; -UseExistingDaemon requires exactly one matching daemon in this GUI session. Inspect multiple or mismatched daemons first'
+}
 foreach ($file in @((Join-Path $PortholeBinDirectory 'porthole.exe'),(Join-Path $PortholeBinDirectory 'portholed.exe'),(Join-Path $PortholeBinDirectory 'examples\desktop_fixture.exe'),$CleatExecutable,$CodexCommand)) {
     if (-not (Test-Path -LiteralPath $file)) { throw "Missing prerequisite: $file" }
 }
@@ -50,7 +61,10 @@ powershell -NoProfile -File "$proof" -RunDirectory "$RunDirectory"
 This is the authorized native Windows desktop acceptance task. It launches a test-owned editor through Porthole, types two lines, saves a PNG and closes that editor. The operator is approving this run's own pending surface grants; the script waits for them. Do not approve permissions yourself, read credential files, print environment variables or tokens, change any other application, or launch further agents. If the script fails, report the failure and wait. If it passes, report the result and remain available for further work. Do not end this Codex session.
 "@
 $task | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $Workspace 'request.md')
-$daemon = Start-Process -FilePath (Join-Path $PortholeBinDirectory 'portholed.exe') -WorkingDirectory $Workspace -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $RunDirectory 'daemon.stdout.log') -RedirectStandardError (Join-Path $RunDirectory 'daemon.stderr.log')
+$daemon = $existingDaemon
+if (-not $daemon) {
+    $daemon = Start-Process -FilePath (Join-Path $PortholeBinDirectory 'portholed.exe') -WorkingDirectory $Workspace -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $RunDirectory 'daemon.stdout.log') -RedirectStandardError (Join-Path $RunDirectory 'daemon.stderr.log')
+}
 if ($daemon.SessionId -ne $sessionId) { throw 'Porthole started in a different Windows session' }
 $identity = $null
 try {
