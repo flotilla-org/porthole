@@ -29,11 +29,17 @@ left click opens a lightweight flyout, right click opens the context menu, and
 the flyout closes when focus moves elsewhere. Like the macOS menu bar helper,
 it should eventually present the same host concepts as permissions
 and agent request review are added; shell and OS operations remain native to
-each platform. Tray accessibility and Explorer restart behavior still need
-native acceptance.
+each platform. On Beaufort, the installed merged build also passed focused
+keyboard access: Enter on the focused notification-area icon opened the flyout,
+its handoff action was keyboard focusable, and Escape dismissed it. Restarting
+the Explorer process that owned the taskbar restored the icon without restarting
+the helper, Porthole, Cleat, or the agent; the restored icon opened the original
+helper. See `docs/evidence/windows-helper-shell-20260923.json` and the
+repeatable `scripts/windows-helper/check-tray-shell.ps1`. This is focused
+automation acceptance, not a Narrator or full keyboard-navigation audit.
 
 The production release still needs a signed installer and publisher identity,
-startup integration, accessibility acceptance, adversarial IPC review, and
+startup integration, full accessibility acceptance, adversarial IPC review, and
 an explicit way to reconcile an unknown result after commit. Do not distribute
 this unsigned development build as a finished helper.
 

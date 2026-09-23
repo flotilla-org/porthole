@@ -1,0 +1,30 @@
+﻿{
+    "status":  "PASS",
+    "observed_utc":  "2026-09-23T11:02:16.6723305Z",
+    "helper_pid":  12848,
+    "helper_started_utc":  "2026-09-23T11:01:27.2936457Z",
+    "explorer_before_pid":  19300,
+    "explorer_after_pid":  18744,
+    "icon_name":  "Porthole helper",
+    "keyboard_enter_opened":  true,
+    "handoff_keyboard_focusable":  true,
+    "escape_dismissed":  true,
+    "restored_icon_opened_original_helper":  true,
+    "workloads_unchanged":  [
+                                {
+                                    "pid":  8620,
+                                    "name":  "portholed",
+                                    "started_utc":  "2026-09-21T17:04:12.6326280Z"
+                                },
+                                {
+                                    "pid":  7320,
+                                    "name":  "powershell",
+                                    "started_utc":  "2026-09-21T17:04:14.9827857Z"
+                                },
+                                {
+                                    "pid":  14800,
+                                    "name":  "cleat",
+                                    "started_utc":  "2026-09-21T17:04:14.4365622Z"
+                                }
+                            ]
+}
