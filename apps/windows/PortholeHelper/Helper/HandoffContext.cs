@@ -54,10 +54,16 @@ internal sealed class HandoffContext : IDisposable
 
     void ValidateDaemon()
     {
-        if (daemon.HasExited || daemon.SessionId != session || daemon.StartTime.ToUniversalTime() != started
-            || !string.Equals(daemon.MainModule?.FileName, executable, StringComparison.OrdinalIgnoreCase))
+        if (daemon.HasExited || daemon.SessionId != session || daemon.StartTime.ToUniversalTime() != started)
             throw new InvalidOperationException("Porthole process identity changed");
-        if (!OpenProcessToken(daemon.SafeHandle, 8, out var token)) throw new Win32Exception();
+        string? actualExecutable;
+        try { actualExecutable = daemon.MainModule?.FileName; }
+        catch (Win32Exception error) {
+            throw new InvalidOperationException("Windows denied inspection of the Porthole executable path", error);
+        }
+        if (!string.Equals(actualExecutable, executable, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Porthole process identity changed");
+        if (!OpenProcessToken(daemon.SafeHandle, Win32Token.Query, out var token)) throw new Win32Exception();
         using (token)
         using (var theirs = new WindowsIdentity(token.DangerousGetHandle()))
         using (var ours = WindowsIdentity.GetCurrent()) {

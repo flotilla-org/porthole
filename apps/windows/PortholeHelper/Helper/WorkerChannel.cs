@@ -25,18 +25,19 @@ internal static class WorkerChannel
     internal static string ReadLogonSid(SafeAccessTokenHandle token)
     {
         // WindowsIdentity.Groups deliberately filters out SE_GROUP_LOGON_ID.
-        // Query TokenLogonSid (28), which returns a TOKEN_GROUPS structure.
-        if (GetTokenInformationBuffer(token, 28, IntPtr.Zero, 0, out int size))
+        // TokenLogonSid returns a TOKEN_GROUPS structure.
+        if (GetTokenInformationBuffer(token, Win32Token.LogonSid, IntPtr.Zero, 0, out int size))
             throw new InvalidOperationException("Unexpected empty logon information");
         int error = Marshal.GetLastWin32Error();
-        if (error != 122) throw new Win32Exception(error);
+        if (error != Win32Token.InsufficientBuffer) throw new Win32Exception(error);
         if (size < Marshal.SizeOf<TokenLogonGroup>() || size > 65536)
             throw new InvalidOperationException("Invalid logon information size");
         IntPtr buffer = Marshal.AllocHGlobal(size);
         try {
-            if (!GetTokenInformationBuffer(token, 28, buffer, size, out _)) throw new Win32Exception();
+            if (!GetTokenInformationBuffer(token, Win32Token.LogonSid, buffer, size, out _)) throw new Win32Exception();
             var group = Marshal.PtrToStructure<TokenLogonGroup>(buffer);
-            if (group.Count != 1 || group.Sid == IntPtr.Zero || (group.Attributes & 0xC0000000) != 0xC0000000)
+            if (group.Count != 1 || group.Sid == IntPtr.Zero
+                || (group.Attributes & Win32Token.LogonIdGroup) != Win32Token.LogonIdGroup)
                 throw new InvalidOperationException("Exactly one logon SID required");
             return new SecurityIdentifier(group.Sid).Value;
         } finally { Marshal.FreeHGlobal(buffer); }
@@ -61,14 +62,14 @@ internal static class WorkerChannel
             throw new InvalidOperationException("Unexpected worker pipe server");
         if (worker.SessionId != Process.GetCurrentProcess().SessionId)
             throw new InvalidOperationException("Worker session mismatch");
-        if (!OpenProcessToken(worker.SafeHandle, 8, out var token)) throw new Win32Exception();
+        if (!OpenProcessToken(worker.SafeHandle, Win32Token.Query, out var token)) throw new Win32Exception();
         using (token)
         using (var theirs = new WindowsIdentity(token.DangerousGetHandle()))
         using (var ours = WindowsIdentity.GetCurrent())
         {
             if (theirs.User != ours.User || ReadLogonSid(ours.AccessToken) != ReadLogonSid(token))
                 throw new InvalidOperationException("Same-user, same-logon elevation required");
-            if (!GetTokenInformation(token, 20, out int elevated, 4, out _) || elevated == 0)
+            if (!GetTokenInformation(token, Win32Token.Elevation, out int elevated, sizeof(int), out _) || elevated == 0)
                 throw new InvalidOperationException("Worker is not elevated");
         }
     }

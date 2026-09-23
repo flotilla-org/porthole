@@ -7,4 +7,5 @@
   </PropertyGroup>
   <ItemGroup><Compile Include="../Helper/WorkerChannel.cs" Link="WorkerChannel.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../Helper/HandoffContext.cs" Link="HandoffContext.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../Helper/Win32Token.cs" Link="Win32Token.cs" /></ItemGroup>
 </Project>
