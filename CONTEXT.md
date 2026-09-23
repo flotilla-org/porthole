@@ -223,6 +223,48 @@ A readiness check that can only complete after an authorized earlier step,
 such as establishing that a launched application's intended window exists.
 A declared deferred check does not mean that a known permission gap is satisfied.
 
+### Approval and execution lifetime
+
+**Response deadline**:
+The latest time at which a decision can be accepted for an approval request.
+
+**Grant expiry**:
+The point after which a grant cannot admit new actions. It does not by itself
+end an action already admitted under that grant.
+
+**Operation lifetime**:
+The permitted duration of an admitted action, distinct from the response
+deadline and the expiry of permission to start it.
+
+**Admission**:
+The recorded authorization transition allowing an operation to begin effects.
+A one-use grant permits one admission; admission does not establish that the
+operation's effects completed successfully.
+
+**Reconciliation**:
+Establishing the actual state of an operation and its resources after an
+interruption or uncertain response. It determines whether recorded work can
+resume, has completed, or retains an unknown outcome without replaying effects.
+
+**Cancellation**:
+A request to prevent further actions in an operation and stop its admitted work.
+It records which effects have stopped and which remain; it does not imply that
+completed effects or issued OS authority have been undone.
+
+**Standing-rule revocation**:
+Withdrawal of a standing rule and the remaining authority of grants issued
+under it, with cancellation requested for affected runs. Unstoppable work or
+residual OS authority remains explicitly recorded.
+
+**Pause new runs**:
+Suspension of new authorizations under a standing rule while already-approved
+runs retain their existing authority and lifetime limits.
+
+**Cleanup authority**:
+Permission for a trusted supervisor to perform declared cleanup after ordinary
+work stops, expires or is revoked. It has its own scope and deadline and does
+not permit continuation of the workload or bypass OS permissions.
+
 ### Coordinate units
 
 **Logical point**:
