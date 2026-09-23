@@ -1,9 +1,10 @@
 # Windows helper and console handoff
 
-Status: proposed implementation design. Operator direction establishes a native
-Windows helper, modern Windows UX, manual login as sufficient, and an explicit
-RDP-to-console action. Implementation details below remain reviewable proposals.
+Status: first-release handoff choice accepted and implemented in source. The
+remaining production UI and release details below are proposals or acceptance
+gates, not claims that the unsigned development build is ready to distribute.
 Decision: [Windows helper console handoff](https://github.com/flotilla-org/porthole/issues/173).
+Enactment: [Windows helper production release gates](https://github.com/flotilla-org/porthole/issues/178).
 
 ## Outcome and scope
 
@@ -39,17 +40,15 @@ session was active at the console. Its temporary agent identity was revoked and
 the original workload retained its process identities after reconnect. The
 prototype's `evidence/console-desktop-20260922` records the native run.
 
-`apps/windows/PortholeHelper` carries the first application source slice on a
-clean branch. It narrows the visible UI to handoff and retains the guarded
-worker protocol. Its installed development build passed the same native
-console focus/text/capture and reconnect test. A subsequent source update added
-a notification-area icon and close-to-tray behavior. Native UI Automation
-confirmed that its hidden-icons button reopens the same helper process and that
-right-click Quit ends only the helper; accessibility and Explorer restart still
-need acceptance.
-This is an unsigned development build;
-installer/signing, startup, accessibility checks and a production privilege
-review remain open.
+`apps/windows/PortholeHelper` now carries the merged first application source
+slice. It narrows the visible UI to handoff and retains the guarded worker
+protocol. Its installed development build passed native console
+focus/text/capture and reconnect acceptance. The tray flyout passed native
+open/dismiss, right-click Quit, focused Enter/Escape access, and Explorer-restart
+recovery; see `docs/evidence/windows-helper-shell-20260923.json`. This is an
+unsigned development build. Installer/signing, helper startup, full
+accessibility acceptance, an adversarial privilege review, and reconciliation
+of an uncertain outcome remain open under #178.
 
 - The Windows notification-area helper is the counterpart of the macOS menu bar
   helper. Both own the user-facing host status and setup experience. Keep shared
@@ -60,7 +59,8 @@ review remain open.
 - A notification-area icon opens a compact status window. Provide a Start menu
   entry too, so the app remains discoverable when Windows hides its tray icon.
   The source-tree window used for the first handoff acceptance preceded the
-  tray update. Its shell behavior and accessibility remain release gates.
+  tray update. Focused shell behavior has native evidence; full accessibility
+  remains a release gate.
 - Use native shell integration for the icon and keyboard-accessible context menu;
   closing a menu must finish before a foreground handoff starts.
 - Status window: host/session status, Porthole connectivity, desktop availability,
