@@ -1,0 +1,64 @@
+﻿{
+    "status":  "PASS",
+    "started_utc":  "2026-09-22T22:25:05.2092115Z",
+    "session_id":  1,
+    "after_handoff_utc":  "2026-09-22T22:25:04.4882277Z",
+    "phases":  [
+                   {
+                       "phase":  "rdp",
+                       "utc":  "2026-09-22T22:25:05.4971597Z",
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003erdp-tcp#0                 rober                     1  Active                      \n console                                             2  Conn                        \n rdp-tcp                                         65536  Listen                      ",
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "focus_ok":  true,
+                       "text_matches":  true,
+                       "capture_ok":  true,
+                       "observed_text":  "rdp;",
+                       "png":  "C:\\dev\\windows-parity-plan\\helper-production\\docs\\evidence\\windows-helper-20260922-attempt2\\rdp.png",
+                       "sha256":  "DC0534236BDE13CED18BC93CE3D92D4539DBF0695766F0778AB41C1458A8A7A1",
+                       "bounds":  {
+                                      "x":  120.0,
+                                      "y":  120.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  }
+                   },
+                   {
+                       "phase":  "console",
+                       "utc":  "2026-09-22T22:25:55.5040767Z",
+                       "session_listing":  " SESSIONNAME               USERNAME                 ID  STATE   TYPE        DEVICE \n services                                            0  Disc                        \n\u003econsole                   rober                     1  Active                      \n rdp-tcp                                         65536  Listen                      ",
+                       "desktop":  [
+                                       {
+                                           "name":  "interactive_desktop",
+                                           "granted":  true,
+                                           "purpose":  "desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation"
+                                       }
+                                   ],
+                       "focus_ok":  true,
+                       "text_matches":  true,
+                       "capture_ok":  true,
+                       "observed_text":  "rdp;console;",
+                       "png":  "C:\\dev\\windows-parity-plan\\helper-production\\docs\\evidence\\windows-helper-20260922-attempt2\\console.png",
+                       "sha256":  "82DAC0DA62AA504934AFF4FCAC670809A69AB87B14B5A135531F4ED79242988F",
+                       "bounds":  {
+                                      "x":  45.0,
+                                      "y":  65.0,
+                                      "w":  900.0,
+                                      "h":  420.0
+                                  }
+                   }
+               ],
+    "agent_id":  "agent_ac393e08c90042929c067109d8a92eca",
+    "fixture_pid":  18488,
+    "surface_id":  "surf_c82d0e0223154aab8a6bd6e09c7df3e5",
+    "handoff_utc":  "2026-09-22T22:25:52.398016Z",
+    "cleanup_errors":  [
+
+                       ],
+    "completed_utc":  "2026-09-22T22:25:56.0175588Z"
+}

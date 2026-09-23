@@ -1,0 +1,9 @@
+﻿{
+    "status":  "PASS",
+    "observed_utc":  "2026-09-22T22:36:02.2664809Z",
+    "helper_pid":  8760,
+    "helper_started_utc":  "2026-09-22T22:29:56.8003449Z",
+    "icon_name":  "Porthole helper",
+    "window_title":  "Porthole helper",
+    "window_handle":  3539760
+}
