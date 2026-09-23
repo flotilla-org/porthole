@@ -133,7 +133,8 @@ try {
         handoff_disabled_before_inspection=$true
         running_worker_blocked_acknowledgement=$true; inspection_did_not_rearm=$true
         explicit_acknowledgement_rearmed=$true
-        previous_journal_archived=$true; worker_launched=$false; transfer_invoked=$false
+        previous_journal_archived=$true; worker_name_stand_in_launched=$true
+        elevated_worker_launched=$false; transfer_invoked=$false
         workloads_unchanged=$workloads
     }
     $result | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $EvidencePath -Encoding UTF8

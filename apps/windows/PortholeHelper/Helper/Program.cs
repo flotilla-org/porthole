@@ -175,7 +175,7 @@ public partial class PortholeHelperApp : Application
             }
             string path = Path.Combine(evidence, "handoff.json");
             if (File.Exists(path))
-                File.Copy(path, Path.Combine(evidence, "handoff-before-reconciliation-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + ".json"));
+                File.Copy(path, Path.Combine(evidence, "handoff-before-reconciliation-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N") + ".json"));
             HandoffRecord("handoff_reconciled", false, error: "Operator inspected the current session and acknowledged the unresolved attempt");
             view.InspectPrevious.Visibility = Visibility.Collapsed;
             view.AcknowledgePrevious.Visibility = Visibility.Collapsed;
