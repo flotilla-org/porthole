@@ -6,12 +6,8 @@ try {
     $status = Get-Content -Raw (Join-Path $env:LOCALAPPDATA 'Porthole\helper\status.json') | ConvertFrom-Json
     if ($status.helper_pid -ne $child.Id -or $status.status -ne 'ready' -or $status.helper_elevated) { throw 'Fresh unelevated ready status missing' }
     $child.Refresh()
-    if ($child.MainWindowHandle -eq 0) { throw 'No main window' }
-    if (-not $child.CloseMainWindow()) { throw 'Cannot close status window' }
-    Start-Sleep -Milliseconds 500
-    $child.Refresh()
-    if ($child.HasExited) { throw 'Closing the status window terminated the tray helper' }
-    Write-Output "PASS: unelevated helper stays running in notification area after window closes, PID $($child.Id)"
+    if ($child.MainWindowHandle -ne 0) { throw 'Flyout should start hidden' }
+    Write-Output "PASS: unelevated helper starts in the notification area, PID $($child.Id)"
 } finally {
     if (-not $child.HasExited) {
         Stop-Process -Id $child.Id

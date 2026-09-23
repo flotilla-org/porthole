@@ -1,0 +1,20 @@
+﻿{
+    "status":  "PASS",
+    "observed_utc":  "2026-09-23T08:50:47.3405535Z",
+    "helper_pid":  17124,
+    "icon":  {
+                 "y":  968,
+                 "width":  40,
+                 "height":  40,
+                 "x":  1412
+             },
+    "flyout":  {
+                   "y":  685,
+                   "width":  420,
+                   "height":  275,
+                   "x":  1222
+               },
+    "handoff_action":  "Disconnect RDP — keep automation running; requires administrator approval",
+    "escape_dismissed":  true,
+    "focus_loss_dismissed":  true
+}

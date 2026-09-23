@@ -14,12 +14,20 @@ This source-tree build also passed a native handoff from
 typed into and captured a test-owned editor. The original workload persisted
 after reconnect. See `docs/evidence/windows-helper-20260922-attempt2`.
 
-The helper has a notification-area icon with Open and Quit actions. Closing its
-WinUI status window hides it while the helper stays running. Native UI Automation
-confirmed that clicking the icon in Explorer's hidden-icons flyout reopens the
-same process's window. The right-click Quit action ended only the helper while
-Porthole, Cleat and the agent stayed running. Like the macOS menu
-bar helper, it should eventually present the same host concepts as permissions
+The helper starts in the notification area. A left click opens a compact WinUI
+flyout beside the icon with handoff status and the disconnect action. Escape or
+clicking elsewhere dismisses it while the helper stays running. Right click
+shows native Show and Quit commands. The handoff keeps the flyout visible while
+it needs the operator's attention. A native tray click confirmed that the flyout
+opens in front of the caller above the icon, exposes the handoff action, and
+dismisses on Escape or focus loss; see
+`docs/evidence/windows-helper-flyout-20260923.json`. The installed build passed
+the same check and its right-click Quit ended only the helper while Porthole,
+Cleat and the agent stayed running; see the adjacent installed and quit evidence
+files. This follows Microsoft's [notification-area guidance](https://learn.microsoft.com/en-us/windows/win32/uxguide/winenv-notification):
+left click opens a lightweight flyout, right click opens the context menu, and
+the flyout closes when focus moves elsewhere. Like the macOS menu bar helper,
+it should eventually present the same host concepts as permissions
 and agent request review are added; shell and OS operations remain native to
 each platform. Tray accessibility and Explorer restart behavior still need
 native acceptance.
@@ -35,7 +43,7 @@ Run `./build.ps1` from this directory on Windows with .NET SDK 10 and the pinned
 Rust toolchain. It restores locked dependencies, runs the channel identity
 check, publishes the self-contained WinUI app, builds the Rust worker, and
 records a SHA-256 build inventory. `./check-launch.ps1` checks that the build
-opens an unelevated window and closes cleanly. `ChannelChecks --check-desktop`
+starts unelevated with its flyout hidden and closes cleanly. `ChannelChecks --check-desktop`
 additionally checks discovery of a live same-session Porthole daemon and its
 authenticated API pipe; it does not invoke UAC or disconnect RDP.
 

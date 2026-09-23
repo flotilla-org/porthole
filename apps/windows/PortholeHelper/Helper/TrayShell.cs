@@ -8,7 +8,7 @@ using Forms = System.Windows.Forms;
 
 namespace Porthole.WindowsHelper;
 
-// The status window is WinUI; NotifyIcon supplies only the native shell entry.
+// The flyout is WinUI; NotifyIcon supplies the native shell entry and context menu.
 internal sealed class TrayShell : IDisposable
 {
     [DllImport("user32.dll", SetLastError = true)]
@@ -19,11 +19,16 @@ internal sealed class TrayShell : IDisposable
     readonly Forms.ToolStripMenuItem quit;
     readonly Icon artwork;
 
-    public TrayShell(DispatcherQueue dispatcher, Action open, Action exit)
+    public TrayShell(DispatcherQueue dispatcher, Action<Point> open, Action exit)
     {
         artwork = LoadArtwork();
         menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open Porthole", null, (_, _) => dispatcher.TryEnqueue(() => open()));
+        Point iconPoint = Forms.Cursor.Position;
+        menu.Opening += (_, _) => iconPoint = Forms.Cursor.Position;
+        menu.Items.Add("Show Porthole helper", null, (_, _) => {
+            Point point = iconPoint;
+            dispatcher.TryEnqueue(() => open(point));
+        });
         menu.Items.Add(new Forms.ToolStripSeparator());
         quit = new Forms.ToolStripMenuItem("Quit helper", null, (_, _) => dispatcher.TryEnqueue(() => exit()));
         menu.Items.Add(quit);
@@ -34,7 +39,9 @@ internal sealed class TrayShell : IDisposable
             Visible = true,
         };
         icon.MouseClick += (_, e) => {
-            if (e.Button == Forms.MouseButtons.Left) dispatcher.TryEnqueue(() => open());
+            Point point = Forms.Cursor.Position;
+            iconPoint = point;
+            if (e.Button == Forms.MouseButtons.Left) dispatcher.TryEnqueue(() => open(point));
         };
     }
 

@@ -55,7 +55,7 @@ try {
     [TrayMenuMouse]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 300
 } finally { [TrayMenuMouse]::SetCursorPos($previous.X, $previous.Y) | Out-Null }
-$open = Find-Element 'Open Porthole' ([System.Windows.Automation.ControlType]::MenuItem)
+$open = Find-Element 'Show Porthole helper' ([System.Windows.Automation.ControlType]::MenuItem)
 $quit = Find-Element 'Quit helper' ([System.Windows.Automation.ControlType]::MenuItem)
 if (-not $open -or -not $quit -or $open.Current.ProcessId -ne $HelperPid -or $quit.Current.ProcessId -ne $HelperPid) {
     throw 'Expected Porthole context menu missing'
@@ -74,7 +74,7 @@ $result = [ordered]@{
     observed_utc = [DateTime]::UtcNow.ToString('o')
     helper_pid = $HelperPid
     icon_name = 'Porthole helper'
-    context_menu = @('Open Porthole', 'Quit helper')
+    context_menu = @('Show Porthole helper', 'Quit helper')
     helper_exited = $true
     workloads_unchanged = $workloads
 }

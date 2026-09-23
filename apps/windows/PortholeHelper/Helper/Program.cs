@@ -2,16 +2,22 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
 using System.Threading;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Forms = System.Windows.Forms;
 
 namespace Porthole.WindowsHelper;
 
 public partial class PortholeHelperApp : Application
 {
+    [DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(IntPtr hwnd);
+
     public PortholeHelperApp()
     {
         Directory.CreateDirectory(evidence);
@@ -43,11 +49,23 @@ public partial class PortholeHelperApp : Application
     {
         var view = new HandoffWindow();
         window = view;
-        window.AppWindow.Resize(new Windows.Graphics.SizeInt32(620, 340));
+        const int width = 420;
+        const int height = 275;
+        var presenter = OverlappedPresenter.CreateForToolWindow();
+        presenter.IsResizable = false;
+        presenter.SetBorderAndTitleBar(true, false);
+        view.AppWindow.SetPresenter(presenter);
+        view.AppWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
         var info = view.Status;
-        tray = new TrayShell(view.DispatcherQueue, () => {
+        tray = new TrayShell(view.DispatcherQueue, point => {
+            var work = Forms.Screen.FromPoint(point).WorkingArea;
+            int x = Math.Clamp(point.X - width / 2, work.Left, Math.Max(work.Left, work.Right - width));
+            int desiredY = point.Y < work.Top ? point.Y + 28 : point.Y - height - 28;
+            int y = Math.Clamp(desiredY, work.Top, Math.Max(work.Top, work.Bottom - height));
+            view.AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
             view.AppWindow.Show();
             view.Activate();
+            SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(view));
         }, () => {
             quitting = true;
             view.Close();
@@ -57,6 +75,13 @@ public partial class PortholeHelperApp : Application
             e.Cancel = true;
             if (!committed) handoffCancellation?.Cancel();
             view.AppWindow.Hide();
+        };
+        view.Activated += (_, e) => {
+            if (e.WindowActivationState == WindowActivationState.Deactivated && handoffCancellation == null)
+                view.AppWindow.Hide();
+        };
+        view.DismissRequested += () => {
+            if (handoffCancellation == null) view.AppWindow.Hide();
         };
         try {
             var path = Path.Combine(evidence, "handoff.json");
@@ -85,6 +110,7 @@ public partial class PortholeHelperApp : Application
             committed = false;
             tray?.SetBusy(true);
             view.Handoff.IsEnabled = false; view.CancelAttempt.IsEnabled = true;
+            view.CancelAttempt.Visibility = Visibility.Visible;
             HandoffContext? context = null;
             try {
                 info.Title = "Checking desktop"; info.Message = "Checking the RDP session and Porthole."; info.Severity = InfoBarSeverity.Informational;
@@ -118,8 +144,9 @@ public partial class PortholeHelperApp : Application
                 context?.Dispose(); handoffCancellation = null;
                 tray?.SetBusy(false);
                 view.Handoff.IsEnabled = !unresolved; view.CancelAttempt.IsEnabled = false;
+                view.CancelAttempt.Visibility = Visibility.Collapsed;
             }
         };
-        window.Activate(); Record("ready");
+        window.Activate(); window.AppWindow.Hide(); Record("ready");
     }
 }
