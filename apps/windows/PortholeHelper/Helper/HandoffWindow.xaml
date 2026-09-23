@@ -16,6 +16,8 @@
                 </Button>
                 <TextBlock Text="You stay signed in and the local desktop stays unlocked." TextWrapping="Wrap" />
                 <Button x:Name="CancelAttempt" x:FieldModifier="internal" Content="Cancel handoff" IsEnabled="False" Visibility="Collapsed" />
+                <Button x:Name="InspectPrevious" x:FieldModifier="internal" Content="Inspect previous handoff" Visibility="Collapsed" />
+                <Button x:Name="AcknowledgePrevious" x:FieldModifier="internal" Content="Acknowledge inspection and allow another handoff" Visibility="Collapsed" />
                 <InfoBar x:Name="Status" x:FieldModifier="internal" IsOpen="True" IsClosable="False" Title="Ready"
                          Message="Disconnect RDP when this desktop is available." Severity="Informational" />
             </StackPanel>

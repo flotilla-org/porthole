@@ -31,6 +31,10 @@ public partial class PortholeHelperApp : Application
     bool quitting;
     int? daemonPid;
     DateTime? daemonStarted;
+    int? workerPid;
+    DateTime? workerStarted;
+    Mutex? instanceMutex;
+    bool instanceMutexHeld;
     readonly string evidence = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Porthole", "helper");
     void Record(string status, int? exit = null, string? error = null)
     {
@@ -46,18 +50,37 @@ public partial class PortholeHelperApp : Application
     }
     void HandoffRecord(string status, bool pending, string? error = null, string? workerResult = null)
     {
-        unresolved = pending;
-        File.WriteAllText(Path.Combine(evidence, "handoff.json"), JsonSerializer.Serialize(new {
+        string path = Path.Combine(evidence, "handoff.json");
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        string content = JsonSerializer.Serialize(new {
             status, unresolved = pending, error, worker_result = workerResult,
-            utc = DateTime.UtcNow, daemon_pid = daemonPid, daemon_started = daemonStarted
-        }));
-        Record(status, error: error);
+            utc = DateTime.UtcNow, daemon_pid = daemonPid, daemon_started = daemonStarted,
+            worker_pid = workerPid, worker_started = workerStarted,
+            windows_session = Process.GetCurrentProcess().SessionId
+        });
+        try {
+            File.WriteAllText(temporary, content);
+            File.Move(temporary, path, true);
+        } finally {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+        unresolved = pending;
+        // The journal is authoritative. A secondary status-file failure must
+        // not turn a recorded commit into a pre-commit error path.
+        try { Record(status, error: error); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        string user = WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("Windows user identity missing");
+        instanceMutex = new Mutex(false, "Local\\PortholeHelper." + user);
+        try { instanceMutexHeld = instanceMutex.WaitOne(0); }
+        catch (AbandonedMutexException) { instanceMutexHeld = true; }
+        if (!instanceMutexHeld) { instanceMutex.Dispose(); Environment.Exit(0); }
         var view = new HandoffWindow();
         const int width = 420;
-        const int height = 275;
+        const int height = 340;
         var presenter = OverlappedPresenter.CreateForToolWindow();
         presenter.IsResizable = false;
         presenter.SetBorderAndTitleBar(true, false);
@@ -98,15 +121,73 @@ public partial class PortholeHelperApp : Application
             }
         } catch { unresolved = true; }
         view.Handoff.IsEnabled = !unresolved;
-        if (unresolved) { info.Title = "Previous handoff needs inspection"; info.Message = "An earlier commit has an uncertain outcome. Inspect the Windows session before another attempt."; info.Severity = InfoBarSeverity.Warning; }
+        if (unresolved) {
+            view.InspectPrevious.Visibility = Visibility.Visible;
+            info.Title = "Previous handoff needs inspection";
+            info.Message = "An earlier commit has an uncertain outcome. Inspect the Windows session before another attempt.";
+            info.Severity = InfoBarSeverity.Warning;
+        }
         view.Closed += (_, _) => {
             handoffCancellation?.Cancel();
             tray?.Dispose();
             tray = null;
+            if (instanceMutexHeld) { instanceMutex?.ReleaseMutex(); instanceMutexHeld = false; }
+            instanceMutex?.Dispose();
         };
         view.CancelAttempt.Click += (_, _) => handoffCancellation?.Cancel();
+        view.InspectPrevious.Click += (_, _) => InspectPrevious(view);
+        view.AcknowledgePrevious.Click += (_, _) => AcknowledgePrevious(view);
         view.Handoff.Click += async (_, _) => await ExecuteHandoffAsync(view);
         view.Activate(); view.AppWindow.Hide(); Record("ready");
+    }
+
+    void InspectPrevious(HandoffWindow view)
+    {
+        if (!unresolved || handoffCancellation != null) return;
+        view.AcknowledgePrevious.Visibility = Visibility.Collapsed;
+        try {
+            var inspection = HandoffRecovery.InspectCurrent();
+            view.Status.Title = inspection.CanAcknowledge ? "Inspect the current session" : "Previous handoff still needs attention";
+            view.Status.Message = inspection.Message + (inspection.CanAcknowledge
+                ? " Check the desktop and Porthole before acknowledging this unresolved attempt. Inspection does not prove whether the earlier transfer succeeded."
+                : " No new handoff is allowed.");
+            view.Status.Severity = InfoBarSeverity.Warning;
+            if (inspection.CanAcknowledge) view.AcknowledgePrevious.Visibility = Visibility.Visible;
+        } catch (Exception error) {
+            view.Status.Title = "Inspection could not complete";
+            view.Status.Message = error.Message;
+            view.Status.Severity = InfoBarSeverity.Warning;
+        }
+    }
+
+    void AcknowledgePrevious(HandoffWindow view)
+    {
+        if (!unresolved || handoffCancellation != null || view.AcknowledgePrevious.Visibility != Visibility.Visible) return;
+        try {
+            // Recheck immediately before re-arming. Preserve the original
+            // record, including malformed content, for later diagnosis.
+            var inspection = HandoffRecovery.InspectCurrent();
+            if (!inspection.CanAcknowledge) {
+                view.AcknowledgePrevious.Visibility = Visibility.Collapsed;
+                view.Status.Title = "Previous handoff still needs attention";
+                view.Status.Message = inspection.Message;
+                return;
+            }
+            string path = Path.Combine(evidence, "handoff.json");
+            if (File.Exists(path))
+                File.Copy(path, Path.Combine(evidence, "handoff-before-reconciliation-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + ".json"));
+            HandoffRecord("handoff_reconciled", false, error: "Operator inspected the current session and acknowledged the unresolved attempt");
+            view.InspectPrevious.Visibility = Visibility.Collapsed;
+            view.AcknowledgePrevious.Visibility = Visibility.Collapsed;
+            view.Handoff.IsEnabled = true;
+            view.Status.Title = "Previous attempt acknowledged";
+            view.Status.Message = inspection.Message + " A new handoff will still check RDP, desktop and Porthole before requesting elevation.";
+            view.Status.Severity = InfoBarSeverity.Informational;
+        } catch (Exception error) {
+            view.Status.Title = "Could not acknowledge the previous attempt";
+            view.Status.Message = error.Message;
+            view.Status.Severity = InfoBarSeverity.Warning;
+        }
     }
 
     async System.Threading.Tasks.Task ExecuteHandoffAsync(HandoffWindow view)
@@ -115,6 +196,8 @@ public partial class PortholeHelperApp : Application
         using var cancellation = new CancellationTokenSource();
         handoffCancellation = cancellation;
         committed = false;
+        workerPid = null;
+        workerStarted = null;
         tray?.SetBusy(true);
         view.Handoff.IsEnabled = false; view.CancelAttempt.IsEnabled = true;
         view.CancelAttempt.Visibility = Visibility.Visible;
@@ -130,10 +213,12 @@ public partial class PortholeHelperApp : Application
                 HandoffRecord("handoff_armed", false);
                 info.Title = "Preparing desktop handoff";
                 await context.GrantAsync(view.Activate, WinRT.Interop.WindowNative.GetWindowHandle(view), token);
-            }, () => {
-                committed = true; view.CancelAttempt.IsEnabled = false;
+            }, worker => {
+                workerPid = worker.Id;
+                workerStarted = worker.StartTime.ToUniversalTime();
                 // Persist before writing: even a partial send makes outcome uncertain.
                 HandoffRecord("handoff_commit_pending", true);
+                committed = true; view.CancelAttempt.IsEnabled = false;
                 info.Title = "Disconnecting RDP";
             }, cancellation.Token);
             bool ready = await context.ObserveAsync(cancellation.Token);
@@ -153,6 +238,8 @@ public partial class PortholeHelperApp : Application
             tray?.SetBusy(false);
             view.Handoff.IsEnabled = !unresolved; view.CancelAttempt.IsEnabled = false;
             view.CancelAttempt.Visibility = Visibility.Collapsed;
+            view.InspectPrevious.Visibility = unresolved ? Visibility.Visible : Visibility.Collapsed;
+            view.AcknowledgePrevious.Visibility = Visibility.Collapsed;
         }
     }
 }

@@ -24,6 +24,12 @@ try {
     throw new Exception("Invalid token accepted");
 } catch (System.ComponentModel.Win32Exception) { }
 Console.WriteLine("PASS: logon SID query, token duplication, repeat identity, invalid-token rejection");
+if (HandoffRecovery.Assess(true, HandoffSessionMode.Rdp).CanAcknowledge
+    || HandoffRecovery.Assess(false, null).CanAcknowledge
+    || !HandoffRecovery.Assess(false, HandoffSessionMode.Rdp).CanAcknowledge
+    || !HandoffRecovery.Assess(false, HandoffSessionMode.Console).CanAcknowledge)
+    throw new Exception("Unresolved handoff was re-armed without an inactive worker and active session");
+Console.WriteLine("PASS: unresolved handoff requires worker exit, active session and explicit acknowledgement");
 if (args.Contains("--check-desktop")) {
     using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(10));
     using var context = await HandoffContext.DiscoverAsync(timeout.Token);
