@@ -14,6 +14,14 @@ namespace Porthole.WindowsHelper;
 
 internal static class WorkerChannel
 {
+    // Match the worker's pipe SDDL: data, EA, attribute, READ_CONTROL and
+    // SYNCHRONIZE rights, but no FILE_CREATE_PIPE_INSTANCE (0x0004).
+    const uint PipeClientAccess = 0x0012019b;
+    const uint OverlappedAnonymousSqos = 0x40100000; // FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT
+    const uint OpenExisting = 3;
+    const int FileNotFound = 2; // ERROR_FILE_NOT_FOUND: worker has not created the pipe yet
+    const int PipeBusy = 231; // ERROR_PIPE_BUSY: worker has not accepted a connection yet
+
     [StructLayout(LayoutKind.Sequential)]
     struct TokenLogonGroup
     {
@@ -108,13 +116,13 @@ internal static class WorkerChannel
         {
             cancellation.ThrowIfCancellationRequested();
             if (worker.HasExited) throw new InvalidOperationException($"Worker rejected rendezvous (exit {worker.ExitCode})");
-            // Exact rights omit FILE_CREATE_PIPE_INSTANCE; anonymous SQOS avoids
-            // granting this server impersonation of the caller.
-            handle = CreateFileW(@"\\.\pipe\Porthole.ConsoleWorker." + nonce, 0x0012019b, 0, IntPtr.Zero, 3, 0x40100000, IntPtr.Zero);
+            // Anonymous SQOS avoids granting the server impersonation of the caller.
+            handle = CreateFileW(@"\\.\pipe\Porthole.ConsoleWorker." + nonce,
+                PipeClientAccess, 0, IntPtr.Zero, OpenExisting, OverlappedAnonymousSqos, IntPtr.Zero);
             if (!handle.IsInvalid) break;
             int error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            if (error != 2 && error != 231) throw new Win32Exception(error);
+            if (error != FileNotFound && error != PipeBusy) throw new Win32Exception(error);
             await Task.Delay(25, cancellation);
         }
         using (handle)

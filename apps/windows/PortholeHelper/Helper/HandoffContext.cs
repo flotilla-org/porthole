@@ -16,6 +16,13 @@ namespace Porthole.WindowsHelper;
 
 internal sealed class HandoffContext : IDisposable
 {
+    // WtsApi32.h: WTS_INFO_CLASS and WTS_CONNECTSTATE_CLASS.
+    const int WtsConnectStateInfo = 8;
+    const int WtsClientProtocolInfo = 16;
+    const int WtsActive = 0;
+    const int WtsProtocolConsole = 0;
+    const int WtsProtocolRdp = 2;
+
     [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool WTSQuerySessionInformationW(IntPtr server, int session, int info, out IntPtr buffer, out int size);
     [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr buffer);
@@ -48,8 +55,10 @@ internal sealed class HandoffContext : IDisposable
     internal static void RequireActiveRdp()
     {
         int session = Process.GetCurrentProcess().SessionId;
-        if (session == 0 || Query(session, 8) != 0) throw new InvalidOperationException("An active interactive session is required");
-        if (Query(session, 16, true) != 2) throw new InvalidOperationException("This session is already at the console or is not connected through RDP");
+        if (session == 0 || Query(session, WtsConnectStateInfo) != WtsActive)
+            throw new InvalidOperationException("An active interactive session is required");
+        if (Query(session, WtsClientProtocolInfo, true) != WtsProtocolRdp)
+            throw new InvalidOperationException("This session is already at the console or is not connected through RDP");
     }
 
     void ValidateDaemon()
@@ -133,7 +142,9 @@ internal sealed class HandoffContext : IDisposable
         while (elapsed.Elapsed < TimeSpan.FromSeconds(10)) {
             cancellation.ThrowIfCancellationRequested();
             try {
-                if (Query(session, 8) == 0 && Query(session, 16, true) == 0 && await DesktopReadyAsync(cancellation)) return true;
+                if (Query(session, WtsConnectStateInfo) == WtsActive
+                    && Query(session, WtsClientProtocolInfo, true) == WtsProtocolConsole
+                    && await DesktopReadyAsync(cancellation)) return true;
             } catch (Exception) when (!cancellation.IsCancellationRequested) { }
             await Task.Delay(500, cancellation);
         }
