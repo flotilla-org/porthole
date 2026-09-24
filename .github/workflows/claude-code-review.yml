@@ -20,6 +20,11 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Crew pushes arrive through the flotilla-crew GitHub App. The action
+          # refuses bot-initiated runs unless the bot is listed here, and the
+          # "Verify review was posted" step then fails the check. Allow only
+          # this one app, never '*'.
+          allowed_bots: flotilla-crew
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
