@@ -48,7 +48,7 @@ default device. `SendInput` goes to the single input desktop, and a hidden
 
 **macOS is the hard case, and the two problems split cleanly.**
 
-- *Placement.* Two low-risk changes fall out directly: launch with
+- *Placement.* Three low-risk changes fall out directly: launch with
   `activates = false` so the app stops taking the foreground, pass
   `-ApplePersistenceIgnoreState YES` so saved window state is ignored, and move
   the window on `kAXWindowCreatedNotification`. No public API moves a window
@@ -211,7 +211,7 @@ The display exists for as long as the `CGVirtualDisplay` object is alive. Chromi
   - `com.apple.developer.persistent-content-capture`, a VNC-only entitlement for persistent capture access that needs Apple approval ([doc](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)).
   - `SCShareableContent.getCurrentProcessShareableContent` ([doc](https://developer.apple.com/documentation/screencapturekit/scshareablecontent/getcurrentprocessshareablecontent(completionhandler:))).
 - macOS 15 re-prompts for Screen Recording periodically. The only Apple-documented control I found is the MDM restriction `forceBypassScreenCaptureAlert` (macOS 15.1+, supervised only, "the system bypasses the presentation of a screen capture alert") ([apple/device-management](https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.applicationaccess.yaml)). The monthly cadence and the `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist` file are known only from non-Apple sources: **UNVERIFIED**. I found no `NSApplication` defaults key that controls it: **UNVERIFIED**.
-- No public virtual-display API has shipped as of the macOS 27 docs. `CGVirtualDisplay` is absent from the Core Graphics docs, and the ScreenCaptureKit index has no display-creation API. How Sidecar and iPhone Mirroring create displays internally is **UNVERIFIED**, with no public API.
+- No public virtual-display API has shipped as of the current Apple documentation (checked 2026-09-24). `CGVirtualDisplay` is absent from the Core Graphics docs, and the ScreenCaptureKit index has no display-creation API. How Sidecar and iPhone Mirroring create displays internally is **UNVERIFIED**, with no public API.
 
 ### Recommendation candidates
 
