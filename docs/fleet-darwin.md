@@ -15,8 +15,10 @@ Porthole before dispatch will work.
 
 The candidate builder checks that the checkout is clean, resolves Jackstay
 through locked Cargo metadata, and requires both Jackstay packages to use the
-same exact canonical commit. It builds the bridge with `backend-macos` and
-packages these files:
+same exact canonical commit. The bridge is a Porthole workspace crate built
+with `backend-macos` by the normal workspace build; its wire version is read
+from this checkout, and the Jackstay C ABI from the pinned library. The
+builder packages these files:
 
 ```text
 porthole-candidate-darwin-aarch64/

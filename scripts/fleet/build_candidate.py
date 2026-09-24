@@ -57,9 +57,11 @@ def resolved_jackstay(metadata):
     return match[1], Path(package["manifest_path"]).parents[2]
 
 
-def compatibility(source):
-    header = (source / "crates/jackstay/include/capture_transfer.h").read_text()
-    wire = (source / "crates/jackstay-bridge/src/wire.rs").read_text()
+def compatibility(jackstay, porthole):
+    # The C ABI belongs to the pinned Jackstay library; the bridge and its wire
+    # protocol are owned by this workspace (crates/jackstay-bridge).
+    header = (jackstay / "crates/jackstay/include/capture_transfer.h").read_text()
+    wire = (porthole / "crates/jackstay-bridge/src/wire.rs").read_text()
     def number(pattern, text):
         match = re.search(pattern, text)
         if not match:
@@ -158,11 +160,9 @@ def main():
     if Path(metadata["target_directory"]).resolve() != (ROOT / "target").resolve():
         parser.error("cargo configuration must use the local target directory")
     revision, jackstay = resolved_jackstay(metadata)
-    versions = compatibility(jackstay)
-    bridge_target = ROOT / "target/fleet-jackstay" / revision
-    run("cargo", "build", "--manifest-path", str(jackstay / "Cargo.toml"), "--locked", "--release",
-        "-p", "jackstay-bridge", "--features", "backend-macos", "--target-dir", str(bridge_target), env=env)
-    env["JACKSTAY_BRIDGE_BIN"] = str(bridge_target / "release/jackstay-bridge")
+    versions = compatibility(jackstay, ROOT)
+    # jackstay-bridge is a workspace member; xtask's workspace build produces
+    # target/release/jackstay-bridge and the bundle step requires it.
     # A fresh module cache prevents serialized Swift/Clang modules referring
     # to a previous VM's checkout. Only Cargo outputs are shared between runs.
     with tempfile.TemporaryDirectory(prefix="porthole-swift-") as cache:

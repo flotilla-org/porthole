@@ -33,6 +33,23 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             candidate.resolved_jackstay(metadata)
 
+    def test_compatibility_reads_abi_from_jackstay_and_wire_from_porthole(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            jackstay = Path(temporary) / "jackstay"
+            porthole = Path(temporary) / "porthole"
+            header = jackstay / "crates/jackstay/include/capture_transfer.h"
+            wire = porthole / "crates/jackstay-bridge/src/wire.rs"
+            header.parent.mkdir(parents=True)
+            wire.parent.mkdir(parents=True)
+            header.write_text("#define FT_ABI_VERSION_MAJOR 2\n#define FT_ABI_VERSION_MINOR 5\n")
+            wire.write_text("pub const VERSION: u8 = 7;\n")
+            self.assertEqual(candidate.compatibility(jackstay, porthole), {
+                "jackstay_c_abi": {"major": 2, "minor": 5}, "jackstay_bridge_wire": 7,
+            })
+            wire.write_text("// no version\n")
+            with self.assertRaises(ValueError):
+                candidate.compatibility(jackstay, porthole)
+
     def app(self, root):
         app = root / "Porthole.app"
         for relative in candidate.RESOURCES + tuple(f"Contents/MacOS/{name}" for name in candidate.BINARIES):

@@ -40,7 +40,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             source/target/release
-            source/target/fleet-jackstay
           key: porthole-darwin-v1-${{ inputs.porthole_sha }}-${{ forgejo.run_id }}
           restore-keys: |
             porthole-darwin-v1-${{ inputs.porthole_sha }}-
@@ -57,7 +56,6 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             source/target/release
-            source/target/fleet-jackstay
           key: porthole-darwin-v1-${{ inputs.porthole_sha }}-${{ forgejo.run_id }}
 
       - name: Upload candidate for seven days
