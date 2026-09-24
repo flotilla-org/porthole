@@ -201,6 +201,56 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn partial_commit_never_invokes_handoff() {
+        use std::cell::Cell;
+        let operations = Cell::new(0);
+        let (mut server, mut client) = tokio::io::duplex(64);
+        let (result, _) = tokio::join!(
+            exchange_operation(
+                &mut server,
+                || Ok(()),
+                true,
+                || {
+                    operations.set(operations.get() + 1);
+                    async { Ok(*b"DONE") }
+                }
+            ),
+            async {
+                expect(&mut client, b"RDY2").await.unwrap();
+                client.write_all(b"CM").await.unwrap();
+                drop(client);
+            }
+        );
+        assert!(result.is_err());
+        assert_eq!(operations.get(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn disconnect_after_commit_does_not_repeat_handoff() {
+        use std::cell::Cell;
+        let operations = Cell::new(0);
+        let (mut server, mut client) = tokio::io::duplex(64);
+        let (result, _) = tokio::join!(
+            exchange_operation(
+                &mut server,
+                || Ok(()),
+                true,
+                || {
+                    operations.set(operations.get() + 1);
+                    async { Ok(*b"DONE") }
+                }
+            ),
+            async {
+                expect(&mut client, b"RDY2").await.unwrap();
+                client.write_all(b"CMT2").await.unwrap();
+                drop(client);
+            }
+        );
+        assert!(result.is_err());
+        assert_eq!(operations.get(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn native_pipe_checks_kernel_pid_and_excludes_second_server() {
         use windows_sys::Win32::{Foundation::INVALID_HANDLE_VALUE, Storage::FileSystem::CreateFileW};
         let mut peer = Peer::open(std::process::id()).unwrap();

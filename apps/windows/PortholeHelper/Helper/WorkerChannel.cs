@@ -90,10 +90,10 @@ internal static class WorkerChannel
             throw new InvalidOperationException("Unexpected worker protocol message");
     }
 
-    public static Task<string> HandoffAsync(Func<CancellationToken, Task> beforeCommit, Action committing, CancellationToken cancellation)
+    public static Task<string> HandoffAsync(Func<CancellationToken, Task> beforeCommit, Action<Process> committing, CancellationToken cancellation)
         => RunAsync(beforeCommit, committing, cancellation);
 
-    static async Task<string> RunAsync(Func<CancellationToken, Task> beforeCommit, Action committing, CancellationToken callerCancellation)
+    static async Task<string> RunAsync(Func<CancellationToken, Task> beforeCommit, Action<Process> committing, CancellationToken callerCancellation)
     {
         var expectedRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PortholeHelper");
         if (!string.Equals(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory), expectedRoot, StringComparison.OrdinalIgnoreCase))
@@ -133,7 +133,7 @@ internal static class WorkerChannel
             await beforeCommit(cancellation);
             Validate(worker, handle);
             cancellation.ThrowIfCancellationRequested();
-            committing();
+            committing(worker);
             await pipe.WriteAsync("CMT2"u8.ToArray(), cancellation);
             byte[] bytes = new byte[4];
             await pipe.ReadExactlyAsync(bytes, cancellation);

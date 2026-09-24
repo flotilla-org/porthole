@@ -39,8 +39,9 @@ repeatable `scripts/windows-helper/check-tray-shell.ps1`. This is focused
 automation acceptance, not a Narrator or full keyboard-navigation audit.
 
 The production release still needs a signed installer and publisher identity,
-startup integration, full accessibility acceptance, adversarial IPC review, and
-an explicit way to reconcile an unknown result after commit. Do not distribute
+startup integration, full accessibility acceptance, and adversarial IPC review.
+The new reconciliation path still needs an actual uncertain post-commit handoff
+test on an operator-coordinated host. Do not distribute
 this unsigned development build as a finished helper.
 
 ## Development build
@@ -61,4 +62,13 @@ prototype at `%ProgramFiles%\PortholeHelperPackagingSpike` or a live daemon.
 
 The helper records bounded public diagnostics under
 `%LOCALAPPDATA%\Porthole\helper`. A committed handoff with an uncertain result
-remains disabled across helper restarts until an operator inspects the session.
+remains disabled across helper restarts. **Inspect previous handoff** checks
+that no handoff worker remains and the current Windows session is active;
+inspection alone cannot prove the prior outcome or enable another transfer.
+After checking the desktop and Porthole, the operator may explicitly acknowledge
+the attempt. The helper archives its prior journal before re-enabling the action,
+and every new attempt still requires RDP, desktop, daemon and UAC checks. A
+test-owned synthetic recovery passed without launching an elevated worker or
+changing the live workloads; it also rejected a second helper instance. See
+`docs/evidence/windows-helper-recovery-20260923.json` and
+the focused IPC review in `docs/2026-09-23-windows-helper-ipc-review.md`.

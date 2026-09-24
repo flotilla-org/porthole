@@ -54,11 +54,21 @@ internal sealed class HandoffContext : IDisposable
 
     internal static void RequireActiveRdp()
     {
-        int session = Process.GetCurrentProcess().SessionId;
-        if (session == 0 || Query(session, WtsConnectStateInfo) != WtsActive)
-            throw new InvalidOperationException("An active interactive session is required");
-        if (Query(session, WtsClientProtocolInfo, true) != WtsProtocolRdp)
+        var mode = ActiveSessionMode();
+        if (mode == null) throw new InvalidOperationException("An active interactive session is required");
+        if (mode != HandoffSessionMode.Rdp)
             throw new InvalidOperationException("This session is already at the console or is not connected through RDP");
+    }
+
+    internal static HandoffSessionMode? ActiveSessionMode()
+    {
+        int session = Process.GetCurrentProcess().SessionId;
+        if (session == 0 || Query(session, WtsConnectStateInfo) != WtsActive) return null;
+        return Query(session, WtsClientProtocolInfo, true) switch {
+            WtsProtocolRdp => HandoffSessionMode.Rdp,
+            WtsProtocolConsole => HandoffSessionMode.Console,
+            _ => null,
+        };
     }
 
     void ValidateDaemon()
