@@ -107,6 +107,64 @@ fn rejects_adhoc_explicit_signing_identity() {
 }
 
 #[test]
+fn unsigned_candidate_rejects_a_signing_identity_before_building() {
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["bundle", "--platform", "macos", "--unsigned", "--sign", "Example"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cannot be used with"));
+}
+
+#[test]
+fn library_rejects_conflicting_signing_options_before_building() {
+    let result = xtask::macos_bundle::run(xtask::macos_bundle::BundleOptions {
+        release: false,
+        refresh: false,
+        sign: Some("Example".to_owned()),
+        unsigned: true,
+    });
+    assert!(matches!(result, Err(xtask::macos_bundle::BundleError::InvalidSigningIdentity(_))));
+}
+
+#[test]
+fn unsigned_refresh_assembles_without_security_or_codesign() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path();
+    for relative in [
+        "apps/macos/bundle/Info.plist",
+        "apps/macos/bundle/Resources/icon.png",
+        "apps/macos/bundle/LaunchAgents/work.flotilla.porthole.daemon.plist",
+        "target/debug/porthole",
+        "target/debug/portholed",
+        "target/debug/jackstay-bridge",
+        "target/swift/PortholeHelper/debug/PortholeHelper",
+    ] {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "fixture").unwrap();
+    }
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .current_dir(root)
+        .env("PATH", "")
+        .env_remove("JACKSTAY_BRIDGE_BIN")
+        .env_remove("PORTHOLE_SWIFT_SCRATCH_PATH")
+        .args(["bundle", "--platform", "macos", "--refresh", "--unsigned"])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("Central signing and promotion are required"));
+    assert!(!stdout.contains("install/restart:"));
+    for name in ["PortholeHelper", "porthole", "portholed", "jackstay-bridge"] {
+        assert_eq!(
+            fs::read_to_string(root.join("target/debug/Porthole.app/Contents/MacOS").join(name)).unwrap(),
+            "fixture"
+        );
+    }
+}
+
+#[test]
 fn swift_build_configuration_tracks_rust_profile() {
     assert_eq!(swift_build_configuration(false), "debug");
     assert_eq!(swift_build_configuration(true), "release");

@@ -1,0 +1,67 @@
+name: Build Porthole fleet candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      porthole_sha:
+        description: Exact 40-character commit from flotilla-org/porthole
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: porthole-fleet-${{ inputs.porthole_sha }}
+  cancel-in-progress: false
+
+jobs:
+  darwin:
+    runs-on: darwin-aarch64
+    timeout-minutes: 120
+    env:
+      PORTHOLE_SHA: ${{ inputs.porthole_sha }}
+    steps:
+      - name: Fetch exact public source
+        shell: /bin/bash -e {0}
+        run: |
+          set -euo pipefail
+          [[ "$PORTHOLE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init source
+          git -C source remote add origin https://github.com/flotilla-org/porthole.git
+          git -C source fetch --depth=1 origin "$PORTHOLE_SHA"
+          test "$(git -C source rev-parse FETCH_HEAD)" = "$PORTHOLE_SHA"
+          git -C source checkout --detach FETCH_HEAD
+
+      - name: Restore Cargo caches
+        uses: https://code.forgejo.org/actions/cache/restore@6f8efc29b200d32929f49075959781ed54ec270c
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target/release
+          key: porthole-darwin-v1-${{ inputs.porthole_sha }}-${{ forgejo.run_id }}
+          restore-keys: |
+            porthole-darwin-v1-${{ inputs.porthole_sha }}-
+            porthole-darwin-v1-
+
+      - name: Build unsigned candidate
+        shell: /bin/bash -e {0}
+        run: python3 source/scripts/fleet/build_candidate.py --source-sha "$PORTHOLE_SHA" --output "$PWD/dist"
+
+      - name: Save Cargo caches
+        uses: https://code.forgejo.org/actions/cache/save@6f8efc29b200d32929f49075959781ed54ec270c
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target/release
+          key: porthole-darwin-v1-${{ inputs.porthole_sha }}-${{ forgejo.run_id }}
+
+      - name: Upload candidate for seven days
+        uses: https://code.forgejo.org/actions/upload-artifact@a8a3f3ad30e3422c9c7b888a15615d19a852ae32
+        with:
+          name: porthole-candidate-darwin-aarch64
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error

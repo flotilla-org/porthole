@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - run: python3 -m unittest discover -s scripts/fleet -p 'test_*.py'
 
   fmt:
     name: Format

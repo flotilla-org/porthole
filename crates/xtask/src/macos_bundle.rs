@@ -22,6 +22,7 @@ pub struct BundleOptions {
     pub release: bool,
     pub refresh: bool,
     pub sign: Option<String>,
+    pub unsigned: bool,
 }
 
 #[derive(Debug, Error)]
@@ -100,7 +101,16 @@ fn bridge_binary_from(env: Option<std::ffi::OsString>, profile: &str) -> PathBuf
 
 pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     let profile = profile_name(options.release);
-    let identity = choose_sign_identity(options.sign.as_deref())?;
+    let identity = if options.unsigned {
+        if options.sign.is_some() {
+            return Err(BundleError::InvalidSigningIdentity(
+                "--unsigned cannot be combined with --sign".to_owned(),
+            ));
+        }
+        None
+    } else {
+        Some(choose_sign_identity(options.sign.as_deref())?)
+    };
 
     if !options.refresh {
         run_status("cargo", &build_command_args(options.release))?;
@@ -142,17 +152,25 @@ pub fn run(options: BundleOptions) -> Result<(), BundleError> {
     copy_executable(&cli_bin, &macos_dir.join("porthole"))?;
     copy_executable(&bridge_bin, &macos_dir.join("jackstay-bridge"))?;
 
-    let app_arg = app.to_string_lossy().to_string();
-    let sign_args = ["-s", identity.as_str(), "--force", "--deep", app_arg.as_str()];
-    // `--deep` is acceptable for this flat transitional development bundle.
-    // Production/notarized signing should sign components in a defined order
-    // before signing the app.
-    run_status("codesign", &sign_args)?;
+    if let Some(identity) = &identity {
+        for name in ["PortholeHelper", "portholed", "porthole", "jackstay-bridge"] {
+            let binary = macos_dir.join(name);
+            if binary.is_file() {
+                run_status("codesign", &["-s", identity, "--force", &binary.to_string_lossy()])?;
+            }
+        }
+        run_status("codesign", &["-s", identity, "--force", &app.to_string_lossy()])?;
+        run_status("codesign", &["--verify", "--deep", "--strict", &app.to_string_lossy()])?;
+    }
 
     println!("bundle mode: helper app");
     println!("bundle built: {}", app.display());
-    println!("signed with:      {identity}");
+    println!("signed with:      {}", identity.as_deref().unwrap_or("none (candidate only)"));
     println!("bridge:           {} (bundled as jackstay-bridge)", bridge_bin.display());
+    if identity.is_none() {
+        println!("Central signing and promotion are required before installation.");
+        return Ok(());
+    }
     println!(
         "install/restart:   \"{}\" install --user --force",
         macos_dir.join("porthole").display()

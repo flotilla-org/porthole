@@ -27,6 +27,12 @@ struct BundleArgs {
     refresh: bool,
     #[arg(long, help = "Apple Development signing identity to use")]
     sign: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "sign",
+        help = "Assemble an unsigned candidate for central signing; not installable"
+    )]
+    unsigned: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -42,6 +48,7 @@ fn main() {
                 release: args.release,
                 refresh: args.refresh,
                 sign: args.sign,
+                unsigned: args.unsigned,
             }),
         },
     };
