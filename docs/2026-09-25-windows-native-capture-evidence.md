@@ -58,8 +58,9 @@ Endpoint. It passed 7 consecutive runs.
 
 After a pause ends, a window that does not repaint stays stale: Jackstay drops
 frames that arrive while paused and keeps no copy to publish on resume (its
-deferred-frame copy covers only capacity drops). The test therefore repaints
-after resume. It is not yet known whether a real unlock or reconnect makes WGC
+deferred-frame copy covers only capacity drops;
+[jackstay#47](https://github.com/flotilla-org/jackstay/issues/47)). The test
+therefore repaints after resume. It is not yet known whether a real unlock or reconnect makes WGC
 deliver a fresh frame; the human check below records it.
 
 ## Not observed: real lock and RDP disconnect

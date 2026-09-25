@@ -619,7 +619,7 @@ mod live {
                 wait_status(&registry, &session_id, |status, _| status == "ready");
                 // Jackstay drops frames that arrive while paused without
                 // keeping them for resume, so a static window publishes
-                // again only when it next repaints (a Jackstay follow-up).
+                // again only when it next repaints (jackstay#47).
                 window.set_color(BLUE);
                 assert!(
                     consumer.frame_of(BLUE, Duration::from_secs(5)).is_some(),
