@@ -142,6 +142,28 @@ pub async fn serve_with_agent_policy(
         events,
         #[cfg(target_os = "linux")]
         None,
+        #[cfg(windows)]
+        None,
+    )
+    .await
+}
+
+/// Serve with the native Windows adapter, which also backs native capture
+/// sessions (Windows.Graphics.Capture handed to Jackstay).
+#[cfg(windows)]
+pub async fn serve_with_agent_policy_and_windows_adapter(
+    windows_adapter: Arc<porthole_adapter_windows::WindowsAdapter>,
+    endpoint: impl IntoControlEndpoint,
+    agent_store: AgentPolicyStore,
+    events: EventBus,
+) -> std::io::Result<()> {
+    let adapter: Arc<dyn Adapter> = windows_adapter.clone();
+    serve_with_agent_policy_inner(
+        adapter,
+        endpoint.into_control_endpoint(),
+        agent_store,
+        events,
+        Some(windows_adapter),
     )
     .await
 }
@@ -165,6 +187,7 @@ async fn serve_with_agent_policy_inner(
     agent_store: AgentPolicyStore,
     events: EventBus,
     #[cfg(target_os = "linux")] kwin_adapter: Option<Arc<KWinAdapter>>,
+    #[cfg(windows)] windows_adapter: Option<Arc<porthole_adapter_windows::WindowsAdapter>>,
 ) -> std::io::Result<()> {
     info!(endpoint = %endpoint.display_name(), "portholed listening");
     #[cfg(unix)]
@@ -182,6 +205,12 @@ async fn serve_with_agent_policy_inner(
     #[cfg(target_os = "linux")]
     let state = if let Some(kwin_adapter) = kwin_adapter {
         state.with_kwin_adapter(kwin_adapter)
+    } else {
+        state
+    };
+    #[cfg(windows)]
+    let state = if let Some(windows_adapter) = windows_adapter {
+        state.with_windows_adapter(windows_adapter)
     } else {
         state
     };

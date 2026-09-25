@@ -156,6 +156,18 @@ impl WindowsAdapter {
         Ok(hwnd)
     }
 
+    /// The verified HWND behind a tracked surface, for a capture host that
+    /// creates the window's own capture item (Windows.Graphics.Capture).
+    /// Requires the interactive desktop and the surface's identity cookie, so
+    /// a destroyed window or a reused HWND is `surface_dead`. Call it again
+    /// after creating the item: a window that passes both checks is the one
+    /// the item was created for, because a reused HWND lacks this daemon's
+    /// cookie.
+    pub fn native_capture_window(&self, surface: &SurfaceInfo) -> Result<isize> {
+        self.desktop()?;
+        self.resolve(surface).map(|hwnd| hwnd as isize)
+    }
+
     fn search_windows(&self, query: &SearchQuery, handles: impl IntoIterator<Item = usize>) -> Result<Vec<Candidate>> {
         let regex = query
             .title_pattern

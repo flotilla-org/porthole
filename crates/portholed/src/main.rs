@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use porthole_adapter_kwin::{KWinAdapter, bridge::KWinBridge};
+#[cfg(windows)]
+use porthole_core::adapter::Adapter as _;
 use portholed::runtime::control_endpoint;
 use tracing::warn;
 use tracing_subscriber::EnvFilter;
@@ -51,7 +53,12 @@ async fn main() -> std::io::Result<()> {
             portholed::server::serve_with_agent_policy(adapter, endpoint, agent_store, portholed::events::EventBus::new()).await
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        portholed::server::serve_with_agent_policy_and_windows_adapter(adapter, endpoint, agent_store, portholed::events::EventBus::new())
+            .await
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         portholed::server::serve_with_agent_policy(adapter, endpoint, agent_store, portholed::events::EventBus::new()).await
     }
@@ -74,7 +81,7 @@ fn build_adapter() -> LinuxAdapterBuild {
 }
 
 #[cfg(windows)]
-fn build_adapter() -> Arc<dyn porthole_core::adapter::Adapter> {
+fn build_adapter() -> Arc<porthole_adapter_windows::WindowsAdapter> {
     Arc::new(porthole_adapter_windows::WindowsAdapter::new())
 }
 

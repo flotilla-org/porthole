@@ -76,6 +76,8 @@ impl Drop for CpuStartup {
 mod native_session;
 #[cfg(target_os = "linux")]
 mod native_session_linux;
+#[cfg(windows)]
+mod native_session_windows;
 
 #[derive(Clone)]
 pub struct CaptureRegistry {
@@ -106,10 +108,13 @@ struct CaptureRegistryInner {
     native_holds: HashMap<String, native_session::NativeSessionHold>,
     #[cfg(target_os = "linux")]
     native_holds: HashMap<String, native_session_linux::LinuxNativeSessionHold>,
+    /// Windows sessions and their draining publications, as on macOS.
+    #[cfg(windows)]
+    native_holds: HashMap<String, native_session_windows::WindowsNativeSessionHold>,
     /// Reserved across native startup, including its cancellable awaits.
     /// Collapses the one-session check-and-reserve into a single locked step
     /// so two concurrent native creates can't both pass the limit.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     native_session_starting: bool,
     #[cfg(test)]
     test_native_info: HashMap<String, porthole_protocol::capture_sessions::NativeCaptureInfo>,
@@ -673,7 +678,7 @@ impl CaptureRegistry {
 
     fn remove_session(&self, session_id: &str) {
         if let Ok(mut inner) = self.inner.lock() {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             if let Some(hold) = inner.native_holds.get_mut(session_id) {
                 hold.close();
                 if let Some(session) = inner.sessions.get_mut(session_id) {
@@ -690,14 +695,14 @@ impl CaptureRegistry {
                 return;
             }
             inner.sessions.remove(session_id);
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             inner.native_holds.remove(session_id);
         }
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), CaptureRegistryError> {
         let mut inner = self.inner.lock().map_err(|_| CaptureRegistryError::Poisoned)?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(hold) = inner.native_holds.get_mut(session_id) {
             hold.close();
             if let Some(session) = inner.sessions.get_mut(session_id) {
@@ -713,7 +718,7 @@ impl CaptureRegistry {
             session.lifecycle = CaptureSessionLifecycle::Closed("CPU capture is draining".to_owned());
             return Ok(());
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         inner.native_holds.remove(session_id);
         inner
             .sessions
@@ -741,6 +746,19 @@ impl CaptureRegistry {
         owner_agent_id: AgentId,
     ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
         native_session_linux::create(self, kwin_adapter, surface, owner_agent_id).await
+    }
+
+    /// Create a Windows native (Windows.Graphics.Capture to Jackstay D3D11)
+    /// capture session. See [`native_session_windows`].
+    #[cfg(windows)]
+    pub async fn create_native_surface_session(
+        &self,
+        windows_adapter: Arc<porthole_adapter_windows::WindowsAdapter>,
+        surface: SurfaceInfo,
+        owner_agent_id: AgentId,
+        request: &porthole_protocol::capture_sessions::CaptureSessionRequest,
+    ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+        native_session_windows::create(self, windows_adapter, surface, owner_agent_id, request, None).await
     }
 
     fn mark_session_failed(&self, session_id: &str, message: String) {
@@ -874,21 +892,7 @@ impl CaptureRegistry {
                 ))
             })?
         };
-        // Current BGRA host pools have eight resources and a 512 MiB budget.
-        // Reserve 1 MiB for pool metadata and conservatively align rows to 256
-        // bytes. This is a request ceiling, not a promise of immediate admission:
-        // old leases still count and can delay replacement within Jackstay.
-        let row = u64::from(size.width) * 4;
-        let frame_bytes = (row.div_ceil(256) * 256).checked_mul(u64::from(size.height));
-        if size.width == 0
-            || size.height == 0
-            || frame_bytes.is_none_or(|bytes| bytes > (CAPTURE_MEMORY_BUDGET - 1024 * 1024) / u64::from(CAPTURE_RESOURCE_CAPACITY))
-        {
-            return Err(CaptureRegistryError::from_porthole(PortholeError::new(
-                ErrorCode::InvalidArgument,
-                "capture output must have positive pixel dimensions and fit the session pool budget",
-            )));
-        }
+        check_output_budget(size.width, size.height)?;
         control.set_output_size(size).await.map_err(CaptureRegistryError::from_porthole)
     }
 
@@ -979,9 +983,9 @@ impl CaptureRegistry {
             .sessions
             .get(session_id)
             .ok_or_else(|| CaptureRegistryError::UnknownSession(session_id.to_string()))?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let native = inner.native_holds.get(session_id).map(|hold| hold.native_info.clone());
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         let native: Option<porthole_protocol::capture_sessions::NativeCaptureInfo> = None;
         #[cfg(test)]
         let native = native.or_else(|| inner.test_native_info.get(session_id).cloned());
@@ -1036,6 +1040,20 @@ impl CaptureRegistry {
         } else {
             response
         };
+        #[cfg(windows)]
+        let response = if let Some(hold) = inner.native_holds.get(session_id) {
+            let snapshot = hold.snapshot();
+            CaptureSessionResponse {
+                status: snapshot.status.to_owned(),
+                status_message: snapshot.message,
+                width: snapshot.width,
+                height: snapshot.height,
+                stride: snapshot.width.saturating_mul(4),
+                ..response
+            }
+        } else {
+            response
+        };
         Ok(response)
     }
 
@@ -1068,6 +1086,26 @@ impl CaptureRegistry {
             .map(|path| path.display().to_string())
             .ok_or(CaptureRegistryError::FdSocketDisabled)
     }
+}
+
+/// Requested output dimensions must be positive and fit the session pool.
+/// Current BGRA host pools have eight resources and a 512 MiB budget. Reserve
+/// 1 MiB for pool metadata and conservatively align rows to 256 bytes. This is
+/// a request ceiling, not a promise of immediate admission: old leases still
+/// count and can delay replacement within Jackstay.
+fn check_output_budget(width: u32, height: u32) -> Result<(), CaptureRegistryError> {
+    let row = u64::from(width) * 4;
+    let frame_bytes = (row.div_ceil(256) * 256).checked_mul(u64::from(height));
+    if width == 0
+        || height == 0
+        || frame_bytes.is_none_or(|bytes| bytes > (CAPTURE_MEMORY_BUDGET - 1024 * 1024) / u64::from(CAPTURE_RESOURCE_CAPACITY))
+    {
+        return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+            ErrorCode::InvalidArgument,
+            "capture output must have positive pixel dimensions and fit the session pool budget",
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

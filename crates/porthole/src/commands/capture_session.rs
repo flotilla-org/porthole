@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use porthole_protocol::capture_sessions::{
-    CreateCaptureSessionResponse, NATIVE_ATTACH_TRANSPORT_MACOS_XPC, NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET,
+    CaptureSessionRequest, CaptureSessionResponse, CreateCaptureSessionResponse, NATIVE_ATTACH_TRANSPORT_MACOS_XPC,
+    NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET, NATIVE_ATTACH_TRANSPORT_WINDOWS_LOCAL_ENDPOINT,
 };
 
 use crate::client::{ClientError, DaemonClient};
@@ -16,14 +17,42 @@ pub async fn synthetic(client: &DaemonClient, args: CaptureSessionArgs<'_>) -> R
     print_session_response("synthetic", client, args, &res)
 }
 
-pub async fn surface(client: &DaemonClient, surface_id: &str, native: bool, args: CaptureSessionArgs<'_>) -> Result<(), ClientError> {
+pub async fn surface(
+    client: &DaemonClient,
+    surface_id: &str,
+    native: bool,
+    policy: &CaptureSessionRequest,
+    args: CaptureSessionArgs<'_>,
+) -> Result<(), ClientError> {
     let path = if native {
         format!("/capture-sessions/surfaces/{surface_id}?native=true")
     } else {
         format!("/capture-sessions/surfaces/{surface_id}")
     };
-    let res: CreateCaptureSessionResponse = client.post_json(&path, &serde_json::json!({})).await?;
+    let res: CreateCaptureSessionResponse = client.post_json(&path, policy).await?;
     print_session_response("surface", client, args, &res)
+}
+
+/// Print a session's current status (lifecycle, size, and backend detail
+/// such as a desktop-unavailable pause or a device-loss epoch).
+pub async fn status(client: &DaemonClient, session_id: &str, json: bool) -> Result<(), ClientError> {
+    let res: CaptureSessionResponse = client.get_json(&format!("/capture-sessions/{session_id}")).await?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&res).map_err(|error| ClientError::Local(format!("json encode: {error}")))?
+        );
+    } else {
+        println!(
+            "session_id: {}\nstatus: {}\nsize: {}x{}\nmessage: {}",
+            res.session_id,
+            res.status,
+            res.width,
+            res.height,
+            res.status_message.as_deref().unwrap_or("")
+        );
+    }
+    Ok(())
 }
 
 pub async fn configure(client: &DaemonClient, session_id: &str, width: u32, height: u32, json: bool) -> Result<(), ClientError> {
@@ -87,8 +116,28 @@ pub fn format_synthetic_session(control_socket_path: impl std::fmt::Display, res
         let endpoint_label = match native.transport_kind {
             NATIVE_ATTACH_TRANSPORT_MACOS_XPC => "mach_service",
             NATIVE_ATTACH_TRANSPORT_UNIX_SOCKET => "attach_socket",
+            NATIVE_ATTACH_TRANSPORT_WINDOWS_LOCAL_ENDPOINT => "local_endpoint",
             _ => "attach_endpoint",
         };
+        if native.transport_kind == NATIVE_ATTACH_TRANSPORT_WINDOWS_LOCAL_ENDPOINT {
+            return format!(
+                "porthole_socket: {control_socket_path}\n\
+                 session_id: {}\n\
+                 source_id: {}\n\
+                 track_id: {}\n\
+                 status: {}\n\
+                 native_transport: {}\n\
+                 {endpoint_label}: {}\n\
+                 attach_token: {}\n",
+                response.session_id,
+                response.source_id,
+                response.track_id,
+                response.status,
+                native.transport_kind,
+                native.endpoint,
+                native.attach_token,
+            );
+        }
         return format!(
             "porthole_socket: {control_socket_path}\n\
              session_id: {}\n\
