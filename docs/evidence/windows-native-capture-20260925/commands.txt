@@ -1,0 +1,301 @@
+UTC: 2026-09-25T20:14:46.0646838Z; session: 1; OS: Microsoft Windows NT 10.0.26200.0
+revision: dda211f9be83a9ba2f8210b0d78371e5786b8aee (worktree changes: 0)
+[20:14:46.840] isolated daemon pid 16636 on \\.\pipe\porthole-p1cap-34e58efbe962
+[20:14:48.274] porthole info -> daemon_version: 0.0.0
+uptime_seconds: 1
+surface_count: 0
+adapter: windows (loaded=true) capabilities=launch_process,search,wait,focus,input_key,input_text,screenshot,close
+  system permission interactive_desktop: granted (desktop operations require an unlocked interactive GUI session; Windows also enforces foreground and integrity restrictions per operation)
+[20:14:48.297] porthole agents create --name Porthole #186 temporary native capture check --json -> (output withheld: contains a secret)
+[20:14:48.328] temporary identity agent_df11c596a7504a1db8cd08ec51f2ed6d
+[20:14:48.356] porthole launch --app C:\dev\windows-parity-plan\porthole-p1\target\debug\examples\capture_fixture.exe --arg=--resize-after-ms --arg=14000 --arg=--resize --arg=480x300 --arg=--max-seconds --arg=306 --json -> agent_permission_needed
+[20:14:48.390] porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Porthole #186 temporary native capture check",
+      "agent_revoked": false,
+      "surface": null,
+      "surface_available": null,
+      "operation": {
+        "kind": "launch",
+        "application": "C:\\dev\\windows-parity-plan\\porthole-p1\\target\\debug\\examples\\capture_fixture.exe"
+      }
+    },
+    "request_id": "apr_c408cd8230164e49a02a84dfcc28c1f4",
+    "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+    "target": {
+      "type": "launched_by_agent"
+    },
+    "actions": [
+      "manage"
+    ],
+    "reason": "launch surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1790367288349,
+    "resolved_at_unix_ms": null
+  }
+]
+[20:14:48.419] porthole agents approve apr_c408cd8230164e49a02a84dfcc28c1f4 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Porthole #186 temporary native capture check",
+    "agent_revoked": false,
+    "surface": null,
+    "surface_available": null,
+    "operation": {
+      "kind": "launch",
+      "application": "C:\\dev\\windows-parity-plan\\porthole-p1\\target\\debug\\examples\\capture_fixture.exe"
+    }
+  },
+  "grant_id": "grant_c8a5b0cc27254561a36977d69b10733c",
+  "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+  "origin_request_id": "apr_c408cd8230164e49a02a84dfcc28c1f4",
+  "origin_reason": "launch surface",
+  "target": {
+    "type": "launched_by_agent"
+  },
+  "actions": [
+    "manage"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1790367288416,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+[20:14:48.540] porthole launch --app C:\dev\windows-parity-plan\porthole-p1\target\debug\examples\capture_fixture.exe --arg=--resize-after-ms --arg=14000 --arg=--resize --arg=480x300 --arg=--max-seconds --arg=306 --require-fresh-surface --json -> {
+  "launch_id": "launch_128a9d5faf10431caea17b8232f230c9",
+  "surface_id": "surf_c68bfb91476c48919cfce1e2aff78fab",
+  "surface_was_preexisting": false,
+  "confidence": "strong",
+  "correlation": "pid_tree",
+  "placement": {
+    "type": "not_requested"
+  }
+}
+[20:14:48.565] porthole capture-session surface surf_c68bfb91476c48919cfce1e2aff78fab --native --json -> agent_permission_needed
+[20:14:48.582] porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Porthole #186 temporary native capture check",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "capture_fixture.exe",
+        "title": "Porthole native capture fixture",
+        "pid": 8648
+      },
+      "surface_available": true,
+      "operation": {
+        "kind": "capture",
+        "native": true
+      }
+    },
+    "request_id": "apr_204afe8f49d74033a9dd18231ab2cd65",
+    "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_c68bfb91476c48919cfce1e2aff78fab"
+    },
+    "actions": [
+      "observe",
+      "record"
+    ],
+    "reason": "record surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1790367288561,
+    "resolved_at_unix_ms": null
+  }
+]
+[20:14:48.606] porthole agents approve apr_204afe8f49d74033a9dd18231ab2cd65 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Porthole #186 temporary native capture check",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "capture_fixture.exe",
+      "title": "Porthole native capture fixture",
+      "pid": 8648
+    },
+    "surface_available": true,
+    "operation": {
+      "kind": "capture",
+      "native": true
+    }
+  },
+  "grant_id": "grant_76ec29f4b292444a98cf850a1ee84300",
+  "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+  "origin_request_id": "apr_204afe8f49d74033a9dd18231ab2cd65",
+  "origin_reason": "record surface",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_c68bfb91476c48919cfce1e2aff78fab"
+  },
+  "actions": [
+    "observe",
+    "record"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1790367288602,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+[20:14:48.768] porthole capture-session surface surf_c68bfb91476c48919cfce1e2aff78fab --native --json -> (output withheld: contains a secret)
+[20:14:48.772] native session 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3: status ready, transport 3, endpoint porthole.capture.274ea4f1194847f2b25cce0110cc1a7b
+[20:14:49.908] wrong attach token refused (see wrong-token-consumer.log)
+[20:14:49.920] consumer pid 17804 (daemon pid 16636)
+[20:14:51.446] porthole capture-session status 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3 --json -> {
+  "session_id": "8b4e57d1-3af5-4ef4-becb-6d51deadb9f3",
+  "source_id": 1,
+  "track_id": 1,
+  "status": "ready",
+  "status_message": "epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=3, dropped=0, border=hidden",
+  "width": 320,
+  "height": 200,
+  "stride": 1280,
+  "pixel_format": "bgra8_unorm",
+  "fd_socket_path": "",
+  "native": {
+    "transport_kind": 3,
+    "endpoint": "porthole.capture.274ea4f1194847f2b25cce0110cc1a7b",
+    "attach_token": "ptas_<redacted>"
+  }
+}
+[20:14:51.450] status before resize: ready 320x200: epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=3, dropped=0, border=hidden
+[20:15:05.073] porthole capture-session status 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3 --json -> {
+  "session_id": "8b4e57d1-3af5-4ef4-becb-6d51deadb9f3",
+  "source_id": 1,
+  "track_id": 1,
+  "status": "ready",
+  "status_message": "epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=19, dropped=0, border=hidden",
+  "width": 480,
+  "height": 300,
+  "stride": 1920,
+  "pixel_format": "bgra8_unorm",
+  "fd_socket_path": "",
+  "native": {
+    "transport_kind": 3,
+    "endpoint": "porthole.capture.274ea4f1194847f2b25cce0110cc1a7b",
+    "attach_token": "ptas_<redacted>"
+  }
+}
+[20:15:05.073] status after resize: ready 480x300: epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=19, dropped=0, border=hidden
+[20:15:05.084] watching for 6 s: lock/unlock or disconnect/reconnect RDP now; changes go to C:\dev\windows-parity-plan\porthole-p1\target\native-capture-final\status-watch.log
+[20:15:11.550] watch finished
+[20:15:11.571] porthole close surf_c68bfb91476c48919cfce1e2aff78fab -> agent_permission_needed
+[20:15:11.590] porthole agents requests --json -> [
+  {
+    "description": {
+      "agent_name": "Porthole #186 temporary native capture check",
+      "agent_revoked": false,
+      "surface": {
+        "app_name": "capture_fixture.exe",
+        "title": "Porthole native capture fixture",
+        "pid": 8648
+      },
+      "surface_available": true,
+      "operation": null
+    },
+    "request_id": "apr_a3aa82f5252c4638a11e41fbdacb53d7",
+    "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+    "target": {
+      "type": "surface",
+      "surface_id": "surf_c68bfb91476c48919cfce1e2aff78fab"
+    },
+    "actions": [
+      "manage"
+    ],
+    "reason": "close surface",
+    "status": "pending",
+    "invalidation_reason": null,
+    "created_at_unix_ms": 1790367311568,
+    "resolved_at_unix_ms": null
+  }
+]
+[20:15:11.610] porthole agents approve apr_a3aa82f5252c4638a11e41fbdacb53d7 --duration persistent --json -> {
+  "description": {
+    "agent_name": "Porthole #186 temporary native capture check",
+    "agent_revoked": false,
+    "surface": {
+      "app_name": "capture_fixture.exe",
+      "title": "Porthole native capture fixture",
+      "pid": 8648
+    },
+    "surface_available": true,
+    "operation": null
+  },
+  "grant_id": "grant_76171772449f4182bde05261b344cae1",
+  "agent_id": "agent_df11c596a7504a1db8cd08ec51f2ed6d",
+  "origin_request_id": "apr_a3aa82f5252c4638a11e41fbdacb53d7",
+  "origin_reason": "close surface",
+  "target": {
+    "type": "surface",
+    "surface_id": "surf_c68bfb91476c48919cfce1e2aff78fab"
+  },
+  "actions": [
+    "manage"
+  ],
+  "duration": {
+    "type": "persistent"
+  },
+  "constraints": {
+    "requires_frontmost": false
+  },
+  "created_at_unix_ms": 1790367311607,
+  "expires_at_unix_ms": null,
+  "consumed_at_unix_ms": null,
+  "revoked_at_unix_ms": null
+}
+[20:15:11.665] porthole close surf_c68bfb91476c48919cfce1e2aff78fab -> closed surface surf_c68bfb91476c48919cfce1e2aff78fab
+[20:15:11.896] porthole capture-session status 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3 --json -> {
+  "session_id": "8b4e57d1-3af5-4ef4-becb-6d51deadb9f3",
+  "source_id": 1,
+  "track_id": 1,
+  "status": "failed",
+  "status_message": "captured window closed (closed: window destroyed (IsWindow)); native resources retired; epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=26, dropped=0, border=hidden, notes: closed: window destroyed (IsWindow)",
+  "width": 480,
+  "height": 300,
+  "stride": 1920,
+  "pixel_format": "bgra8_unorm",
+  "fd_socket_path": "",
+  "native": {
+    "transport_kind": 3,
+    "endpoint": "porthole.capture.274ea4f1194847f2b25cce0110cc1a7b",
+    "attach_token": "ptas_<redacted>"
+  }
+}
+[20:15:11.898] status after window close: failed: captured window closed (closed: window destroyed (IsWindow)); native resources retired; epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=26, dropped=0, border=hidden, notes: closed: window destroyed (IsWindow)
+[20:15:11.908] consumer exit code 0
+[20:15:12.182] porthole capture-session status 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3 --json -> {
+  "session_id": "8b4e57d1-3af5-4ef4-becb-6d51deadb9f3",
+  "source_id": 1,
+  "track_id": 1,
+  "status": "failed",
+  "status_message": "captured window closed (closed: window destroyed (IsWindow)); native resources retired; epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=26, dropped=0, border=hidden, notes: closed: window destroyed (IsWindow)",
+  "width": 480,
+  "height": 300,
+  "stride": 1920,
+  "pixel_format": "bgra8_unorm",
+  "fd_socket_path": "",
+  "native": {
+    "transport_kind": 3,
+    "endpoint": "porthole.capture.274ea4f1194847f2b25cce0110cc1a7b",
+    "attach_token": "ptas_<redacted>"
+  }
+}
+[20:15:12.183] status after drain: failed: captured window closed (closed: window destroyed (IsWindow)); native resources retired; epoch=1, publication=d3d11 on adapter 00000000:00009fe5 (AMD Radeon(TM) Graphics), published=26, dropped=0, border=hidden, notes: closed: window destroyed (IsWindow)
+[20:15:12.213] porthole capture-session close 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3 -> closed capture session 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3
+[20:15:12.233] porthole agents revoke agent_df11c596a7504a1db8cd08ec51f2ed6d --json -> {
+  "revoked": true
+}
+[20:15:12.238] cleanup done: identity revoked, own daemon stopped

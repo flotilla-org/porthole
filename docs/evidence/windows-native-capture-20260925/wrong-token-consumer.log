@@ -1,0 +1,3 @@
+[1790367288.938 +   0.000s] consumer pid 8948 for session 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3
+[1790367288.939 +   0.001s] attach refused: attach request is not authorized for this capture session
+[1790367288.939 +   0.001s] summary: attaches 0, epochs [], frames 0, verified 0, transitional 0, not uniform 0, sizes [], final refusal Some("attach request is not authorized for this capture session")

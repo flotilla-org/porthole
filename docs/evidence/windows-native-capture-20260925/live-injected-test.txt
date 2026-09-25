@@ -1,0 +1,2 @@
+test capture_registry::native_session_windows::tests::live::native_capture_follows_lock_disconnect_device_loss_resize_and_close ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 86 filtered out; finished in 2.89s

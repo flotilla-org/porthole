@@ -84,7 +84,8 @@ it does not create a new operator/agent security boundary.
   solid-black content. Minimized windows, failed capture and an entirely unrendered buffer return
   `adapter_unsupported`. Some GPU/protected applications do not support this
   mechanism or may render incomplete content; inspect evidence for those apps.
-  No Windows Graphics Capture, DXGI, Jackstay, streaming or recording is added.
+  Screenshots do not use Windows.Graphics.Capture; continuous capture is the
+  native capture session below.
 - `PrintWindow` is synchronous with no cancellation API. One dedicated worker
   owns all GDI resources until it returns; the request times out after three
   seconds. If the worker remains stuck, further screenshots fail explicitly
@@ -94,8 +95,74 @@ it does not create a new operator/agent security boundary.
   is returned after two seconds. No process termination fallback is used.
 - Presence/title waits are implemented; stable/dirty waits are rejected through
   the shared wait preflight as `adapter_unsupported`. Pointer operations,
-  placement, display enumeration, attention, UIAutomation content rect and
-  continuous capture remain unsupported and are not advertised.
+  placement, display enumeration, attention, UIAutomation content rect,
+  CPU (fd-socket) capture sessions and recording remain unsupported and are not
+  advertised.
+
+## Native capture sessions
+
+`POST /capture-sessions/surfaces/{id}?native=true` (CLI: `porthole
+capture-session surface <id> --native`) captures a tracked window with
+Windows.Graphics.Capture and publishes it as a Jackstay D3D11 source (#186).
+The split follows [jackstay#23](https://github.com/flotilla-org/jackstay/issues/23):
+capture runs inside portholed, which already lives in the interactive session.
+
+- **Authorization and selection.** The route requires `observe` and `record`
+  on the surface: a grant for that surface, or a `launched_by_agent` grant
+  for windows the agent launched. The adapter resolves the surface to its HWND through the same
+  identity cookie as every other operation, on the interactive desktop.
+  portholed then creates the window's `GraphicsCaptureItem` (`CreateForWindow`)
+  and re-verifies the identity, so a destroyed window whose HWND was reused
+  cannot be captured in its place. Only windows are captured; there is no
+  whole-screen capture.
+- **Handoff.** The item goes to Jackstay's `WgcCapture`, which owns the D3D11
+  device, frame pool, copy into its shared pool, fences and adapter identity.
+  Porthole passes policy from the optional request body: `cursor` (default
+  true), `border` (`show`, `prefer_hidden` (default) or `require_hidden`),
+  `min_update_interval_ms` (1 to 10000) and `output` (`source` (default), `fit`
+  or `fixed` with `width`/`height`; CLI `--no-cursor`, `--border`,
+  `--min-update-interval-ms`, `--output-fit`, `--output-fixed`). The arena uses
+  Porthole's native limits: 8 slots and a 512 MiB budget; an output size must
+  fit them. Policy is fixed at start, so `capture-session configure` is
+  unsupported for these sessions. Other capture paths refuse a non-default
+  policy (`adapter_unsupported`) instead of ignoring it.
+- **Lifecycle.** A session thread follows the capture's status, and `porthole
+  capture-session status <id>` reports it:
+
+  | Event | Status |
+  | --- | --- |
+  | frames publishing | `ready`, with the epoch, adapter, counts and border state |
+  | resize | `ready` at the new size; consumers install the new pool generation |
+  | lock or RDP disconnect | `paused`, `desktop unavailable: session locked` or `session disconnected`; resumes to `ready` on its own |
+  | device loss (for example an RDP reconnect that changes adapter) | `recovering`, then `ready` with the next epoch; old-epoch consumers see their publication close and attach again |
+  | window closed | `failed`, `captured window closed`; nothing restarts it |
+  | `DELETE` / `capture-session close` | `draining`, then `closed` |
+
+  Both failure and close drain every publication, including earlier epochs,
+  until consumers release their mappings and GPU use (`native resources
+  retired`), or report `recovery_required` if they do not. One native session
+  runs at a time, as on macOS and Linux; a session holds the slot until it has
+  drained.
+- **Consumers.** The response's `native` field has transport 3: a Jackstay
+  Local Endpoint (Wheelhouse ADR 0011) name in `Session` scope, and a
+  per-session `attach_token`. The pipe admits only this user's processes in
+  this logon session. A consumer connects with `jackstay::local::connect`,
+  sends one JSON line `{"op":"open_native_capture","session_id":...,
+  "attach_token":...}`, and reads one reply line naming the publication (`d3d11`,
+  or `cpu` when the device cannot share fences) and epoch. Jackstay's setup
+  (`D3d11SetupClient` or `CpuSetupClient`) then runs on the same connection. A
+  wrong token, a closed or failed session, or a fifth concurrent connection
+  gets `{"op":"rejected","message":...}`. `porthole::native_capture::open`
+  implements the client side. The endpoint stays bound until a new native
+  session replaces the finished one, so a late consumer is told why the session
+  ended. See `crates/portholed/examples/windows_native_capture_consumer.rs`.
+
+Evidence, including the human-coordinated lock and RDP check, is in
+[2026-09-25-windows-native-capture-evidence.md](2026-09-25-windows-native-capture-evidence.md).
+`scripts/windows-native-capture-smoke.ps1` repeats the live check against an
+isolated daemon, and `cargo test -p portholed --lib native_session_windows --
+--ignored` runs the injected lock, disconnect and device-loss test on an
+interactive desktop.
 
 Windows enforces session/desktop and integrity restrictions per operation.
 An accessible interactive desktop does not promise that every target accepts
