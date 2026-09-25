@@ -107,7 +107,10 @@ mod fixture {
 
     fn dimensions(value: &str) -> (u32, u32) {
         let (width, height) = value.split_once('x').expect("WIDTHxHEIGHT");
-        (width.parse().expect("width"), height.parse().expect("height"))
+        let size = (width.parse().expect("width"), height.parse().expect("height"));
+        // The pending resize is packed as two 16-bit halves.
+        assert!(size.0 <= 0xffff && size.1 <= 0xffff, "--resize dimensions must fit 16 bits");
+        size
     }
 
     pub fn main() {

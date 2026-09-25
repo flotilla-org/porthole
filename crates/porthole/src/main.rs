@@ -1261,24 +1261,24 @@ async fn async_main() -> std::process::ExitCode {
                     }
                     (None, None) => Ok(None),
                 };
-                let policy = CaptureSessionRequest {
-                    cursor: no_cursor.then_some(false),
-                    border: border.map(|border| match border {
-                        CaptureBorderArg::Show => CaptureBorderPolicy::Show,
-                        CaptureBorderArg::PreferHidden => CaptureBorderPolicy::PreferHidden,
-                        CaptureBorderArg::RequireHidden => CaptureBorderPolicy::RequireHidden,
-                    }),
-                    min_update_interval_ms,
-                    output: None,
-                };
                 let control_socket_path = socket_path();
                 match output {
                     Ok(output) => {
+                        let policy = CaptureSessionRequest {
+                            cursor: no_cursor.then_some(false),
+                            border: border.map(|border| match border {
+                                CaptureBorderArg::Show => CaptureBorderPolicy::Show,
+                                CaptureBorderArg::PreferHidden => CaptureBorderPolicy::PreferHidden,
+                                CaptureBorderArg::RequireHidden => CaptureBorderPolicy::RequireHidden,
+                            }),
+                            min_update_interval_ms,
+                            output,
+                        };
                         porthole::commands::capture_session::surface(
                             &client,
                             &surface_id,
                             native,
-                            &CaptureSessionRequest { output, ..policy },
+                            &policy,
                             porthole::commands::capture_session::CaptureSessionArgs {
                                 control_socket_path: &control_socket_path,
                                 json,
