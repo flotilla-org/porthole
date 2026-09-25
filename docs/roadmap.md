@@ -205,7 +205,10 @@ A future macOS display controlled by Porthole could host real application window
 with known resolution, scale and placement. Robert proposed this during live
 capture verification on 2026-09-13. Platform feasibility, display lifetime and
 cleanup need investigation before scheduling implementation. This remains a
-future direction; it is not a prerequisite for the acquisition work.
+future direction; it is not a prerequisite for the acquisition work. Research
+into placement, virtual displays, audio isolation and the Linux/Windows
+comparison points is recorded in
+[capture experience research](2026-09-24-capture-experience-research.md).
 
 For apps intended only for Porthole/Jackstay consumption, Linux may use a small
 purpose-built or repurposed compositor. A future capture capability/request
