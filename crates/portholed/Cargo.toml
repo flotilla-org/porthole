@@ -49,10 +49,20 @@ zbus = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 porthole-adapter-windows = { path = "../porthole-adapter-windows" }
+# Windows.Graphics.Capture handoff (#186): Porthole creates the capture item
+# for an authorized window and Jackstay's D3D11 backend runs the session.
+jackstay = { workspace = true, features = ["backend-windows"] }
+# Same windows-rs release as Jackstay's backend; only names its HWND and
+# capture item types.
+windows = { version = "0.62.2", features = ["Graphics_Capture", "Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile = "3"
 porthole = { path = "../porthole" }
+
+[target.'cfg(windows)'.dev-dependencies]
+# A test-owned window for the ignored live native capture test.
+windows = { version = "0.62.2", features = ["Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 porthole-adapter-macos = { path = "../porthole-adapter-macos" }
