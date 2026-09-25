@@ -2,7 +2,7 @@
 
 OS-level presentation substrate for agents: launch apps and artifacts, drive them, capture them, and show them to the user — through a typed HTTP-over-UDS API.
 
-Status: pre-release, with macOS/KWin desktop adapters and a Windows adapter for process launch, focus, keyboard input and one-shot screenshots. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
+Status: pre-release, with macOS/KWin desktop adapters and a Windows adapter for process launch, focus, keyboard input, one-shot screenshots and native (Windows.Graphics.Capture to Jackstay D3D11) window capture. Wire contract may still change between slices. Part of [flotilla-org](https://github.com/flotilla-org) — designed to be the substrate flotilla's yeoman uses for desktop orchestration, but usable standalone.
 
 Windows uses the same HTTP API over named pipes. See the [Windows desktop guide](docs/windows-desktop.md) for GUI-session requirements, supported operations and a reproducible live smoke test.
 

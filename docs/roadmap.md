@@ -98,7 +98,7 @@ repeat them. Broader capture lifecycle follow-ups (#19, #20, #28, #31, #33) need
 reconciliation against the current implementation before treating them as new
 work. No existing issue is closed merely because the roadmap changed.
 
-Windows continuous capture/DXGI, browser CDP, additional compositors, presentation
+Browser CDP, additional compositors, presentation
 hierarchy integration and direct Katzensteg integration remain later work. The
 existing SDL interception of the simple viewer is sufficient for this extraction.
 
@@ -199,7 +199,7 @@ Historical product slices; the active milestones above govern current ordering:
 - [x] **`force_place: true` launch option** — placement on preexisting surfaces.
 - [x] **KWin foundation (Linux)** — compositor, input and screenshot support landed in #79. Native capture followed; unattended capture and full workflow verification remain open in the active milestones.
 
-Later directions: Hyprland, X11, overlay/annotation, MCP, remote multi-machine presentation and record/replay integration. Windows desktop operations are now an active milestone; Windows continuous capture remains deferred.
+Later directions: Hyprland, X11, overlay/annotation, MCP, remote multi-machine presentation and record/replay integration. Windows desktop operations are now an active milestone; Windows native window capture into Jackstay's D3D11 backend landed with #186, and whole-screen capture remains later work.
 
 A future macOS display controlled by Porthole could host real application windows
 with known resolution, scale and placement. Robert proposed this during live

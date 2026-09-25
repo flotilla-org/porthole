@@ -6,7 +6,9 @@ use axum::{
 use porthole_core::{ErrorCode, PortholeError, agent_policy::ActionClass};
 use porthole_protocol::{
     agent_permissions::PermissionOperation,
-    capture_sessions::{CaptureOutputRequest, CaptureOutputResponse, CaptureSessionResponse, CreateCaptureSessionResponse},
+    capture_sessions::{
+        CaptureOutputRequest, CaptureOutputResponse, CaptureSessionRequest, CaptureSessionResponse, CreateCaptureSessionResponse,
+    },
 };
 use serde::Deserialize;
 
@@ -38,7 +40,9 @@ pub async fn post_surface(
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(kind): Query<CaptureKindQuery>,
+    request: Option<Json<CaptureSessionRequest>>,
 ) -> Result<Json<CreateCaptureSessionResponse>, ApiError> {
+    let request = request.map(|Json(request)| request).unwrap_or_default();
     let surface_id = porthole_core::surface::SurfaceId::from(id);
     let execution = authorize_surface_actions(
         &state,
@@ -49,7 +53,7 @@ pub async fn post_surface(
     )
     .await?;
     let surface = state.handles.require_alive(&surface_id).await?;
-    let response = create_session(&state, kind.native, surface, execution.agent_id.clone())
+    let response = create_session(&state, kind.native, surface, execution.agent_id.clone(), &request)
         .await
         .map_err(capture_error_to_api)?;
     let audit_state = state.clone();
@@ -112,7 +116,16 @@ async fn create_session(
     native: bool,
     surface: porthole_core::surface::SurfaceInfo,
     agent_id: porthole_core::agent_policy::AgentId,
+    request: &CaptureSessionRequest,
 ) -> Result<CreateCaptureSessionResponse, CaptureRegistryError> {
+    // Only Windows native capture takes host policy at start; elsewhere a
+    // non-default request is refused rather than silently ignored.
+    if !(cfg!(windows) && native) && !request.is_default() {
+        return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+            ErrorCode::AdapterUnsupported,
+            "capture policy (cursor, border, min_update_interval_ms, output) is only supported by Windows native capture sessions",
+        )));
+    }
     if native {
         #[cfg(target_os = "macos")]
         {
@@ -128,7 +141,20 @@ async fn create_session(
             };
             return state.capture.create_native_surface_session(kwin_adapter, surface, agent_id).await;
         }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(windows)]
+        {
+            let Some(windows_adapter) = state.windows_adapter.clone() else {
+                return Err(CaptureRegistryError::from_porthole(PortholeError::new(
+                    ErrorCode::AdapterUnsupported,
+                    "native Windows capture sessions require the Windows desktop adapter",
+                )));
+            };
+            return state
+                .capture
+                .create_native_surface_session(windows_adapter, surface, agent_id, request)
+                .await;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         {
             let _ = (surface, agent_id);
             return Err(CaptureRegistryError::from_porthole(PortholeError::new(
@@ -170,6 +196,34 @@ mod tests {
         .into_response();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn capture_policy_is_refused_where_it_would_be_ignored() {
+        use std::sync::Arc;
+
+        use porthole_core::{SurfaceId, agent_policy::AgentId, in_memory::InMemoryAdapter, surface::SurfaceInfo};
+        use porthole_protocol::capture_sessions::CaptureOutputPolicy;
+
+        let state = AppState::new(Arc::new(InMemoryAdapter::new()));
+        let request = CaptureSessionRequest {
+            output: Some(CaptureOutputPolicy::Fit { width: 64, height: 64 }),
+            ..CaptureSessionRequest::default()
+        };
+        // The CPU path never takes host capture policy, on any platform.
+        let Err(CaptureRegistryError::Porthole(error)) = create_session(
+            &state,
+            false,
+            SurfaceInfo::window(SurfaceId::new(), 1),
+            AgentId::from("agent_policy_test"),
+            &request,
+        )
+        .await
+        else {
+            panic!("capture policy on the CPU path was not refused");
+        };
+        assert_eq!(error.code, ErrorCode::AdapterUnsupported);
+        assert!(error.message.contains("Windows native"), "{}", error.message);
     }
 
     #[test]

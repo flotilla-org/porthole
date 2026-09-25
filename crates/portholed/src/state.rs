@@ -2,6 +2,8 @@ use std::{sync::Arc, time::Instant};
 
 #[cfg(target_os = "linux")]
 use porthole_adapter_kwin::KWinAdapter;
+#[cfg(windows)]
+use porthole_adapter_windows::WindowsAdapter;
 use porthole_core::{
     adapter::Adapter, attach_pipeline::AttachPipeline, handle::HandleStore, input_pipeline::InputPipeline, launch::LaunchPipeline,
     replace_pipeline::ReplacePipeline, wait_pipeline::WaitPipeline,
@@ -14,6 +16,9 @@ pub struct AppState {
     pub adapter: Arc<dyn Adapter>,
     #[cfg(target_os = "linux")]
     pub kwin_adapter: Option<Arc<KWinAdapter>>,
+    /// The typed Windows adapter, for native capture's window verification.
+    #[cfg(windows)]
+    pub windows_adapter: Option<Arc<WindowsAdapter>>,
     pub handles: HandleStore,
     pub pipeline: Arc<LaunchPipeline>,
     pub replace: Arc<ReplacePipeline>,
@@ -75,6 +80,8 @@ impl AppState {
             adapter,
             #[cfg(target_os = "linux")]
             kwin_adapter: None,
+            #[cfg(windows)]
+            windows_adapter: None,
             handles,
             pipeline,
             replace,
@@ -107,6 +114,13 @@ impl AppState {
     #[must_use]
     pub fn with_kwin_adapter(mut self, kwin_adapter: Arc<KWinAdapter>) -> Self {
         self.kwin_adapter = Some(kwin_adapter);
+        self
+    }
+
+    #[cfg(windows)]
+    #[must_use]
+    pub fn with_windows_adapter(mut self, windows_adapter: Arc<WindowsAdapter>) -> Self {
+        self.windows_adapter = Some(windows_adapter);
         self
     }
 

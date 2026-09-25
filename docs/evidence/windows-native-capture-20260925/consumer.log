@@ -1,0 +1,32 @@
+[1790367289.947 +   0.000s] consumer pid 17804 for session 8b4e57d1-3af5-4ef4-becb-6d51deadb9f3
+[1790367289.950 +   0.003s] attached: publication D3d11, epoch 1
+[1790367289.952 +   0.004s] producer adapter 00000000:00009fe5 "AMD Radeon(TM) Graphics" (software false)
+[1790367290.010 +   0.063s] frame 320x200 generation 1 epoch 1: uniform green, verified
+[1790367290.561 +   0.614s] frame 320x200 generation 1 epoch 1: uniform blue, verified
+[1790367291.553 +   1.606s] frame 320x200 generation 1 epoch 1: uniform red, verified
+[1790367292.558 +   2.610s] frame 320x200 generation 1 epoch 1: uniform green, verified
+[1790367293.592 +   3.645s] frame 320x200 generation 1 epoch 1: uniform blue, verified
+[1790367294.552 +   4.605s] frame 320x200 generation 1 epoch 1: uniform red, verified
+[1790367295.586 +   5.639s] frame 320x200 generation 1 epoch 1: uniform green, verified
+[1790367296.591 +   6.644s] frame 320x200 generation 1 epoch 1: uniform blue, verified
+[1790367297.579 +   7.632s] frame 320x200 generation 1 epoch 1: uniform red, verified
+[1790367298.583 +   8.636s] frame 320x200 generation 1 epoch 1: uniform green, verified
+[1790367299.587 +   9.640s] frame 320x200 generation 1 epoch 1: uniform blue, verified
+[1790367300.591 +  10.644s] frame 320x200 generation 1 epoch 1: uniform red, verified
+[1790367301.582 +  11.635s] frame 320x200 generation 1 epoch 1: uniform green, verified
+[1790367302.522 +  12.575s] installed a replacement pool: true
+[1790367302.524 +  12.577s] frame 321x201 generation 2 epoch 1: not uniform, transitional (repaint after a new pool generation)
+[1790367302.555 +  12.608s] installed a replacement pool: true
+[1790367302.563 +  12.616s] frame 480x300 generation 3 epoch 1: uniform blue, verified
+[1790367303.593 +  13.646s] frame 480x300 generation 3 epoch 1: uniform red, verified
+[1790367304.584 +  14.637s] frame 480x300 generation 3 epoch 1: uniform green, verified
+[1790367305.593 +  15.645s] frame 480x300 generation 3 epoch 1: uniform blue, verified
+[1790367306.617 +  16.670s] frame 480x300 generation 3 epoch 1: uniform red, verified
+[1790367307.582 +  17.635s] frame 480x300 generation 3 epoch 1: uniform green, verified
+[1790367308.622 +  18.675s] frame 480x300 generation 3 epoch 1: uniform blue, verified
+[1790367309.616 +  19.669s] frame 480x300 generation 3 epoch 1: uniform red, verified
+[1790367310.593 +  20.646s] frame 480x300 generation 3 epoch 1: uniform green, verified
+[1790367311.585 +  21.638s] frame 480x300 generation 3 epoch 1: uniform blue, verified
+[1790367311.692 +  21.745s] publication closed
+[1790367311.804 +  21.857s] attach refused: captured window closed (closed: window destroyed (IsWindow))
+[1790367311.804 +  21.857s] summary: attaches 1, epochs [1], frames 25, verified 24, transitional 1, not uniform 0, sizes [(320, 200), (321, 201), (480, 300)], final refusal Some("captured window closed (closed: window destroyed (IsWindow))")

@@ -3,7 +3,8 @@
 Porthole exposes a local HTTP API for inspecting and driving desktop windows from
 test harnesses and orchestration tools. It has macOS and KWin/Plasma Wayland
 adapters. Windows has a named-pipe control plane and native process launch,
-focus, keyboard input and one-shot screenshot operations. Consumers include terminal-emulator test harnesses and
+focus, keyboard input, one-shot screenshot operations and native window capture
+sessions handed to Jackstay's D3D11 backend. Consumers include terminal-emulator test harnesses and
 flotilla's desktop agent workflows.
 
 The current plan extracts Jackstay as an independent 0.x library and verifies one

@@ -20,9 +20,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/flotilla-org/porthole"
 
 [workspace.dependencies]
-jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "7eda143c73e4a6ab6b32545376cf8fcf53195cbf" }
+jackstay = { git = "https://github.com/flotilla-org/jackstay", rev = "a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520" }
 # Graph-manager vocabulary; bridge execution lives in this workspace.
-jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "7eda143c73e4a6ab6b32545376cf8fcf53195cbf" }
+jackstay-graph = { git = "https://github.com/flotilla-org/jackstay", rev = "a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520" }
 async-trait = "0.1"
 async-stream = "0.3"
 base64 = "0.22"

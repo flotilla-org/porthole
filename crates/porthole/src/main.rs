@@ -700,6 +700,20 @@ enum PublicationsCommand {
     },
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum CaptureBorderArg {
+    Show,
+    PreferHidden,
+    RequireHidden,
+}
+
+fn parse_dimensions(value: &str) -> Result<(u32, u32), porthole::client::ClientError> {
+    value
+        .split_once(['x', 'X'])
+        .and_then(|(width, height)| Some((width.parse().ok()?, height.parse().ok()?)))
+        .ok_or_else(|| porthole::client::ClientError::Local(format!("expected WIDTHxHEIGHT, got {value:?}")))
+}
+
 #[derive(Subcommand)]
 enum CaptureSessionCommand {
     /// Create a synthetic daemon-backed capture session and print its descriptor.
@@ -713,9 +727,32 @@ enum CaptureSessionCommand {
         surface_id: String,
         /// Use the platform native handle path instead of the CPU-shm fd-socket
         /// path: IOSurface/Metal over XPC on macOS, dmabuf/PipeWire over UDS
-        /// on Linux.
+        /// on Linux, Windows.Graphics.Capture into D3D11 over a Local Endpoint
+        /// named pipe on Windows.
         #[arg(long)]
         native: bool,
+        /// Leave the pointer out of captured frames (Windows native only).
+        #[arg(long)]
+        no_cursor: bool,
+        /// Capture border policy (Windows native only).
+        #[arg(long, value_enum)]
+        border: Option<CaptureBorderArg>,
+        /// Deliver frames at most this often, in milliseconds (Windows native only).
+        #[arg(long)]
+        min_update_interval_ms: Option<u32>,
+        /// Scale down to fit WIDTHxHEIGHT, keeping aspect (Windows native only).
+        #[arg(long, value_name = "WIDTHxHEIGHT", conflicts_with = "output_fixed")]
+        output_fit: Option<String>,
+        /// Publish exactly WIDTHxHEIGHT, letterboxed (Windows native only).
+        #[arg(long, value_name = "WIDTHxHEIGHT")]
+        output_fixed: Option<String>,
+        /// Print response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a capture session's status.
+    Status {
+        session_id: String,
         /// Print response as JSON.
         #[arg(long)]
         json: bool,
@@ -1206,18 +1243,51 @@ async fn async_main() -> std::process::ExitCode {
                 )
                 .await
             }
-            CaptureSessionCommand::Surface { surface_id, native, json } => {
+            CaptureSessionCommand::Surface {
+                surface_id,
+                native,
+                no_cursor,
+                border,
+                min_update_interval_ms,
+                output_fit,
+                output_fixed,
+                json,
+            } => {
+                use porthole_protocol::capture_sessions::{CaptureBorderPolicy, CaptureOutputPolicy, CaptureSessionRequest};
+                let output = match (output_fit, output_fixed) {
+                    (Some(fit), _) => parse_dimensions(&fit).map(|(width, height)| Some(CaptureOutputPolicy::Fit { width, height })),
+                    (None, Some(fixed)) => {
+                        parse_dimensions(&fixed).map(|(width, height)| Some(CaptureOutputPolicy::Fixed { width, height }))
+                    }
+                    (None, None) => Ok(None),
+                };
                 let control_socket_path = socket_path();
-                porthole::commands::capture_session::surface(
-                    &client,
-                    &surface_id,
-                    native,
-                    porthole::commands::capture_session::CaptureSessionArgs {
-                        control_socket_path: &control_socket_path,
-                        json,
-                    },
-                )
-                .await
+                match output {
+                    Ok(output) => {
+                        let policy = CaptureSessionRequest {
+                            cursor: no_cursor.then_some(false),
+                            border: border.map(|border| match border {
+                                CaptureBorderArg::Show => CaptureBorderPolicy::Show,
+                                CaptureBorderArg::PreferHidden => CaptureBorderPolicy::PreferHidden,
+                                CaptureBorderArg::RequireHidden => CaptureBorderPolicy::RequireHidden,
+                            }),
+                            min_update_interval_ms,
+                            output,
+                        };
+                        porthole::commands::capture_session::surface(
+                            &client,
+                            &surface_id,
+                            native,
+                            &policy,
+                            porthole::commands::capture_session::CaptureSessionArgs {
+                                control_socket_path: &control_socket_path,
+                                json,
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                }
             }
             CaptureSessionCommand::Configure {
                 session_id,
@@ -1225,6 +1295,9 @@ async fn async_main() -> std::process::ExitCode {
                 height,
                 json,
             } => porthole::commands::capture_session::configure(&client, &session_id, width, height, json).await,
+            CaptureSessionCommand::Status { session_id, json } => {
+                porthole::commands::capture_session::status(&client, &session_id, json).await
+            }
             CaptureSessionCommand::Close { session_id } => porthole::commands::capture_session::close(&client, &session_id).await,
         },
         Command::Publications { command } => {
