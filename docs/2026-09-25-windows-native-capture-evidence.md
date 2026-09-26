@@ -154,9 +154,11 @@ written with shared read/write access, so a reader (`tail -f`,
 `Get-Content -Wait`) cannot break the run, and if `porthole close` is refused
 the script stops the fixture process it launched, by PID.
 
-A 60 s watch with no lock or disconnect (2026-09-26, Beaufort) read 78 frames:
-77 verified, one `transitional` frame at the resize (321×201, generation 2), no
-non-uniform frames and no cursor over the window.
+Two 60 s watches with no lock or disconnect (2026-09-26, Beaufort) read 78 and
+76 frames: all verified except one `transitional` frame at the resize in the
+first (321×201, generation 2); no non-uniform frames and no pointer over the
+window. The second ran with `tail -F` holding `status-watch.log` and
+`commands.txt` open throughout.
 
 For raw WGC behaviour without Porthole, Jackstay's
 `cargo run -p jackstay --features backend-windows --example wgc_session_watch`
