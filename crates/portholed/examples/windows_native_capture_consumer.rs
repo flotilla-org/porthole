@@ -76,12 +76,16 @@ mod consumer {
     /// QPC now in nanoseconds: the clock of a frame's `timestamp_ns` (WGC's
     /// `SystemRelativeTime`) and of the capture fixture's event log.
     fn qpc_ns() -> u64 {
-        let (mut counter, mut frequency) = (0i64, 0i64);
-        // SAFETY: both out pointers are live locals.
-        unsafe {
-            let _ = QueryPerformanceCounter(&mut counter);
-            let _ = QueryPerformanceFrequency(&mut frequency);
-        }
+        static FREQUENCY: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+        let frequency = *FREQUENCY.get_or_init(|| {
+            let mut frequency = 0i64;
+            // SAFETY: the out pointer is a live local.
+            let _ = unsafe { QueryPerformanceFrequency(&mut frequency) };
+            frequency
+        });
+        let mut counter = 0i64;
+        // SAFETY: the out pointer is a live local.
+        let _ = unsafe { QueryPerformanceCounter(&mut counter) };
         if counter <= 0 || frequency <= 0 {
             return 0;
         }
@@ -222,6 +226,8 @@ mod consumer {
         } else if !is_fixture(dominant) {
             "foreign-dominant"
         } else if box_width <= 64 && box_height <= 64 {
+            // Checked before `edge-band`: a cursor-sized blob is an overlay
+            // even where it touches an edge or corner.
             "small-overlay"
         } else if touches_edge && (box_width == width || box_height == height) {
             "edge-band"

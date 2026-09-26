@@ -140,8 +140,10 @@ function Write-Classification {
         $lines.Add('classification: no frames.jsonl (the consumer did not record frames)')
     } else {
         $all = @(Get-Content -LiteralPath $framesFile)
-        $verified = @($all | Where-Object { $_ -like '*"result":"verified"*' }).Count
-        $odd = @($all | Where-Object { $_ -notlike '*"result":"verified"*' } | ForEach-Object { $_ | ConvertFrom-Json })
+        # Parse only lines that may not be verified (a quick, whitespace-tolerant
+        # prefilter), then decide on the parsed result field.
+        $odd = @($all | Where-Object { $_ -notmatch '"result"\s*:\s*"verified"' } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object result -NE 'verified')
+        $verified = $all.Count - $odd.Count
         $transitional = @($odd | Where-Object result -EQ 'transitional').Count
         $lines.Add("frames: $($all.Count); verified $verified; transitional $transitional; not uniform $($odd.Count - $transitional)")
         $fixtureEvents = @()
@@ -166,7 +168,7 @@ function Write-Classification {
         foreach ($entry in @($fixtureEvents | Where-Object event -EQ 'session')) {
             $transitions.Add([pscustomobject]@{ unix = [double]$entry.wall; label = "wts $($entry.change)" })
         }
-        foreach ($entry in @($fixtureEvents | Where-Object { $_.event -eq 'size' -and $_.kind -ne 1 } | Select-Object -Skip 1)) {
+        foreach ($entry in @($fixtureEvents | Where-Object { $_.event -eq 'size' -and $_.kind -ne 'minimized' } | Select-Object -Skip 1)) {
             $transitions.Add([pscustomobject]@{ unix = [double]$entry.wall; label = "fixture resize to $($entry.client -join 'x')" })
         }
         $transitions = @($transitions | Sort-Object unix)

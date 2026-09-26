@@ -71,12 +71,16 @@ mod fixture {
     static CURSOR: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
     fn qpc_ns() -> u64 {
-        let (mut counter, mut frequency) = (0i64, 0i64);
-        // SAFETY: both out pointers are live locals.
-        unsafe {
-            QueryPerformanceCounter(&mut counter);
-            QueryPerformanceFrequency(&mut frequency);
-        }
+        static FREQUENCY: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+        let frequency = *FREQUENCY.get_or_init(|| {
+            let mut frequency = 0i64;
+            // SAFETY: the out pointer is a live local.
+            unsafe { QueryPerformanceFrequency(&mut frequency) };
+            frequency
+        });
+        let mut counter = 0i64;
+        // SAFETY: the out pointer is a live local.
+        unsafe { QueryPerformanceCounter(&mut counter) };
         if counter <= 0 || frequency <= 0 {
             return 0;
         }
@@ -225,8 +229,15 @@ mod fixture {
                     event(
                         "size",
                         &format!(
-                            "\"kind\": {}, \"client\": [{}, {}]",
-                            w,
+                            "\"kind\": \"{}\", \"client\": [{}, {}]",
+                            match w as u32 {
+                                SIZE_RESTORED => "restored",
+                                SIZE_MINIMIZED => "minimized",
+                                SIZE_MAXIMIZED => "maximized",
+                                SIZE_MAXSHOW => "maxshow",
+                                SIZE_MAXHIDE => "maxhide",
+                                _ => "other",
+                            },
                             l as u32 & 0xffff,
                             (l as u32 >> 16) & 0xffff
                         ),
