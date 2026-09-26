@@ -109,8 +109,9 @@ verifying frames. Then:
 3. Optionally, reconnect at another resolution or from another client to force
    an adapter change, and repeat step 2.
 4. Let the script finish. It closes the fixture and expects `failed: captured
-   window closed`, then revokes its identity and stops its daemon. Attach
-   `commands.txt`, `status-watch.log` and `consumer.log` to #186 after
+   window closed`, then revokes its identity and stops its daemon, and prints
+   the frame classification (below). Attach `commands.txt`,
+   `status-watch.log`, `consumer.log` and `classification.txt` to #186 after
    redacting `ptas_...` tokens.
 
 Any of these counts as a failure: a `failed` or `recovery_required` state
@@ -119,6 +120,46 @@ before the fixture closes; `NOT uniform` frames after resuming (other than a
 10 s of unlock or reconnect; or the consumer not verifying frames again. Also
 record whether WGC delivered a frame on resume without a repaint (the fixture
 repaints every second, so check the first `verified` timestamp after resume).
+
+### Frame forensics (#189)
+
+The first human run (2026-09-26, recorded on #186) flagged 49 of 570 frames
+as not uniform: one about 6 s before the RDP disconnect and a burst in the
+first ~15 s after reconnect. To explain such frames the script now also
+collects, in the evidence directory:
+
+- `frames/frames.jsonl`: one line per frame the consumer read (wall and QPC
+  time, the frame's WGC `SystemRelativeTime`, cursor, sequence, fence value,
+  slot, pool, generation, epoch, result). Each frame that is not one fixture
+  colour also carries a pixel summary (most common colours and fractions,
+  bounding box of the other pixels, row and column runs) and a kind:
+  `split-horizontal`/`split-vertical` (two fixture colours split by one
+  boundary, as a torn copy would look), `mixed-fixture-colours`,
+  `small-overlay` (a blob of at most 64×64 on one fixture colour, cursor-sized),
+  `edge-band`, `foreign-dominant` or `other`. The first 200 are saved as
+  `frames/nonuniform-*.png`, and `consumer.log` logs every one.
+- `fixture-events.jsonl`: every repaint (colour, client size), colour change,
+  resize, move, DPI and display change, WTS session change (lock, unlock,
+  remote connect and disconnect), and the pointer entering, moving within or
+  leaving the fixture window, each with wall and QPC time.
+- `status-transitions.jsonl`: the watch's status changes with Unix time.
+- `classification.txt`, also printed at the end: counts by kind, and for each
+  frame its timing relative to status and session transitions, the fixture's
+  last repaint before it, and whether the pointer was over the window.
+  `-ClassifyOnly -EvidenceDir <dir>` re-runs it.
+
+Sessions capture the cursor by default, so a pointer over the fixture window
+is drawn into its frames; `-NoCursor` starts the session without it. Logs are
+written with shared read/write access, so a reader (`tail -f`,
+`Get-Content -Wait`) cannot break the run, and if `porthole close` is refused
+the script stops the fixture process it launched, by PID.
+
+Two 60 s watches with no lock or disconnect (2026-09-26, Beaufort) read 78 and
+76 frames: all verified except one `transitional` frame at the resize in the
+first (321×201, generation 2); no non-uniform frames and no pointer over the
+window. The second ran with `tail -F` holding `status-watch.log` and
+`commands.txt` open throughout.
+
 For raw WGC behaviour without Porthole, Jackstay's
 `cargo run -p jackstay --features backend-windows --example wgc_session_watch`
 logs the same transitions.

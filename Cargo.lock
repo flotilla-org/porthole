@@ -1523,6 +1523,7 @@ dependencies = [
  "hex",
  "hyper",
  "hyper-util",
+ "image",
  "jackstay",
  "jackstay-bridge",
  "jackstay-graph",
