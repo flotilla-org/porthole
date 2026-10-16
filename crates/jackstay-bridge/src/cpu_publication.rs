@@ -96,6 +96,8 @@ impl CpuPublication {
         let offer = Offer {
             source: path.display().to_string(),
             clock: ClockDomain::HostTime,
+            // One republished video track per socket, so its id is fixed;
+            // consumers select by the offered id.
             tracks: vec![Track {
                 id: 1,
                 kind: Kind::Video,

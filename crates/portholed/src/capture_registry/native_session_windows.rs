@@ -573,8 +573,9 @@ fn serve_connection(runtime: &Runtime, connection: Connection, session_id: &str,
         },
     )
     .map_err(|error| error.to_string())?;
-    stream.set_read_timeout(None).map_err(|error| error.to_string())?;
+    // The preface deadline also bounds the track handshake; only media setup runs without one.
     let stream = super::offer_tracks(stream, offer).map_err(|error| error.to_string())?;
+    stream.set_read_timeout(None).map_err(|error| error.to_string())?;
     match publication {
         Publication::D3d11(producer) => serve_d3d11(stream, producer).map_err(|error| error.to_string()),
         Publication::Cpu(producer) => serve_cpu(stream, producer).map_err(|error| error.to_string()),
