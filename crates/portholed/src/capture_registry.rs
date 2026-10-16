@@ -12,7 +12,7 @@ use std::{
     thread,
 };
 
-use jackstay::model::{ClockDomain, ColorSpace, DamageKind, PixelFormat, SourceId, TrackId};
+use jackstay::model::{ColorSpace, DamageKind, PixelFormat, SourceId, TrackId};
 #[cfg(unix)]
 use jackstay::{
     acquisition::arena::{FrameDescriptor, PublishOutcome},
@@ -1183,12 +1183,11 @@ fn publish_capture_frame_view(
 fn frame_descriptor_from_capture(metadata: VideoCaptureFrameMetadata) -> FrameDescriptor {
     FrameDescriptor {
         sequence: metadata.sequence,
-        timestamp_ns: metadata.timestamp_ns,
+        timestamp_ns: host_timestamp(metadata.timestamp_clock, metadata.timestamp_ns),
         width: metadata.width,
         height: metadata.height,
         stride: metadata.stride,
         pixel_format: capture_pixel_format(metadata.pixel_format) as u32,
-        clock_domain: capture_clock_domain(metadata.timestamp_clock) as u32,
         color_space: capture_color_space(metadata.color_space) as u32,
         sync_kind: FrameSyncKind::CpuCopyComplete as u32,
         damage_kind: capture_damage_kind(metadata.damage_kind) as u32,
@@ -1206,12 +1205,12 @@ fn capture_pixel_format(format: VideoCapturePixelFormat) -> PixelFormat {
     }
 }
 
-fn capture_clock_domain(domain: VideoCaptureTimestampClock) -> ClockDomain {
-    match domain {
-        VideoCaptureTimestampClock::Unknown => ClockDomain::Unknown,
-        VideoCaptureTimestampClock::UnixTime => ClockDomain::UnixTime,
-        VideoCaptureTimestampClock::MediaTime => ClockDomain::MediaTime,
-        VideoCaptureTimestampClock::HostTime => ClockDomain::HostTime,
+/// Jackstay frames carry host time. A capture timestamp on any other clock is
+/// left zero, and publishing stamps host time instead.
+fn host_timestamp(clock: VideoCaptureTimestampClock, timestamp_ns: u64) -> u64 {
+    match clock {
+        VideoCaptureTimestampClock::HostTime => timestamp_ns,
+        VideoCaptureTimestampClock::Unknown | VideoCaptureTimestampClock::UnixTime | VideoCaptureTimestampClock::MediaTime => 0,
     }
 }
 

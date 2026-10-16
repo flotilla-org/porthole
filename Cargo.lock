@@ -279,6 +279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbor2"
+version = "1.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddf90b4df9f396c3b5dad07dcdaf0627f2b8ae533ea9be9937f9d6b8713cb888"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -619,6 +628,18 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flotilla-cbor"
+version = "0.1.0"
+source = "git+https://github.com/flotilla-org/flotilla?rev=cc203c23b51d67af897b988254a809c5b63c99a6#cc203c23b51d67af897b988254a809c5b63c99a6"
+dependencies = [
+ "cbor2",
+ "serde",
+ "serde_core",
+ "syn",
+ "thiserror",
 ]
 
 [[package]]
@@ -998,9 +1019,10 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jackstay"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520#a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520"
+source = "git+https://github.com/flotilla-org/jackstay?rev=bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac#bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac"
 dependencies = [
  "cc",
+ "flotilla-cbor",
  "libc",
  "pkg-config",
  "serde",
@@ -1027,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "jackstay-graph"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520#a01ea606b3fb0eac93eddb5c7cf2e0ab4ffbe520"
+source = "git+https://github.com/flotilla-org/jackstay?rev=bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac#bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac"
 dependencies = [
  "getrandom",
  "serde",

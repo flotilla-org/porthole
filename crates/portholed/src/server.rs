@@ -229,7 +229,7 @@ mod tests {
     use jackstay::{
         acquisition::arena::AcquireOutcome,
         daemon::{ConnectedSession, SessionInfo},
-        model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
+        model::{ColorSpace, DamageKind, FrameSyncKind, PixelFormat},
     };
     use porthole_core::{
         agent_policy::{ActionClass, DurationSpec, TargetSelector},
@@ -368,7 +368,6 @@ mod tests {
         assert_eq!(frame.cursor(), 1);
         assert_eq!(descriptor.width, 2);
         assert_eq!(descriptor.height, 1);
-        assert_eq!(descriptor.clock_domain, ClockDomain::Unknown as u32);
         assert_eq!(descriptor.color_space, ColorSpace::Unknown as u32);
         assert_eq!(descriptor.sync_kind, FrameSyncKind::CpuCopyComplete as u32);
         assert_eq!(descriptor.damage_kind, DamageKind::FullFrame as u32);
@@ -520,10 +519,11 @@ mod tests {
             panic!("missing authorized frame")
         };
         let descriptor = frame.descriptor();
-        assert_eq!(descriptor.timestamp_ns, 123_456_789);
+        // The Unix-time capture timestamp is replaced by host time at publish.
+        assert_ne!(descriptor.timestamp_ns, 123_456_789);
+        assert_ne!(descriptor.timestamp_ns, 0);
         assert_eq!(descriptor.width, 2);
         assert_eq!(descriptor.height, 1);
-        assert_eq!(descriptor.clock_domain, ClockDomain::UnixTime as u32);
         assert_eq!(descriptor.color_space, ColorSpace::Unknown as u32);
         assert_eq!(descriptor.sync_kind, FrameSyncKind::CpuCopyComplete as u32);
         assert_eq!(descriptor.damage_kind, DamageKind::FullFrame as u32);

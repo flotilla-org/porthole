@@ -27,7 +27,7 @@ use jackstay::{
         arena::{ArenaConfig, ArenaProducer, FrameDescriptor, PublishOutcome, ReconfigurationStatus},
         socket::serve_cpu,
     },
-    model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
+    model::{ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
     native::macos::IoSurface,
 };
 
@@ -152,7 +152,6 @@ impl CpuPublication {
             height,
             stride: width * 4,
             pixel_format: PixelFormat::Bgra8Unorm as u32,
-            clock_domain: ClockDomain::HostTime as u32,
             color_space: ColorSpace::Srgb as u32,
             sync_kind: FrameSyncKind::CpuCopyComplete as u32,
             damage_kind: DamageKind::FullFrame as u32,

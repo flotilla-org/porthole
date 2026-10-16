@@ -274,7 +274,6 @@ impl NativeVideoFramePublisher for NativeRegistryPublisher {
             height: frame.height,
             pixel_format: PixelFormat::Bgra8Unorm,
             color_space: jackstay::model::ColorSpace::Srgb,
-            clock_domain: jackstay::model::ClockDomain::MediaTime,
             modifier: 0,
         };
         if state.producer.is_none() {
@@ -316,7 +315,9 @@ impl NativeVideoFramePublisher for NativeRegistryPublisher {
                 }
             }
         }
-        match guard.publish(&MacosCapturedFrame { surface: frame.surface }, frame.timestamp_ns) {
+        // The SCK presentation timestamp is media time; Jackstay frames carry
+        // host time, which a zero timestamp is stamped with at publish.
+        match guard.publish(&MacosCapturedFrame { surface: frame.surface }, 0) {
             Ok(PublishOutcome::Published { .. }) => {
                 state.published = state.published.saturating_add(1);
                 self.finish_start(Ok(NativeReady {
@@ -604,7 +605,7 @@ mod tests {
     fn dropped_session_retains_gpu_owner_until_write_completion() {
         use jackstay::{
             acquisition::arena::AcquireOutcome,
-            model::{ClockDomain, ColorSpace},
+            model::ColorSpace,
             native::macos::{ConsumerFence, IoSurface},
         };
 
@@ -623,7 +624,6 @@ mod tests {
             height: 16,
             pixel_format: PixelFormat::Bgra8Unorm,
             color_space: ColorSpace::Srgb,
-            clock_domain: ClockDomain::HostTime,
             modifier: 0,
         };
         let mut producer = NativeArenaProducer::new(backend, params.clone(), arena_config()).unwrap();

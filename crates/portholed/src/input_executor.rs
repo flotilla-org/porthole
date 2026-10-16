@@ -269,7 +269,7 @@ fn execute(handle: &tokio::runtime::Handle, input: &Arc<InputPipeline>, surface:
                 CoordUnits::Logical,
             ))
         }
-        Event::Scroll { x, y, unit, position } => {
+        Event::Scroll { x, y, unit, position, .. } => {
             let (delta_x, delta_y) = scroll_lines(x, y, unit);
             let (px, py) = map(position.x, position.y);
             handle.block_on(input.scroll(
