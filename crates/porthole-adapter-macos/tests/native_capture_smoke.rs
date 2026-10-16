@@ -19,7 +19,7 @@ use std::{
 
 use jackstay::{
     acquisition::arena::{AcquireOutcome, ArenaConfig, Cancellation, PublishOutcome, WaitInterest, WaitOutcome},
-    model::{ClockDomain, ColorSpace, PixelFormat},
+    model::{ColorSpace, PixelFormat},
     native::{
         NativeStreamParams,
         arena::NativeArenaProducer,
@@ -62,7 +62,6 @@ impl NativeVideoFramePublisher for SmokePublisher {
                     height: frame.height,
                     pixel_format: PixelFormat::Bgra8Unorm,
                     color_space: ColorSpace::Srgb,
-                    clock_domain: ClockDomain::MediaTime,
                     modifier: 0,
                 };
                 let producer = Arc::new(Mutex::new(

@@ -44,7 +44,7 @@ mod macos {
 
     use jackstay::{
         acquisition::arena::{AcquireOutcome, ArenaConfig, Cancellation, PublishOutcome, WaitInterest, WaitOutcome},
-        model::{ClockDomain, ColorSpace, PixelFormat},
+        model::{ColorSpace, PixelFormat},
         native::{
             NativeStreamParams,
             arena::NativeArenaProducer,
@@ -264,7 +264,6 @@ mod macos {
             height,
             pixel_format: PixelFormat::Bgra8Unorm,
             color_space: ColorSpace::Srgb,
-            clock_domain: ClockDomain::HostTime,
             modifier: 0,
         };
         let backend = MacosFrameBackend::new()?;

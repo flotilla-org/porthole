@@ -23,7 +23,6 @@ struct Format {
     stride: u32,
     pixel_format: u32,
     color_space: u32,
-    clock_domain: u32,
     bytes: usize,
 }
 
@@ -42,7 +41,6 @@ impl Format {
             stride: frame.stride,
             pixel_format: frame.pixel_format,
             color_space: frame.color_space,
-            clock_domain: frame.clock_domain,
             bytes: bytes.len(),
         })
     }

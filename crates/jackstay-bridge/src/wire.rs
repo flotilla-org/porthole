@@ -17,7 +17,7 @@
 
 use std::io::{self, Read, Write};
 
-use jackstay::acquisition::arena::FrameDescriptor;
+use jackstay::{acquisition::arena::FrameDescriptor, model::ClockDomain};
 use jackstay_graph::{Chroma, ChromaPolicy, Codec, CodecCapabilities, Target};
 use serde::{Deserialize, Serialize};
 
@@ -236,7 +236,9 @@ pub fn encode_descriptor(d: &FrameDescriptor) -> [u8; DESCRIPTOR_LEN] {
         d.stride,
         d.pixel_format,
         d.slot_id,
-        d.clock_domain,
+        // Was the descriptor's clock domain; Jackstay now has only host
+        // time. Written for wire-version-1 peers that still read it.
+        ClockDomain::HostTime as u32,
         d.color_space,
         d.sync_kind,
         d.payload_kind,
@@ -274,13 +276,14 @@ pub fn decode_descriptor(bytes: &[u8]) -> Result<FrameDescriptor, WireError> {
         stride: u32_at(104),
         pixel_format: u32_at(108),
         slot_id: u32_at(112),
-        clock_domain: u32_at(116),
+        // 116: the former clock domain, always host time.
         color_space: u32_at(120),
         sync_kind: u32_at(124),
         payload_kind: u32_at(128),
         damage_kind: u32_at(132),
         dropped_before_publish: u32_at(136),
         flags: u32_at(140),
+        reserved: 0,
     })
 }
 
@@ -517,13 +520,13 @@ mod tests {
             stride: 15,
             pixel_format: 16,
             slot_id: 17,
-            clock_domain: 18,
             color_space: 19,
             sync_kind: 20,
             payload_kind: 21,
             damage_kind: 22,
             dropped_before_publish: 23,
             flags: 24,
+            reserved: 0,
         }
     }
 
@@ -559,9 +562,15 @@ mod tests {
         let d = descriptor();
         let bytes = encode_descriptor(&d);
         assert_eq!(bytes.len(), 144);
-        // matches the repr(C) layout the C ABI asserts: fence_value at 72, width at 96, flags at 140
+        // wire version 1's layout: fence_value at 72, width at 96, flags at 140.
+        // Jackstay's repr(C) descriptor has since dropped the clock domain at
+        // 116; the wire keeps the slot and always writes host time there.
         assert_eq!(u64::from_le_bytes(bytes[72..80].try_into().unwrap()), 10);
         assert_eq!(u32::from_le_bytes(bytes[96..100].try_into().unwrap()), 13);
+        assert_eq!(
+            u32::from_le_bytes(bytes[116..120].try_into().unwrap()),
+            ClockDomain::HostTime as u32
+        );
         assert_eq!(u32::from_le_bytes(bytes[140..144].try_into().unwrap()), 24);
         assert_eq!(decode_descriptor(&bytes).unwrap(), d);
     }

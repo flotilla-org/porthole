@@ -31,7 +31,7 @@ use std::{
 
 use jackstay::{
     acquisition::arena::{ArenaConfig, FrameDescriptor, PublishOutcome, ReconfigurationStatus},
-    model::{ClockDomain, ColorSpace, PixelFormat},
+    model::{ColorSpace, PixelFormat},
     native::{
         NativeStreamParams,
         arena::NativeArenaProducer,
@@ -219,7 +219,6 @@ fn params_for(config: &CodecConfig) -> NativeStreamParams {
         height: config.height,
         pixel_format: PixelFormat::Bgra8Unorm,
         color_space: ColorSpace::Srgb,
-        clock_domain: ClockDomain::HostTime,
         modifier: 0,
     }
 }

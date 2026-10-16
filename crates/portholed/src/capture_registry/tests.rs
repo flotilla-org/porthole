@@ -311,7 +311,8 @@ fn publisher_copies_borrowed_bytes_and_preserves_capture_metadata() {
     let desc = frame.descriptor();
     assert_eq!(frame.bytes(), b"copy");
     assert_eq!(desc.sequence, 7);
-    assert_eq!(desc.clock_domain, ClockDomain::MediaTime as u32);
+    // A media-time capture is restamped in host time at publish.
+    assert_ne!(desc.timestamp_ns, 0);
     assert_eq!(desc.color_space, ColorSpace::Srgb as u32);
     assert_eq!(desc.sync_kind, FrameSyncKind::CpuCopyComplete as u32);
     assert_eq!(desc.damage_kind, DamageKind::FullFrame as u32);
@@ -614,4 +615,16 @@ fn retired_cpu_records_are_bounded_without_reaping_live_or_draining_sessions() {
     drop(setup);
     let _ = task.join().unwrap();
     registry.close_session(&active).unwrap();
+}
+
+#[test]
+fn only_host_time_capture_timestamps_pass_through() {
+    assert_eq!(host_timestamp(VideoCaptureTimestampClock::HostTime, 999), 999);
+    for clock in [
+        VideoCaptureTimestampClock::Unknown,
+        VideoCaptureTimestampClock::UnixTime,
+        VideoCaptureTimestampClock::MediaTime,
+    ] {
+        assert_eq!(host_timestamp(clock, 999), 0);
+    }
 }
