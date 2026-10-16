@@ -616,3 +616,15 @@ fn retired_cpu_records_are_bounded_without_reaping_live_or_draining_sessions() {
     let _ = task.join().unwrap();
     registry.close_session(&active).unwrap();
 }
+
+#[test]
+fn only_host_time_capture_timestamps_pass_through() {
+    assert_eq!(host_timestamp(VideoCaptureTimestampClock::HostTime, 999), 999);
+    for clock in [
+        VideoCaptureTimestampClock::Unknown,
+        VideoCaptureTimestampClock::UnixTime,
+        VideoCaptureTimestampClock::MediaTime,
+    ] {
+        assert_eq!(host_timestamp(clock, 999), 0);
+    }
+}
