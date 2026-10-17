@@ -171,10 +171,9 @@ SDL_VIDEODRIVER=dummy target/capture-viewer-sdl/capture-viewer-sdl --frames 30
 ```
 
 portholed offers each capture session's video track through Jackstay's track
-handshake (v3) before CPU setup, and `porthole record` selects it. The viewer's
-`--porthole-socket` mode still uses Jackstay's own porthole session helper,
-which does not run that handshake yet, so the daemon-backed smokes below fail
-until Jackstay follows.
+handshake (v3) before CPU setup. `porthole record` and the viewer's
+`--porthole-socket` mode (Jackstay's porthole session helper, since
+flotilla-org/jackstay#131) select it.
 
 Smoke-test the daemon-backed path with:
 

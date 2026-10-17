@@ -563,7 +563,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1019,7 +1019,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jackstay"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac#bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac"
+source = "git+https://github.com/flotilla-org/jackstay?rev=ce9355d2033eb786f09f860fb86a07c2ab6c8c6b#ce9355d2033eb786f09f860fb86a07c2ab6c8c6b"
 dependencies = [
  "cc",
  "flotilla-cbor",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "jackstay-graph"
 version = "0.1.0"
-source = "git+https://github.com/flotilla-org/jackstay?rev=bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac#bdf1d39ee2d95fa663820d4eaed6b0bcfe8345ac"
+source = "git+https://github.com/flotilla-org/jackstay?rev=ce9355d2033eb786f09f860fb86a07c2ab6c8c6b#ce9355d2033eb786f09f860fb86a07c2ab6c8c6b"
 dependencies = [
  "getrandom",
  "serde",
@@ -1205,7 +1205,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1717,7 +1717,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1990,7 +1990,7 @@ dependencies = [
  "getrandom",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
