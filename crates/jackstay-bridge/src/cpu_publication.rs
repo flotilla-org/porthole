@@ -1,13 +1,14 @@
 //! An optional CPU publication beside the ingress half's native one.
 //!
-//! Consumers that speak the generic CPU setup socket (the SDL viewer's
-//! `--cpu-socket`, katzensteg's `jackstay-source`) attach here. Each decoded
+//! Consumers that speak the track handshake and CPU setup (the SDL viewer's
+//! `--source-socket`, katzensteg's `jackstay-source`) attach here. Each decoded
 //! frame is read back from the BGRA staging surface into a CPU arena, one
 //! locked copy per frame; on Apple silicon the surface is in unified memory so
 //! this is a memcpy, not a bus readback. The socket is bound fresh (never
 //! replacing another publication's path), owner-only, and unlinked on
-//! shutdown. Setup for each accepted connection runs on its own thread with the
-//! transport core's `serve_cpu`.
+//! shutdown. Setup for each accepted connection runs on its own thread: the
+//! track handshake (v3) offers the one video track, in host time, and the
+//! transport core's `serve_cpu` continues on the media stream.
 
 use std::{
     os::unix::{
@@ -27,7 +28,8 @@ use jackstay::{
         arena::{ArenaConfig, ArenaProducer, FrameDescriptor, PublishOutcome, ReconfigurationStatus},
         socket::serve_cpu,
     },
-    model::{ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
+    handshake::{self, Bytes, Direction, Kind, Offer, Track},
+    model::{ClockDomain, ColorSpace, DamageKind, FrameSyncKind, PayloadKind, PixelFormat},
     native::macos::IoSurface,
 };
 
@@ -91,13 +93,26 @@ impl CpuPublication {
         listener.set_nonblocking(true).map_err(bind)?;
         let stop = Arc::new(AtomicBool::new(false));
         let connections: Connections = Arc::new(Mutex::new(Vec::new()));
+        let offer = Offer {
+            source: path.display().to_string(),
+            clock: ClockDomain::HostTime,
+            // One republished video track per socket, so its id is fixed;
+            // consumers select by the offered id.
+            tracks: vec![Track {
+                id: 1,
+                kind: Kind::Video,
+                direction: Direction::FromSource,
+                label: "default".into(),
+                descriptor: Bytes::default(),
+            }],
+        };
         let accept_thread = {
             let stop = stop.clone();
             let producer = producer.clone();
             let connections = connections.clone();
             std::thread::Builder::new()
                 .name("jackstay-ingress-cpu-accept".into())
-                .spawn(move || accept_loop(listener, producer, connections, stop))
+                .spawn(move || accept_loop(listener, offer, producer, connections, stop))
                 .map_err(bind)?
         };
         Ok(Self {
@@ -242,16 +257,24 @@ fn frame_bytes(width: u32, height: u32) -> usize {
     width as usize * 4 * height as usize
 }
 
-fn accept_loop(listener: UnixListener, producer: Producer, connections: Connections, stop: Arc<AtomicBool>) {
+fn accept_loop(listener: UnixListener, offer: Offer, producer: Producer, connections: Connections, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
                 let Ok(handle) = stream.try_clone() else { continue };
                 let producer = producer.clone();
+                let offer = offer.clone();
                 if let Ok(thread) = std::thread::Builder::new()
                     .name("jackstay-ingress-cpu-setup".into())
                     .spawn(move || {
-                        if let Err(e) = serve_cpu(stream, producer) {
+                        let media = match handshake::accept(stream, &offer, None, &[]) {
+                            Ok(accepted) => accepted.media,
+                            Err(e) => {
+                                eprintln!("ingress cpu: track handshake failed: {e}");
+                                return;
+                            }
+                        };
+                        if let Err(e) = serve_cpu(media, producer) {
                             eprintln!("ingress cpu: setup connection ended: {e}");
                         }
                     })

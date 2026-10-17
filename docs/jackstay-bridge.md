@@ -62,27 +62,29 @@ ring of bridge-owned BGRA staging surfaces, which is the YCbCr to RGB
 conversion the viewer needs regardless, and published, which blits it into a
 pool slot and signals the arena fence on the GPU. A sequence gap or a decode
 error puts the half back into waiting-for-keyframe and sends a keyframe
-request on the control connection. Timestamps are remapped with the clock
-estimate; the clock domain value is left as the producer stamped it because the
-model has no remote-mapped domain yet.
+request on the control connection. Timestamps are remapped into local host
+time with the clock estimate, or stamped with the local host time until an
+estimate exists.
 
-With `--cpu-socket PATH` the ingress also serves the republication over the
-transport core's generic CPU setup socket (`acquisition::socket::serve_cpu`),
-for consumers that have no native attach path, such as katzensteg's
-`jackstay-source`. After each frame's transfer into the staging surface the
-same surface is read back, one locked copy, into a CPU arena sized for the
-current frame; a size change reconfigures that arena and drops frames while
-the reconfiguration waits on capacity. On Apple silicon the staging surface is
-in unified memory, so the readback is a memcpy rather than a bus transfer. The
-socket is bound fresh and never replaces an existing path, is owner-only
-(mode 0600, the same rule katzensteg applies to its own endpoints), accepts
-any number of setup connections each served on its own thread, and is unlinked
-at shutdown. The native publication is unaffected: the CPU copy happens before
-the pool blit is queued and the two producers keep separate arenas and
-counters (`cpu_frames_published`, `cpu_frames_dropped`, `cpu_errors` in the
-report). Which kinds a republication offers is the coordinator's choice per
-request; the graph crate carries it as `IngressSpec::cpu_socket` and reports
-the bound path in `publication_up`.
+With `--cpu-socket PATH` the ingress also serves the republication on a CPU
+socket for consumers that have no native attach path, such as katzensteg's
+`jackstay-source` and the SDL viewer's `--source-socket`. Each connection runs
+Jackstay's track handshake (v3), which offers one video track in host time,
+then the transport core's CPU setup (`acquisition::socket::serve_cpu`). After
+each frame's transfer into the staging surface the same surface is read back,
+one locked copy, into a CPU arena sized for the current frame; a size change
+reconfigures that arena and drops frames while the reconfiguration waits on
+capacity. On Apple silicon the staging surface is in unified memory, so the
+readback is a memcpy rather than a bus transfer. The socket is bound fresh and
+never replaces an existing path, is owner-only (mode 0600, the same rule
+katzensteg applies to its own endpoints), accepts any number of setup
+connections each served on its own thread, and is unlinked at shutdown. The
+native publication is unaffected: the CPU copy happens before the pool blit is
+queued and the two producers keep separate arenas and counters
+(`cpu_frames_published`, `cpu_frames_dropped`, `cpu_errors` in the report).
+Which kinds a republication offers is the coordinator's choice per request; the
+graph crate carries it as `IngressSpec::cpu_socket` and reports the bound path
+in `publication_up`.
 
 ## The input relay
 

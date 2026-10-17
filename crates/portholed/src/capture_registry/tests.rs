@@ -5,8 +5,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use jackstay::acquisition::{arena::AcquireOutcome, socket::CpuSetupClient};
-use porthole_core::adapter::VideoCaptureSyncKind;
+use jackstay::{
+    acquisition::{arena::AcquireOutcome, socket::CpuSetupClient},
+    handshake::{self, Selected},
+    input::Mode,
+};
+use porthole_core::adapter::{VideoCaptureSyncKind, VideoCaptureTimestampClock};
 
 use super::*;
 
@@ -69,10 +73,24 @@ fn open(
     (stream, serde_json::from_str(&line).unwrap(), task)
 }
 
+/// Select the session's one offered track, video track 1, then continue with
+/// CPU setup on the media stream.
 fn connect(stream: UnixStream) -> CpuSetupClient {
+    let offered = handshake::connect(stream).unwrap();
+    let offer = offered.offer();
+    assert_eq!(offer.clock, ClockDomain::HostTime);
+    assert_eq!(offer.tracks.len(), 1);
+    assert_eq!((offer.tracks[0].id, &offer.tracks[0].kind), (1, &Kind::Video));
+    assert_eq!(offer.tracks[0].direction, Direction::FromSource);
+    let selection = [Selected {
+        id: 1,
+        required: true,
+        write: false,
+    }];
+    let media = offered.select(&selection, Mode::Cooperative).unwrap().media;
     // SAFETY: this connection selects our conforming in-process registry's
     // producer. The client never forks or forwards its process-bound mappings.
-    unsafe { CpuSetupClient::from_stream(stream) }
+    unsafe { CpuSetupClient::from_stream(media) }
 }
 
 #[tokio::test]

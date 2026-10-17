@@ -896,7 +896,7 @@ mod macos {
         let announce = format!(
             "ingress: publication is up; attach with --native --mach-service {service}{}{}{}",
             viewer_token.as_ref().map_or(String::new(), |t| format!(" --token {t}")),
-            cpu_socket.as_ref().map_or(String::new(), |p| format!(", or --cpu-socket {p}")),
+            cpu_socket.as_ref().map_or(String::new(), |p| format!(", or --source-socket {p}")),
             input_socket
                 .as_ref()
                 .map_or(String::new(), |p| format!("; controllers at --input-socket {p}"))

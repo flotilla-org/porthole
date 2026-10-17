@@ -424,7 +424,7 @@ mod tests {
         // SAFETY: the in-memory test host is a conforming sole producer. This
         // process does not fork or forward the process-bound setup mappings.
         unsafe {
-            ConnectedSession::connect(
+            porthole::capture_tracks::connect_cpu(
                 SessionInfo {
                     session_id: created.session_id.clone(),
                     source_id: created.source_id,

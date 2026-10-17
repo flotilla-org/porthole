@@ -646,8 +646,8 @@ enum PublicationsCommand {
         publication: String,
         #[arg(long, value_enum, default_value = "prefer444")]
         chroma: ChromaArg,
-        /// Also serve the republication over a generic CPU setup socket
-        /// (katzensteg's `jackstay-source`, the SDL viewer's `--cpu-socket`).
+        /// Also serve the republication over a CPU socket that offers its video
+        /// track (katzensteg's `jackstay-source`, the SDL viewer's `--source-socket`).
         #[arg(long)]
         cpu: bool,
         /// Also accept input controllers and relay them to the producer.

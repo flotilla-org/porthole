@@ -31,8 +31,9 @@ use std::{
 
 use jackstay::{
     acquisition::socket::serve_cpu,
+    handshake::Offer,
     local::{self, Connection, Endpoint, Listener, Scope, ShutdownHandle, Stream, Transport},
-    model::{PixelFormat, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
+    model::{ClockDomain, PixelFormat, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
     native::windows::{
         capture::{
             BorderPolicy, CaptureArena, CapturePolicy, CaptureState, CaptureStatus, CaptureTarget, DesktopMonitor, OutputSize, Publication,
@@ -465,16 +466,17 @@ fn run_session(runtime: Arc<Runtime>, capture: WgcCapture) {
     }
 }
 
-fn accept_loop(runtime: Arc<Runtime>, listener: Arc<Listener>, session_id: String, attach_token: String) {
+fn accept_loop(runtime: Arc<Runtime>, listener: Arc<Listener>, session_id: String, attach_token: String, offer: Arc<Offer>) {
     loop {
         match listener.accept() {
             Ok(connection) => {
                 let runtime = Arc::clone(&runtime);
                 let session_id = session_id.clone();
                 let attach_token = attach_token.clone();
+                let offer = Arc::clone(&offer);
                 let spawned = std::thread::Builder::new().name("windows-native-attach".to_owned()).spawn(move || {
                     let peer = connection.peer().clone();
-                    if let Err(error) = serve_connection(&runtime, connection, &session_id, &attach_token) {
+                    if let Err(error) = serve_connection(&runtime, connection, &session_id, &attach_token, &offer) {
                         tracing::debug!(session_id, pid = peer.pid, error, "native capture attach connection ended");
                     }
                 });
@@ -544,7 +546,7 @@ fn authorize(request: &[u8], session_id: &str, attach_token: &str) -> Result<(),
     Ok(())
 }
 
-fn serve_connection(runtime: &Runtime, connection: Connection, session_id: &str, attach_token: &str) -> Result<(), String> {
+fn serve_connection(runtime: &Runtime, connection: Connection, session_id: &str, attach_token: &str, offer: &Offer) -> Result<(), String> {
     let mut stream = connection.into_stream();
     stream.set_read_timeout(Some(PREFACE_TIMEOUT)).map_err(|error| error.to_string())?;
     let request = read_line(&mut stream).map_err(|error| error.to_string())?;
@@ -571,6 +573,8 @@ fn serve_connection(runtime: &Runtime, connection: Connection, session_id: &str,
         },
     )
     .map_err(|error| error.to_string())?;
+    // The preface deadline also bounds the track handshake; only media setup runs without one.
+    let stream = super::offer_tracks(stream, offer).map_err(|error| error.to_string())?;
     stream.set_read_timeout(None).map_err(|error| error.to_string())?;
     match publication {
         Publication::D3d11(producer) => serve_d3d11(stream, producer).map_err(|error| error.to_string()),
@@ -741,6 +745,8 @@ pub(super) async fn create(
     let listener =
         Arc::new(Listener::bind(&endpoint).map_err(|error| CaptureRegistryError::Io(format!("bind native attach endpoint: {error}")))?);
     let attach_token = format!("ptas_{}", Uuid::new_v4().simple());
+    // Windows.Graphics.Capture stamps QPC-derived system-relative time.
+    let offer = Arc::new(super::video_offer(&session_id, track_id, ClockDomain::HostTime));
     let native_info = NativeCaptureInfo {
         transport_kind: NATIVE_ATTACH_TRANSPORT_WINDOWS_LOCAL_ENDPOINT,
         endpoint: endpoint_name,
@@ -769,7 +775,7 @@ pub(super) async fn create(
         let session_id = session_id.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("windows-native-accept".to_owned())
-            .spawn(move || accept_loop(runtime, listener, session_id, attach_token))
+            .spawn(move || accept_loop(runtime, listener, session_id, attach_token, offer))
         {
             drop(hold);
             return Err(CaptureRegistryError::Capture(format!("start native attach thread: {error}")));
