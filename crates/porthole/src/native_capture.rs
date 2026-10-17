@@ -5,8 +5,9 @@
 //! [`NATIVE_ATTACH_TRANSPORT_WINDOWS_LOCAL_ENDPOINT`]: a Jackstay Local
 //! Endpoint name in `Session` scope and a per-session attach token. [`open`]
 //! connects (verifying the server is this user's process in this logon
-//! session), presents the token and returns the stream, which then carries
-//! Jackstay's D3D11 setup (`D3d11SetupClient::from_stream`) or CPU setup
+//! session), presents the token, selects the session's video track (Jackstay
+//! handshake v3) and returns the media stream, which then carries Jackstay's
+//! D3D11 setup (`D3d11SetupClient::from_stream`) or CPU setup
 //! (`CpuSetupClient::from_stream`), as the returned publication says.
 
 use std::io::{Read, Write};
@@ -28,13 +29,16 @@ pub enum OpenError {
     Io(#[from] std::io::Error),
     #[error("native attach protocol: {0}")]
     Protocol(String),
+    #[error("native attach track selection: {0}")]
+    Handshake(#[from] jackstay::handshake::Error),
     /// The session refused: wrong token, closed or failed session, or the
     /// connection limit. The message is the daemon's.
     #[error("native attach rejected: {0}")]
     Rejected(String),
 }
 
-/// An opened attach connection, ready for Jackstay setup.
+/// An opened attach connection with its video track selected, ready for
+/// Jackstay setup.
 #[derive(Debug)]
 pub struct Opened {
     pub publication: WindowsNativePublication,
@@ -75,7 +79,7 @@ pub fn open(session_id: &str, native: &NativeCaptureInfo) -> Result<Opened, Open
         WindowsNativeAttachReply::NativeCaptureOpened { publication, epoch } => Ok(Opened {
             publication,
             epoch,
-            stream,
+            stream: crate::capture_tracks::select_video(stream)?,
         }),
         WindowsNativeAttachReply::Rejected { message } => Err(OpenError::Rejected(message)),
     }

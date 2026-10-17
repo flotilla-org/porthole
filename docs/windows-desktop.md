@@ -149,8 +149,10 @@ capture runs inside portholed, which already lives in the interactive session.
   this logon session. A consumer connects with `jackstay::local::connect`,
   sends one JSON line `{"op":"open_native_capture","session_id":...,
   "attach_token":...}`, and reads one reply line naming the publication (`d3d11`,
-  or `cpu` when the device cannot share fences) and epoch. Jackstay's setup
-  (`D3d11SetupClient` or `CpuSetupClient`) then runs on the same connection. A
+  or `cpu` when the device cannot share fences) and epoch. The session then
+  offers its video track, in host time, through Jackstay's track handshake
+  (v3); once the consumer selects it, Jackstay's setup (`D3d11SetupClient` or
+  `CpuSetupClient`) runs on the same connection. A
   wrong token, a closed or failed session, or a fifth concurrent connection
   gets `{"op":"rejected","message":...}`. `porthole::native_capture::open`
   implements the client side. The endpoint stays bound until a new native

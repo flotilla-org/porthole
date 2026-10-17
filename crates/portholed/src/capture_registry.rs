@@ -12,12 +12,16 @@ use std::{
     thread,
 };
 
-use jackstay::model::{ColorSpace, DamageKind, PixelFormat, SourceId, TrackId};
 #[cfg(unix)]
 use jackstay::{
     acquisition::arena::{FrameDescriptor, PublishOutcome},
     model::{FrameSyncKind, PayloadKind, SourceDesc, SourceKind, TrackDesc, VideoTrackDesc},
     state::SessionState,
+};
+use jackstay::{
+    handshake::{self, Bytes, Direction, Kind, Offer, Track},
+    local::Stream,
+    model::{ClockDomain, ColorSpace, DamageKind, PixelFormat, SourceId, TrackId},
 };
 #[cfg(unix)]
 use porthole_core::adapter::{
@@ -1214,6 +1218,31 @@ fn host_timestamp(clock: VideoCaptureTimestampClock, timestamp_ns: u64) -> u64 {
     }
 }
 
+/// The Jackstay offer (handshake v3) for a capture session: its one video
+/// track. Capture connections carry no input or affordances track; input
+/// reaches a surface through an export's executor instead.
+fn video_offer(session_id: &str, track_id: TrackId, clock: ClockDomain) -> Offer {
+    Offer {
+        source: session_id.to_owned(),
+        clock,
+        tracks: vec![Track {
+            id: track_id.get(),
+            kind: Kind::Video,
+            direction: Direction::FromSource,
+            label: "default".to_owned(),
+            descriptor: Bytes::default(),
+        }],
+    }
+}
+
+/// Offer the session's tracks on an authorized capture connection and return
+/// the media stream, which continues with CPU or D3D11 setup.
+fn offer_tracks(stream: Stream, offer: &Offer) -> Result<Stream, CaptureRegistryError> {
+    handshake::accept(stream, offer, None, &[])
+        .map(|accepted| accepted.media)
+        .map_err(|error| CaptureRegistryError::Capture(error.to_string()))
+}
+
 fn capture_color_space(color_space: VideoCaptureColorSpace) -> ColorSpace {
     match color_space {
         VideoCaptureColorSpace::Unknown => ColorSpace::Unknown,
@@ -1312,13 +1341,17 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
         if session.track_id.get() != track_id {
             return Err(CaptureRegistryError::Capture("unknown capture track".to_owned()));
         }
+        // Frames carry host time: `host_timestamp` zeroes other clocks, and
+        // publishing then stamps host time.
+        let offer = video_offer(&session_id, session.track_id, ClockDomain::HostTime);
         session
             .cpu
             .as_ref()
             .ok_or_else(|| CaptureRegistryError::Capture("session is not a CPU capture".to_owned()))?
             .open_connection(&stream)
+            .map(|opened| (opened, offer))
     })();
-    let (producer, _connection) = match result {
+    let ((producer, _connection), offer) = match result {
         Ok(ready) => ready,
         Err(error) => {
             let reply = serde_json::json!({ "op": "rejected", "message": error.to_string() });
@@ -1327,7 +1360,8 @@ fn handle_fd_connection(mut stream: UnixStream, registry: CaptureRegistry) -> Re
         }
     };
     writeln!(stream, "{{\"op\":\"cpu_opened\"}}").map_err(|error| CaptureRegistryError::Io(error.to_string()))?;
-    jackstay::acquisition::socket::serve_cpu(stream, producer).map_err(|error| CaptureRegistryError::Capture(error.to_string()))
+    let media = offer_tracks(stream, &offer)?;
+    jackstay::acquisition::socket::serve_cpu(media, producer).map_err(|error| CaptureRegistryError::Capture(error.to_string()))
 }
 
 fn pixel_format_name(format: PixelFormat) -> &'static str {

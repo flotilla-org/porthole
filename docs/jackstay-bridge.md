@@ -66,10 +66,11 @@ request on the control connection. Timestamps are remapped with the clock
 estimate; the clock domain value is left as the producer stamped it because the
 model has no remote-mapped domain yet.
 
-With `--cpu-socket PATH` the ingress also serves the republication over the
-transport core's generic CPU setup socket (`acquisition::socket::serve_cpu`),
-for consumers that have no native attach path, such as katzensteg's
-`jackstay-source`. After each frame's transfer into the staging surface the
+With `--cpu-socket PATH` the ingress also serves the republication on a CPU
+socket for consumers that have no native attach path, such as katzensteg's
+`jackstay-source` and the SDL viewer's `--source-socket`. Each connection runs
+Jackstay's track handshake (v3), which offers one video track in host time,
+then the transport core's CPU setup (`acquisition::socket::serve_cpu`). After each frame's transfer into the staging surface the
 same surface is read back, one locked copy, into a CPU arena sized for the
 current frame; a size change reconfigures that arena and drops frames while
 the reconfiguration waits on capacity. On Apple silicon the staging surface is

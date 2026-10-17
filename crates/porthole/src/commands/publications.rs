@@ -26,13 +26,10 @@ fn viewer_hints(publication: &PublicationResponse) -> Vec<String> {
         ));
     }
     if let Some(socket) = &publication.cpu_socket {
-        let input = publication
-            .input_socket
-            .as_ref()
-            .map_or(String::new(), |i| format!(" --input-socket {i}"));
-        hints.push(format!("cpu viewer: capture-viewer-sdl --cpu-socket {socket}{input}"));
+        hints.push(format!("cpu viewer: capture-viewer-sdl --source-socket {socket}"));
         hints.push(format!("katzensteg: katzensteg jackstay-source {socket}"));
-    } else if let Some(input) = &publication.input_socket {
+    }
+    if let Some(input) = &publication.input_socket {
         hints.push(format!("input socket: {input}"));
     }
     hints

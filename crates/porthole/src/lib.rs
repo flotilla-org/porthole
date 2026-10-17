@@ -3,6 +3,7 @@
 // have no unsafe requirements keep #![forbid(unsafe_code)].
 
 pub mod ancestry;
+pub mod capture_tracks;
 pub mod client;
 pub mod commands;
 pub mod key_syntax;

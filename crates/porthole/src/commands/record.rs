@@ -410,8 +410,7 @@ impl RecorderFactory for ProductionRecorderFactory {
             };
             // SAFETY: the local authorized Porthole host is the sole conforming
             // producer. The recorder never forks or forwards its process-bound maps.
-            let inner =
-                unsafe { jackstay::daemon::ConnectedSession::connect(info, 1) }.map_err(|error| ClientError::Local(error.to_string()))?;
+            let inner = unsafe { crate::capture_tracks::connect_cpu(info, 1) }.map_err(|error| ClientError::Local(error.to_string()))?;
             let observed = inner.consumer.events();
             let cancel = jackstay::acquisition::arena::Cancellation::new().map_err(|error| ClientError::Local(error.to_string()))?;
             Ok(DaemonOrderedFrameConsumer { inner, observed, cancel })

@@ -44,10 +44,11 @@ or katzensteg's input socket; there is no token on the consumer socket yet, as
 with the CPU socket.
 
 A republication is native by default. With `cpu` set on the request
-(`republish --cpu`, `attach --cpu`) the ingress half also serves it over a
-generic CPU setup socket under the runtime directory (`r/<12 hex>/s`), which
-katzensteg's `jackstay-source` and the SDL viewer's `--cpu-socket` attach to
-without any porthole preface; the publication reports the path as
+(`republish --cpu`, `attach --cpu`) the ingress half also serves it on a CPU
+socket under the runtime directory (`r/<12 hex>/s`), which offers its video
+track through Jackstay's track handshake (v3). katzensteg's `jackstay-source`
+and the SDL viewer's `--source-socket` attach to it without any porthole
+preface; the publication reports the path as
 `cpu_socket` and the CLI prints both commands. The directory goes when the
 republication closes.
 

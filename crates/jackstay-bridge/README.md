@@ -29,17 +29,20 @@ jackstay-bridge ingress --media M --control C --service NAME   --viewer-token V 
 ```
 
 `ingress --cpu-socket PATH` (also accepted by `loopback`) additionally serves the
-republication over a generic CPU setup socket at `PATH`, owner-only and unlinked
-on exit, for consumers without a native attach path: the SDL viewer's
-`--cpu-socket PATH`, katzensteg's `jackstay-source PATH`. Each decoded frame is
-then also read back from the staging surface into a CPU arena.
+republication on a CPU socket at `PATH`, owner-only and unlinked on exit, for
+consumers without a native attach path: the SDL viewer's `--source-socket PATH`,
+katzensteg's `jackstay-source PATH`. Each connection selects the offered video
+track through Jackstay's track handshake (v3) before CPU setup. Each decoded
+frame is then also read back from the staging surface into a CPU arena.
 
 `--input-socket PATH` relays the jackstay input protocol back to the producer
 host. On the ingress (and `loopback`) it is where controllers connect, owner-only
 like the CPU socket; on the egress it is the executor's socket that each relayed
 stream is connected to. `loopback --input-socket PATH` runs a reference executor
-that prints every event, so the SDL viewer with `--cpu-socket` and
-`--input-socket` exercises the relay on one machine.
+that prints every event, so a controller on the ingress `--input-socket`
+exercises the relay on one machine. The SDL viewer takes `--input-socket` only
+beside a bare `--cpu-socket`, so it no longer pairs input with a CPU
+republication.
 
 The macOS backend is enabled by default and included in Porthole's app bundle.
 Use `--no-default-features` for just the portable wire, clock and policy code.
