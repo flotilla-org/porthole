@@ -66,10 +66,7 @@ fn matches_query(w: &WindowRecord, q: &SearchQuery, title_re: Option<&Regex>) ->
             return false;
         }
     }
-    if !q.platform_refs.is_empty() && !q.platform_refs.contains(&PlatformSurfaceRef::macos(w.cg_window_id)) {
-        return false;
-    }
-    true
+    q.platform_refs.is_empty() || q.platform_refs.contains(&PlatformSurfaceRef::macos(w.cg_window_id))
 }
 
 #[cfg(test)]
